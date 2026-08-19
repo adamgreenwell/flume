@@ -5,7 +5,7 @@ standards the codebase holds to, and how changes get merged.
 
 ## Getting set up
 
-**Prerequisites:** Rust stable (1.85+), Node.js 22+, and your platform's
+**Prerequisites:** Rust stable (1.88+), Node.js 22+, and your platform's
 [Tauri system dependencies](https://tauri.app/start/prerequisites/).
 
 ```bash

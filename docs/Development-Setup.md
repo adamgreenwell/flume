@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust** stable, 1.85 or newer (librqbit 9 and Flume are edition 2024)
+- **Rust** stable, 1.88 or newer
 - **Node.js** 22 or newer
 - Platform system dependencies (below)
 

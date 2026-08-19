@@ -53,7 +53,7 @@ into the part that is not solved: **the experience**.
 
 ## Development
 
-**Prerequisites:** [Rust][rust] (stable, 1.85+), Node.js 22+, and your
+**Prerequisites:** [Rust][rust] (stable, 1.88+), Node.js 22+, and your
 platform's [Tauri system dependencies][tauri-prereqs].
 
 ```bash
