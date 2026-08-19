@@ -23,7 +23,7 @@ jobs:
     # and therefore sets the glibc/WebKitGTK floor for our .deb builds.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Linux WebKit dependencies
         run: |
@@ -97,7 +97,7 @@ jobs:
     name: Security audit
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
