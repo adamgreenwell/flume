@@ -174,7 +174,7 @@ impl Engine {
             download_bps: stats.download_speed.as_bytes(),
             upload_bps: stats.upload_speed.as_bytes(),
             live_peers: stats.peers.live,
-            }
+        }
     }
 
     /// Shuts the session down, flushing persistence and fast-resume state.
@@ -240,7 +240,10 @@ mod tests {
 
     #[test]
     fn empty_routing_table_is_connecting() {
-        assert_eq!(classify_health(&dht(true, 0), true), EngineHealth::Connecting);
+        assert_eq!(
+            classify_health(&dht(true, 0), true),
+            EngineHealth::Connecting
+        );
     }
 
     #[test]
