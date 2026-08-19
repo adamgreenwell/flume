@@ -1,0 +1,12 @@
+Flume
+Copyright 2026 Adam Greenwell
+
+This product includes software developed by third parties:
+
+  librqbit (https://github.com/ikatson/rqbit)
+  Copyright the rqbit authors, licensed under the Apache License, Version 2.0.
+  Flume embeds librqbit as its BitTorrent engine.
+
+  Tauri (https://github.com/tauri-apps/tauri)
+  Copyright the Tauri Programme within The Commons Conservancy,
+  dual-licensed under Apache License 2.0 / MIT.
