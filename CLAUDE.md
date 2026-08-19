@@ -29,6 +29,10 @@ flume.dev (a React node editor). Both verified unrelated.
 | Bundle ID | `io.github.adamgreenwell.flume` | `dev.flume.*` would claim an unrelated project's domain |
 | TLS | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux |
 | Fonts | System font stack, not `next/font/google` | Avoids build-time network fetch; native feel per OS |
+| MSRV | Rust 1.88 | A lower MSRV silently blocks security updates — cargo won't select deps needing more |
+| Add flow (Phase 1) | File picker first, then start | ISO torrents bundle several images; avoid downloading the wrong 4 GB |
+| Layout (Phase 1) | Single list + detail panel | Focused; scales fine for a personal workload |
+| Settings store | `tauri-plugin-store` (JSON) | Sufficient for a flat settings object; no SQLite migration burden |
 
 ## Architecture rules (violating one is a design defect)
 
@@ -94,7 +98,8 @@ Network-dependent tests are `#[ignore]`d: `cargo test -- --ignored`.
 **Phase 0 complete.** Engine integration verified end to end: the running app
 bootstraps the DHT to 100+ nodes and persists state correctly.
 
-**Phase 1 next** — see `docs/Roadmap.md` and the project board.
+**Phase 1 next** — see `docs/Phase-1-Plan.md` for the build order and confirmed
+product decisions, plus `docs/Roadmap.md` and the project board.
 
 ## Known gaps
 
