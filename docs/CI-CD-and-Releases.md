@@ -67,7 +67,7 @@ and contributors can build without credentials.
 1. Every issue in the milestone is closed or explicitly deferred.
 2. CI green on `main`.
 3. `cargo test -- --ignored` passes locally (live DHT path).
-4. Per-platform smoke checklist in [[Platform Notes]] completed.
+4. Per-platform smoke checklist in [[Platform-Notes]] completed.
 5. Version bumped in `package.json`, `src-tauri/Cargo.toml`, and
    `src-tauri/tauri.conf.json` — all three must match.
 6. Changelog updated.

@@ -30,13 +30,13 @@ Torrent management arrives in Phase 1. See [[Roadmap]].
 
 | Page                     | What it covers                                       |
 | ------------------------ | ---------------------------------------------------- |
-| [[Getting Started]]      | Installing and first run                             |
-| [[User Guide]]           | Adding torrents, file selection, settings            |
+| [[Getting-Started]]      | Installing and first run                             |
+| [[User-Guide]]           | Adding torrents, file selection, settings            |
 | [[Architecture]]         | System design, IPC contract, data flow               |
-| [[Torrent Engine Notes]] | librqbit v9 integration surface and upgrade guidance |
-| [[Platform Notes]]       | Per-OS packaging, signing, WebView quirks            |
-| [[Development Setup]]    | Toolchain, dev loop, debugging, testing              |
-| [[CI-CD and Releases]]   | Pipeline and release process                         |
+| [[Torrent-Engine-Notes]] | librqbit v9 integration surface and upgrade guidance |
+| [[Platform-Notes]]       | Per-OS packaging, signing, WebView quirks            |
+| [[Development-Setup]]    | Toolchain, dev loop, debugging, testing              |
+| [[CI-CD-and-Releases]]   | Pipeline and release process                         |
 | [[Roadmap]]              | Phases, backlog, known limitations                   |
 
 ## Name

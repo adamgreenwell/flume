@@ -4,7 +4,7 @@
 
 > Packaged builds are not published yet. The release pipeline lands in Phase 3
 > ([#15](https://github.com/adamgreenwell/flume/issues/15)). Until then, build
-> from source — see [[Development Setup]].
+> from source — see [[Development-Setup]].
 
 When releases are available:
 
@@ -15,7 +15,7 @@ When releases are available:
 | Debian 12+ / Ubuntu 22.04+ | `flume_x.y.z_amd64.deb`     | `sudo apt install ./flume_*.deb`         |
 | Fedora 38+ / RHEL 9.4+     | `flume-x.y.z.rpm`           | `sudo dnf install ./flume-*.rpm`         |
 
-See [[Platform Notes]] for the unsigned-build workarounds.
+See [[Platform-Notes]] for the unsigned-build workarounds.
 
 ## First run
 

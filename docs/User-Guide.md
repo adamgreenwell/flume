@@ -49,7 +49,7 @@ by accident is a bad afternoon.
 ## Seeding
 
 Flume seeds completed torrents while running. Seeding requires an open
-listening port — see the firewall notes in [[Getting Started]].
+listening port — see the firewall notes in [[Getting-Started]].
 
 Seeding Linux ISOs back is genuinely useful; distro mirrors carry real
 bandwidth costs.
