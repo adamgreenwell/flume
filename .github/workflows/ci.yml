@@ -42,7 +42,12 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # Matches the Node the project is developed on and the @types/node
+          # major. Node here is build tooling only -- it is never shipped to
+          # users, who get a native binary -- so tracking the dev environment
+          # is worth more than tracking LTS, and removes a class of
+          # "works locally, fails in CI" drift.
+          node-version: 26
           cache: npm
 
       - name: Install Rust toolchain
@@ -101,7 +106,12 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          # Matches the Node the project is developed on and the @types/node
+          # major. Node here is build tooling only -- it is never shipped to
+          # users, who get a native binary -- so tracking the dev environment
+          # is worth more than tracking LTS, and removes a class of
+          # "works locally, fails in CI" drift.
+          node-version: 26
           cache: npm
 
       - name: Install Rust toolchain
