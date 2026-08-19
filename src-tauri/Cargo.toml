@@ -55,3 +55,7 @@ unsafe_code = "forbid"
 # mistake that would surface as a hang or a panic in front of the user.
 unwrap_used = "warn"
 expect_used = "warn"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }

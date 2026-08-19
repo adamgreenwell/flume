@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use librqbit::{
     DhtSessionConfig, ListenerMode, ListenerOptions, Session, SessionOptions,
-    SessionPersistenceConfig,
+    SessionPersistenceConfig, dht::DhtPersistenceConfig,
 };
 
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
@@ -92,7 +92,15 @@ impl Engine {
             dht: config.enable_dht.then(|| DhtSessionConfig {
                 port: None,
                 bootstrap_addrs: None,
-                ..Default::default()
+                // `config_filename: None` would put the routing table in a
+                // single global OS location shared by every Flume instance,
+                // rather than in this session's directory. That both leaks
+                // state out of `session_dir` and makes a second instance try
+                // to bind the *same* persisted UDP port -- see issue #19.
+                persistence: Some(DhtPersistenceConfig {
+                    config_filename: Some(config.session_dir.join("dht.json")),
+                    ..Default::default()
+                }),
             }),
 
             // Fast-resume lets a restart skip re-hashing completed pieces.
