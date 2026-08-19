@@ -1,69 +1,107 @@
-import Image from "next/image";
+"use client";
 
+import { StatCard } from "@/components/StatCard";
+import { StatusPill } from "@/components/StatusPill";
+import { useCoreStatus } from "@/hooks/useCoreStatus";
+import { formatDuration, formatSpeed } from "@/lib/format";
+
+/**
+ * Phase 0 landing page.
+ *
+ * Its job is to prove the full IPC path: the Rust backend starts a real
+ * librqbit session, and these numbers are live counters read out of it over
+ * Tauri `invoke`. Phase 1 replaces this with the torrent list.
+ *
+ * @returns The rendered page.
+ */
 export default function Home() {
+  const { status, error, isLoading } = useCoreStatus();
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-8 px-8 py-12">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-text text-3xl font-semibold tracking-tight">
+            Flume
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-muted mt-1 text-sm">
+            A beautiful, cross-platform BitTorrent client.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <StatusPill
+          health={status?.health ?? "starting"}
+          pulse={isLoading || status?.health === "connecting"}
+        />
+      </header>
+
+      {error ? (
+        <div
+          className="border-warn/30 bg-warn/10 text-warn rounded-lg border px-4 py-3 text-sm"
+          role="alert"
+        >
+          {error}
         </div>
-      </main>
-    </div>
+      ) : null}
+
+      <section aria-label="Engine status">
+        <h2 className="text-faint mb-3 text-[11px] font-medium tracking-wider uppercase">
+          Torrent engine
+        </h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <StatCard
+            label="Download"
+            value={formatSpeed(status?.downloadBps ?? 0)}
+          />
+          <StatCard label="Upload" value={formatSpeed(status?.uploadBps ?? 0)} />
+          <StatCard label="Peers" value={status?.livePeers ?? 0} />
+          <StatCard
+            label="DHT nodes"
+            value={
+              status?.dht.enabled
+                ? status.dht.nodesV4 + status.dht.nodesV6
+                : "Off"
+            }
+            hint={
+              status?.dht.enabled
+                ? `${status.dht.nodesV4} IPv4 · ${status.dht.nodesV6} IPv6`
+                : "Magnet links need DHT"
+            }
+          />
+          <StatCard
+            label="Listen port"
+            value={status?.listenPort ?? "—"}
+            hint={status?.announcePort ? `announcing ${status.announcePort}` : undefined}
+          />
+          <StatCard
+            label="Uptime"
+            value={formatDuration(status?.uptimeSeconds ?? 0)}
+          />
+        </div>
+      </section>
+
+      <section aria-label="Session details" className="mt-auto">
+        <dl className="border-border-subtle bg-surface divide-border-subtle divide-y rounded-lg border text-sm">
+          <div className="flex items-baseline justify-between gap-4 px-4 py-3">
+            <dt className="text-muted shrink-0">Download folder</dt>
+            <dd
+              className="text-text selectable truncate font-mono text-xs"
+              title={status?.downloadDir}
+            >
+              {status?.downloadDir ?? "—"}
+            </dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-4 px-4 py-3">
+            <dt className="text-muted shrink-0">Engine</dt>
+            <dd className="text-text selectable font-mono text-xs">
+              {status?.clientVersion ?? "—"}
+            </dd>
+          </div>
+        </dl>
+        <p className="text-faint mt-3 text-xs">
+          Phase 0 — these figures are live from librqbit over the Tauri IPC
+          bridge. Torrent management arrives in Phase 1.
+        </p>
+      </section>
+    </main>
   );
 }
