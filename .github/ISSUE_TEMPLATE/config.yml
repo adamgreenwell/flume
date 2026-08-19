@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/adamgreenwell/flume/wiki
+    about: Setup, usage, architecture, and platform notes.

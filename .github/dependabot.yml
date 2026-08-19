@@ -1,0 +1,46 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Tauri's crates are versioned together; a split upgrade usually fails to
+      # compile, so batch them into one PR.
+      tauri:
+        patterns: ["tauri", "tauri-build", "tauri-plugin-*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      next:
+        patterns:
+          ["next", "eslint-config-next", "react", "react-dom", "@types/react*"]
+      tauri:
+        patterns: ["@tauri-apps/*"]
+      dev-tooling:
+        patterns:
+          [
+            "vitest",
+            "@vitejs/*",
+            "@testing-library/*",
+            "prettier*",
+            "eslint*",
+            "typescript",
+            "jsdom",
+          ]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"

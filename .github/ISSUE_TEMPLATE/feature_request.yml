@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a capability for Flume.
+labels: ["type: feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not the solution you have in mind. This usually leads to a better design.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      description: Flume deliberately stays out of some areas. Please confirm.
+      options:
+        - label: This is not cryptocurrency, chat, RSS automation, or a paid feature
+          required: true

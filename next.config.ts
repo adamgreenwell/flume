@@ -22,6 +22,15 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   trailingSlash: true,
   reactStrictMode: true,
+
+  /*
+   * Next 16 rewrites AGENTS.md / CLAUDE.md at the project root on every
+   * `next dev`. Flume keeps its own hand-written CLAUDE.md as the living
+   * project brief, so the generator is disabled here to stop it clobbering
+   * that file. The Next-version caveat it wants to convey is preserved
+   * manually in CLAUDE.md instead.
+   */
+  agentRules: false,
 };
 
 export default nextConfig;
