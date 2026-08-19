@@ -52,7 +52,10 @@ export default function Home() {
             label="Download"
             value={formatSpeed(status?.downloadBps ?? 0)}
           />
-          <StatCard label="Upload" value={formatSpeed(status?.uploadBps ?? 0)} />
+          <StatCard
+            label="Upload"
+            value={formatSpeed(status?.uploadBps ?? 0)}
+          />
           <StatCard label="Peers" value={status?.livePeers ?? 0} />
           <StatCard
             label="DHT nodes"
@@ -70,7 +73,11 @@ export default function Home() {
           <StatCard
             label="Listen port"
             value={status?.listenPort ?? "—"}
-            hint={status?.announcePort ? `announcing ${status.announcePort}` : undefined}
+            hint={
+              status?.announcePort
+                ? `announcing ${status.announcePort}`
+                : undefined
+            }
           />
           <StatCard
             label="Uptime"

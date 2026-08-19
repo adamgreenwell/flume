@@ -43,7 +43,9 @@ export function StatusPill({ health, pulse = false }: StatusPillProps) {
         className={`h-2 w-2 shrink-0 rounded-full ${dot} ${pulse ? "animate-pulse" : ""}`}
         aria-hidden="true"
       />
-      <span className={`text-xs font-medium tracking-wide ${text}`}>{label}</span>
+      <span className={`text-xs font-medium tracking-wide ${text}`}>
+        {label}
+      </span>
     </span>
   );
 }

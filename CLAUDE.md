@@ -11,28 +11,28 @@ records, not afterwards.
 ## What Flume is
 
 A cross-platform BitTorrent client — Tauri v2 shell, Next.js static-export
-frontend, `librqbit` v9 engine. Tagline: *"A beautiful, cross-platform
-BitTorrent client."* Primary use case: downloading Linux distribution ISOs.
+frontend, `librqbit` v9 engine. Tagline: _"A beautiful, cross-platform
+BitTorrent client."_ Primary use case: downloading Linux distribution ISOs.
 
 Not to be confused with the `flume` crate (an MPMC channel library) or
 flume.dev (a React node editor). Both verified unrelated.
 
 ## Confirmed decisions
 
-| Decision | Value | Rationale |
-| --- | --- | --- |
-| License | Apache-2.0 | Matches librqbit; express patent grant matters for P2P |
-| Repo visibility | Private for now | Built open-source-ready; flip when ready |
-| Git workflow | Feature branch → PR → Claude self-merges when green | PR CI path exercised; readable diff per change |
-| Commit style | Conventional Commits, small and frequent | History is a deliverable, not bookkeeping |
-| Tracking | GitHub Project #8 + issues per roadmap item | Transparent audit trail before going public |
-| Bundle ID | `io.github.adamgreenwell.flume` | `dev.flume.*` would claim an unrelated project's domain |
-| TLS | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux |
-| Fonts | System font stack, not `next/font/google` | Avoids build-time network fetch; native feel per OS |
-| MSRV | Rust 1.88 | A lower MSRV silently blocks security updates — cargo won't select deps needing more |
-| Add flow (Phase 1) | File picker first, then start | ISO torrents bundle several images; avoid downloading the wrong 4 GB |
-| Layout (Phase 1) | Single list + detail panel | Focused; scales fine for a personal workload |
-| Settings store | `tauri-plugin-store` (JSON) | Sufficient for a flat settings object; no SQLite migration burden |
+| Decision           | Value                                                  | Rationale                                                                            |
+| ------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| License            | Apache-2.0                                             | Matches librqbit; express patent grant matters for P2P                               |
+| Repo visibility    | Private for now                                        | Built open-source-ready; flip when ready                                             |
+| Git workflow       | Feature branch → PR → Claude self-merges when green    | PR CI path exercised; readable diff per change                                       |
+| Commit style       | Conventional Commits, small and frequent               | History is a deliverable, not bookkeeping                                            |
+| Tracking           | GitHub Project #8 + issues per roadmap item            | Transparent audit trail before going public                                          |
+| Bundle ID          | `io.github.adamgreenwell.flume`                        | `dev.flume.*` would claim an unrelated project's domain                              |
+| TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                        |
+| Fonts              | System font stack, not `next/font/google`              | Avoids build-time network fetch; native feel per OS                                  |
+| MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more |
+| Add flow (Phase 1) | File picker first, then start                          | ISO torrents bundle several images; avoid downloading the wrong 4 GB                 |
+| Layout (Phase 1)   | Single list + detail panel                             | Focused; scales fine for a personal workload                                         |
+| Settings store     | `tauri-plugin-store` (JSON)                            | Sufficient for a flat settings object; no SQLite migration burden                    |
 
 ## Architecture rules (violating one is a design defect)
 

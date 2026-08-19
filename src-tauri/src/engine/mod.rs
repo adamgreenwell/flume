@@ -170,12 +170,15 @@ impl Engine {
     pub fn core_status(&self) -> CoreStatus {
         let stats = self.session.stats_snapshot();
         let dht = self.dht_status();
+        // Read once: two separate calls could disagree, which would let the
+        // reported port and the derived health describe different states.
+        let listen_addr = self.session.listen_addr();
 
         CoreStatus {
             client_version: self.session.client_name_and_version().to_string(),
-            listen_port: self.session.listen_addr().map(|addr| addr.port()),
+            listen_port: listen_addr.map(|addr| addr.port()),
             announce_port: self.session.announce_port(),
-            health: classify_health(&dht, self.session.listen_addr().is_some()),
+            health: classify_health(&dht, listen_addr.is_some()),
             dht,
             download_dir: self.config.download_dir.display().to_string(),
             uptime_seconds: stats.uptime_seconds,
