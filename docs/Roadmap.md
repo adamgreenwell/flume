@@ -5,7 +5,7 @@ and in [issues](https://github.com/adamgreenwell/flume/issues).
 
 ## Phase 0 — Scaffold & repo hygiene ✅
 
-Complete.
+**Complete** — merged in [#20](https://github.com/adamgreenwell/flume/pull/20), milestone closed, CI green on `main`.
 
 - Next.js 16 static export inside a Tauri v2 shell
 - librqbit v9 embedded, DHT bootstrapping, UPnP forwarding, persistence
