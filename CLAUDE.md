@@ -80,7 +80,8 @@ src-tauri/
   src/engine/         librqbit wrapper — no Tauri types
   src/commands/       #[tauri::command] handlers
   src/state/          shared app state
-  tests/              integration tests against a real Session
+  tests/engine.rs     integration tests against a real librqbit Session
+  tests/commands.rs   IPC-layer tests via Tauri's mock runtime
 docs/                 wiki source, mirrored to the GitHub Wiki
 ```
 

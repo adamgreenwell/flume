@@ -69,9 +69,18 @@ Backend, from `src-tauri/`:
 
 ## Testing strategy
 
-**Backend.** Unit tests live beside the code. Integration tests in
-`src-tauri/tests/engine.rs` drive a real `librqbit::Session` with no Tauri
-runtime — this is why the engine layer must not import Tauri types.
+**Backend.** Two layers of integration test, each proving something the other
+cannot:
+
+- `src-tauri/tests/engine.rs` drives a real `librqbit::Session` with no Tauri
+  runtime at all — this is why the engine layer must not import Tauri types.
+- `src-tauri/tests/commands.rs` drives commands through Tauri's **mock runtime**,
+  so `#[tauri::command]` registration, state injection, and the `serde` round
+  trip are exercised without a WebView. It asserts the presence of every
+  camelCase key in the payload, because a `serde` rename would otherwise break
+  the frontend silently — the compiler cannot check across the IPC boundary.
+
+Unit tests live beside the code.
 
 Tests that need the internet are `#[ignore]`d so CI stays deterministic. Run
 them before any librqbit upgrade.

@@ -13,7 +13,8 @@ Complete.
 - Dark landing page showing live engine telemetry
 - Apache-2.0, README, CONTRIBUTING, issue/PR templates, Dependabot
 - CI: fmt, clippy, tsc, ESLint, Prettier, Vitest, cargo test, audits
-- 5 Rust unit tests, 4 integration tests, 20 frontend tests
+- 5 Rust unit tests, 6 integration tests (engine + IPC), 20 frontend tests
+- Three security advisories found and fixed by CI before the first merge
 
 ## Phase 1 — Core torrent lifecycle (MVP) 🚧
 
