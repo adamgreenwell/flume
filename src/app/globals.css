@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+ * Flume design tokens.
+ *
+ * Defined as CSS custom properties rather than Tailwind config values so the
+ * theme can be swapped at runtime (Phase 2) by flipping `data-theme` on <html>
+ * without a rebuild. `@theme inline` maps them into Tailwind's utility
+ * namespace so `bg-surface`, `text-muted` etc. work as normal utilities.
+ */
+
+:root {
+  /* Backdrop and elevated surfaces. */
+  --flume-bg: #0b0e14;
+  --flume-surface: #121722;
+  --flume-surface-raised: #1a2130;
+  --flume-border: #232c3d;
+
+  /* Text. */
+  --flume-text: #e6ebf4;
+  --flume-text-muted: #8b97ad;
+  --flume-text-faint: #5d6880;
+
+  /* Accent: the "flume" water channel. */
+  --flume-accent: #38bdf8;
+  --flume-accent-dim: #0ea5e9;
+
+  /* Status. */
+  --flume-ok: #34d399;
+  --flume-warn: #fbbf24;
+  --flume-error: #f87171;
+}
+
+@theme inline {
+  --color-bg: var(--flume-bg);
+  --color-surface: var(--flume-surface);
+  --color-surface-raised: var(--flume-surface-raised);
+  --color-border-subtle: var(--flume-border);
+  --color-text: var(--flume-text);
+  --color-muted: var(--flume-text-muted);
+  --color-faint: var(--flume-text-faint);
+  --color-accent: var(--flume-accent);
+  --color-accent-dim: var(--flume-accent-dim);
+  --color-ok: var(--flume-ok);
+  --color-warn: var(--flume-warn);
+  --color-error: var(--flume-error);
+
+  /*
+   * System font stacks rather than a webfont. next/font/google would add a
+   * build-time network fetch (bad for reproducible CI) and the OS UI font is
+   * what makes a desktop app feel native on each platform.
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI",
+    Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
+    "Roboto Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--flume-bg);
+  color: var(--flume-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* A desktop chrome should not rubber-band or let text be selected like a page. */
+  overscroll-behavior: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* Opt text back in where a user would reasonably want to copy it. */
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* A single visible, consistent focus treatment across the app. */
+:focus-visible {
+  outline: 2px solid var(--flume-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

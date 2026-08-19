@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in Flume does not work as expected.
+labels: ["type: bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file this. A clear reproduction is the single most useful thing you can provide.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a torrent via ...
+        2. Pause it
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux (Debian / Ubuntu)
+        - Linux (Fedora / RHEL / Rocky / Alma)
+        - Linux (other)
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.2 / Windows 11 23H2 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: input
+    id: flume-version
+    attributes:
+      label: Flume version
+      placeholder: "0.1.0, or a commit SHA if built from source"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Console output or log file contents. This is automatically formatted as code.
+      render: shell
+
+  - type: input
+    id: torrent
+    attributes:
+      label: Torrent involved (optional)
+      description: Only for legal, publicly distributed files — a Linux ISO is ideal. Do not link copyrighted material.

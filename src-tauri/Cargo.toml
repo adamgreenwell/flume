@@ -1,0 +1,71 @@
+[package]
+name = "flume-app"
+version = "0.1.0"
+description = "A beautiful, cross-platform BitTorrent client."
+authors = ["Adam Greenwell"]
+license = "Apache-2.0"
+repository = "https://github.com/adamgreenwell/flume"
+edition = "2024"
+# Minimum supported Rust version.
+#
+# librqbit 9 needs 1.85+ (edition 2024), but 1.88 is required deliberately:
+# cargo's MSRV-aware resolver will not select a dependency version whose
+# rust-version exceeds ours, and pinning 1.85 silently held back the patched
+# `time` (>= 0.3.47) and `plist` (1.10) releases that fix RUSTSEC-2026-0009,
+# -0194, and -0195. An MSRV we do not actually need costs security updates.
+rust-version = "1.88"
+
+[lib]
+name = "flume_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-log = "2.7.0"
+
+# --- Torrent engine -------------------------------------------------------
+# `default-features = false` drops two defaults we do not want:
+#   * `default-tls`      -> reqwest/native-tls -> OpenSSL. Linking against the
+#                           host OpenSSL makes `.deb`/`.rpm` builds depend on a
+#                           matching libssl at runtime, which is exactly the
+#                           portability trap we are trying to avoid.
+#   * `http-api-client`  -> a client for talking to a *remote* rqbit instance.
+#                           Flume embeds the engine in-process, so this is dead
+#                           weight and extra attack surface.
+# `rust-tls` swaps in rustls (pure Rust, no system TLS) and the ring-backed
+# SHA-1 implementation, so a Linux build has no OpenSSL dependency at all.
+librqbit = { version = "9.0.0", default-features = false, features = ["rust-tls"] }
+
+tokio = { version = "1.48", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-util = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+log = "0.4"
+directories = "6.0"
+
+[features]
+default = []
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Flume's engine layer runs on a live network; these lints catch the classes of
+# mistake that would surface as a hang or a panic in front of the user.
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dev-dependencies]
+# Tauri's mock runtime lets the commands layer be exercised through the real
+# IPC machinery without a WebView, which is the only way to prove the invoke
+# path end to end in an automated test.
+tauri = { version = "2.11.5", features = ["test"] }
+tempfile = "3.27.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
