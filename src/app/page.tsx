@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AddTorrentDialog } from "@/components/AddTorrentDialog";
 import { Button } from "@/components/Button";
 import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
+import { ContextMenu, type ContextMenuItem } from "@/components/ContextMenu";
 import { EmptyState } from "@/components/EmptyState";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TorrentDetail } from "@/components/TorrentDetail";
@@ -46,6 +47,10 @@ export default function Home() {
   const [incomingMagnet, setIncomingMagnet] = useState<string | undefined>(
     undefined,
   );
+  const [menu, setMenu] = useState<{
+    torrent: TorrentSummary;
+    at: { x: number; y: number };
+  } | null>(null);
 
   // A magnet clicked in a browser, or passed on the command line, opens the
   // add dialog prefilled rather than adding silently -- the file-selection
@@ -234,6 +239,7 @@ export default function Home() {
               onRemove={setPendingRemoval}
               onReveal={(x) => void reveal(x)}
               onOpenDetail={setDetailOf}
+              onContextMenu={(t, at) => setMenu({ torrent: t, at })}
             />
           ))}
         </ul>
@@ -260,6 +266,38 @@ export default function Home() {
             Drop to add this torrent
           </p>
         </div>
+      ) : null}
+
+      {menu ? (
+        <ContextMenu
+          position={menu.at}
+          onClose={() => setMenu(null)}
+          items={
+            [
+              {
+                label: menu.torrent.state === "paused" ? "Resume" : "Pause",
+                icon: menu.torrent.state === "paused" ? "play" : "pause",
+                run: () => void toggle(menu.torrent),
+              },
+              {
+                label: "Files and details",
+                icon: "files",
+                run: () => setDetailOf(menu.torrent),
+              },
+              {
+                label: "Open containing folder",
+                icon: "folder",
+                run: () => void reveal(menu.torrent),
+              },
+              {
+                label: "Remove",
+                icon: "trash",
+                destructive: true,
+                run: () => setPendingRemoval(menu.torrent),
+              },
+            ] satisfies ContextMenuItem[]
+          }
+        />
       ) : null}
 
       {detailOf ? (
