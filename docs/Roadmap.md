@@ -22,12 +22,12 @@ The phase that makes Flume usable. **The core loop works**: telemetry is
 event-based, and torrents can be added by magnet or file with a
 select-files-first flow, then paused, resumed, and removed.
 
-- Add via magnet link, with clipboard detection ([#3](https://github.com/adamgreenwell/flume/issues/3))
-- Add via `.torrent` file picker and drag-and-drop ([#4](https://github.com/adamgreenwell/flume/issues/4))
-- Torrent list: progress, speeds, ETA, peers, ratio; pause/resume/remove ([#5](https://github.com/adamgreenwell/flume/issues/5))
-- Per-torrent file tree with selective download ([#6](https://github.com/adamgreenwell/flume/issues/6))
-- Settings with persistence ([#7](https://github.com/adamgreenwell/flume/issues/7))
-- Resume correctly across restarts ([#8](https://github.com/adamgreenwell/flume/issues/8))
+- ~~Add via magnet link~~ ✅ ([#3](https://github.com/adamgreenwell/flume/issues/3))
+- ~~Add via `.torrent` file picker~~ ✅ ([#4](https://github.com/adamgreenwell/flume/issues/4))
+- ~~Torrent list: progress, speeds, ETA, peers, ratio; pause/resume/remove~~ ✅ ([#5](https://github.com/adamgreenwell/flume/issues/5))
+- ~~Per-torrent file tree with selective download~~ ✅ ([#6](https://github.com/adamgreenwell/flume/issues/6))
+- ~~Settings with persistence~~ ✅ ([#7](https://github.com/adamgreenwell/flume/issues/7))
+- ~~Resume correctly across restarts~~ ✅ ([#8](https://github.com/adamgreenwell/flume/issues/8))
 - Investigate Windows file-locking and seeding ([#9](https://github.com/adamgreenwell/flume/issues/9))
 
 Also in this phase: replace the Phase 0 polling hook with backend-pushed,
