@@ -1,5 +1,9 @@
 # Platform Notes
 
+> Testing a build on a platform for the first time? Work through
+> [[Smoke-Test-Checklist]] rather than clicking around — it is ordered so the
+> most likely failures surface first.
+
 ## Build matrix
 
 | Target                     | Runner                  | Output                |
