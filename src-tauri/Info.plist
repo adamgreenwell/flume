@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated Info.plist by tauri-bundler.
+
+	  This is set here rather than via `bundle.macOS.minimumSystemVersion` in
+	  tauri.conf.json on purpose. That setting makes the Tauri CLI export
+	  MACOSX_DEPLOYMENT_TARGET for the whole cargo build, and that variable
+	  leaks into the *host* compilation of proc-macro crates, where it breaks
+	  `ctor-proc-macro` — the release build then fails with
+	  "can't find crate for `ctor_proc_macro`". See issue #22.
+
+	  Setting the key directly gets the same user-visible result (Finder
+	  refuses to launch the app on an older macOS) with none of the build
+	  breakage.
+	-->
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+</dict>
+</plist>
