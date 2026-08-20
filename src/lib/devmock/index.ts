@@ -194,6 +194,12 @@ export function install(): void {
   if ((w as Record<string, unknown>).__FLUME_MOCK_INSTALLED__) return;
   (w as Record<string, unknown>).__FLUME_MOCK_INSTALLED__ = true;
 
+  // `?mock=empty` renders the empty state, which is otherwise unreachable
+  // once the harness is populated. Empty and error states are exactly the
+  // screens that get neglected, so they need to be easy to look at.
+  const scenario = new URLSearchParams(window.location.search).get("mock");
+  const torrents = scenario === "empty" ? [] : TORRENTS;
+
   const callbacks = new Map<number, (data: unknown) => void>();
   const listeners = new Map<string, number>();
 
@@ -213,7 +219,7 @@ export function install(): void {
         case "plugin:event|unlisten":
           return null;
         case "get_telemetry":
-          return { core: CORE, torrents: TORRENTS };
+          return { core: CORE, torrents };
         case "get_core_status":
           return CORE;
         case "get_settings":
@@ -248,7 +254,7 @@ export function install(): void {
     callbacks.get(handler)?.({
       event: "flume://telemetry",
       id: handler,
-      payload: { core: CORE, torrents: TORRENTS },
+      payload: { core: CORE, torrents },
     });
   }, 1000);
 }

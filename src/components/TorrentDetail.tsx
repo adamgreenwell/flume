@@ -17,6 +17,7 @@ import {
 
 import { Button } from "./Button";
 import { PeerList } from "./PeerList";
+import { Skeleton } from "./Skeleton";
 import { PieceHeatmap } from "./PieceHeatmap";
 import { ProgressBar } from "./ProgressBar";
 import { TrackerList } from "./TrackerList";
@@ -219,7 +220,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
         <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
           {tab === "files" ? (
             files === null ? (
-              <p className="text-muted text-sm">Loading files…</p>
+              <Skeleton rows={3} label="Loading files" />
             ) : (
               <ul className="border-border-subtle bg-bg rounded-md border">
                 {files.map((file) => (

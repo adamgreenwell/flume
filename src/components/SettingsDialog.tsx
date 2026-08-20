@@ -9,6 +9,7 @@ import { applyTheme } from "@/lib/theme";
 import { isCommandError, type Settings, type Theme } from "@/lib/ipc/types";
 
 import { Button } from "./Button";
+import { Skeleton } from "./Skeleton";
 
 /** Props for {@link SettingsDialog}. */
 export interface SettingsDialogProps {
@@ -107,7 +108,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         <h2 className="text-text text-lg font-semibold">Settings</h2>
 
         {draft === null ? (
-          <p className="text-muted text-sm">Loading…</p>
+          <Skeleton rows={4} label="Loading settings" />
         ) : (
           <>
             <section className="flex flex-col gap-2">
