@@ -163,6 +163,54 @@ export interface TorrentFileState {
   selected: boolean;
 }
 
+/** One connected peer. Mirrors Rust `PeerInfo`. */
+export interface PeerInfo {
+  /** Remote socket address, as `host:port`. */
+  address: string;
+  /** Client software the peer reports, if it identified itself. */
+  client: string | null;
+  /** Transport in use: `tcp`, `utp`, or `socks`. */
+  transport: string | null;
+  /** The engine's state label for this peer. */
+  state: string;
+  /** Bytes downloaded from this peer. */
+  downloadedBytes: number;
+  /** Bytes uploaded to this peer. */
+  uploadedBytes: number;
+}
+
+/**
+ * A downsampled view of which pieces are present. Mirrors Rust `PieceMap`.
+ *
+ * Each bucket summarises a run of pieces as a level from 0 (none) to 255
+ * (all), so the payload stays small and fixed-size no matter how many pieces
+ * the torrent has.
+ */
+export interface PieceMap {
+  /** Total pieces in the torrent. */
+  totalPieces: number;
+  /** How many pieces each bucket represents. */
+  piecesPerBucket: number;
+  /** Completion level per bucket, `0..=255`. */
+  buckets: number[];
+}
+
+/** Detail-view data beyond the file list. Mirrors Rust `TorrentDetail`. */
+export interface TorrentDetail {
+  /** Connected peers; empty when the torrent is not live. */
+  peers: PeerInfo[];
+  /**
+   * Tracker announce URLs.
+   *
+   * URLs only — librqbit v9 exposes the configured tracker list but not
+   * per-tracker announce status, so there is no last-announce or peer count
+   * to show.
+   */
+  trackers: string[];
+  /** Piece completion, or `null` when the torrent is not live or paused. */
+  pieces: PieceMap | null;
+}
+
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
 export type Theme = "system" | "light" | "dark";
 

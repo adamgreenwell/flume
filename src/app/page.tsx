@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AddTorrentDialog } from "@/components/AddTorrentDialog";
 import { Button } from "@/components/Button";
 import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
+import { EmptyState } from "@/components/EmptyState";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TorrentDetail } from "@/components/TorrentDetail";
 import { StatusPill } from "@/components/StatusPill";
@@ -169,20 +170,7 @@ export default function Home() {
       ) : null}
 
       {torrents.length === 0 ? (
-        <div className="border-border-subtle flex flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-20 text-center">
-          <p className="text-text text-sm font-medium">No torrents yet</p>
-          <p className="text-muted max-w-sm text-xs">
-            Paste a magnet link or choose a <code>.torrent</code> file. Flume
-            shows you the file list first, so you only download what you want.
-          </p>
-          <Button
-            variant="secondary"
-            onClick={() => setIsAdding(true)}
-            className="mt-1"
-          >
-            Add your first torrent
-          </Button>
-        </div>
+        <EmptyState status={status} onAdd={() => setIsAdding(true)} />
       ) : (
         <ul className="flex flex-col gap-2.5">
           {torrents.map((t) => (

@@ -72,6 +72,7 @@ pub fn run() {
             commands::remove_torrent,
             commands::set_only_files,
             commands::get_torrent_files,
+            commands::get_torrent_detail,
             commands::get_settings,
             commands::update_settings
         ])

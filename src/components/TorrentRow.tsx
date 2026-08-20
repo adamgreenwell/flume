@@ -1,9 +1,9 @@
 "use client";
 
 import { formatBytes, formatDuration, formatSpeed } from "@/lib/format";
-import type { TorrentSummary, TorrentState } from "@/lib/ipc/types";
+import type { TorrentState, TorrentSummary } from "@/lib/ipc/types";
 
-import { Button } from "./Button";
+import { IconButton } from "./IconButton";
 import { ProgressBar } from "./ProgressBar";
 
 /** Short label per lifecycle state. */
@@ -15,19 +15,20 @@ const STATE_LABEL: Record<TorrentState, string> = {
   error: "Error",
 };
 
-const STATE_COLOR: Record<TorrentState, string> = {
-  checking: "text-muted",
-  downloading: "text-accent",
-  seeding: "text-ok",
-  paused: "text-faint",
-  error: "text-error",
+/** Indicator colour per lifecycle state. */
+const STATE_DOT: Record<TorrentState, string> = {
+  checking: "bg-muted",
+  downloading: "bg-accent",
+  seeding: "bg-ok",
+  paused: "bg-faint",
+  error: "bg-error",
 };
 
 /**
  * Completion fraction for a summary.
  *
  * Mirrors the Rust `progress_fraction`, including treating a finished torrent
- * as complete before metadata resolves.
+ * as complete before its metadata resolves.
  *
  * @param t - The torrent summary.
  * @returns A value in `0..=1`.
@@ -38,17 +39,27 @@ export function progressFraction(t: TorrentSummary): number {
   return Math.min(Math.max(t.progressBytes / t.totalBytes, 0), 1);
 }
 
+/** One statistic in the row's footer. */
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <dt className="text-faint">{label}</dt>
+      <dd className="text-muted font-mono tabular-nums">{value}</dd>
+    </div>
+  );
+}
+
 /** Props for {@link TorrentRow}. */
 export interface TorrentRowProps {
   /** The torrent to render. */
   torrent: TorrentSummary;
   /** Pause or resume, depending on current state. */
   onToggle: (t: TorrentSummary) => void;
-  /** Begin removal; the caller is responsible for confirming. */
+  /** Begin removal; the caller confirms. */
   onRemove: (t: TorrentSummary) => void;
   /** Reveal the download in the OS file manager. */
   onReveal: (t: TorrentSummary) => void;
-  /** Open the per-torrent file detail. */
+  /** Open the per-torrent detail panel. */
   onOpenDetail: (t: TorrentSummary) => void;
 }
 
@@ -68,48 +79,63 @@ export function TorrentRow({
   const fraction = progressFraction(torrent);
   const isPaused = torrent.state === "paused";
   const percent = Math.round(fraction * 100);
+  const ratio =
+    torrent.progressBytes > 0
+      ? (torrent.uploadedBytes / torrent.progressBytes).toFixed(2)
+      : "0.00";
 
   return (
-    <li className="border-border-subtle bg-surface hover:border-muted/40 rounded-lg border p-4 transition-colors">
-      <div className="flex items-start justify-between gap-3">
+    <li className="group border-border-subtle bg-surface hover:border-muted/40 rounded-lg border px-4 py-3.5 transition-colors">
+      <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <p
-            className="text-text truncate text-sm font-medium"
+            className="text-text truncate text-[0.9375rem] leading-snug font-medium"
             title={torrent.name}
           >
             {torrent.name}
           </p>
-          <p className="text-muted mt-0.5 text-xs">
-            <span className={STATE_COLOR[torrent.state]}>
-              {STATE_LABEL[torrent.state]}
-            </span>
-            {" · "}
+          <div className="text-muted mt-1 flex items-center gap-1.5 text-xs">
+            <span
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATE_DOT[torrent.state]}`}
+              aria-hidden="true"
+            />
+            <span>{STATE_LABEL[torrent.state]}</span>
+            <span className="text-faint">·</span>
             <span className="font-mono tabular-nums">
-              {formatBytes(torrent.progressBytes)} /{" "}
+              {formatBytes(torrent.progressBytes)} of{" "}
               {formatBytes(torrent.totalBytes)}
             </span>
-            {" · "}
+            <span className="text-faint">·</span>
             <span className="font-mono tabular-nums">{percent}%</span>
-          </p>
+          </div>
         </div>
 
-        <div className="flex shrink-0 gap-1">
-          <Button variant="ghost" onClick={() => onOpenDetail(torrent)}>
-            Files
-          </Button>
-          <Button variant="ghost" onClick={() => onToggle(torrent)}>
-            {isPaused ? "Resume" : "Pause"}
-          </Button>
-          <Button variant="ghost" onClick={() => onReveal(torrent)}>
-            Show
-          </Button>
-          <Button variant="ghost" onClick={() => onRemove(torrent)}>
-            Remove
-          </Button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <IconButton
+            icon={isPaused ? "play" : "pause"}
+            label={isPaused ? "Resume" : "Pause"}
+            onClick={() => onToggle(torrent)}
+          />
+          <IconButton
+            icon="files"
+            label="Files and details"
+            onClick={() => onOpenDetail(torrent)}
+          />
+          <IconButton
+            icon="folder"
+            label="Open containing folder"
+            onClick={() => onReveal(torrent)}
+          />
+          <IconButton
+            icon="trash"
+            label="Remove"
+            destructive
+            onClick={() => onRemove(torrent)}
+          />
         </div>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-2.5">
         <ProgressBar
           value={fraction}
           state={torrent.state}
@@ -117,39 +143,14 @@ export function TorrentRow({
         />
       </div>
 
-      <dl className="text-muted mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-        <div className="flex gap-1.5">
-          <dt className="text-faint">Down</dt>
-          <dd className="font-mono tabular-nums">
-            {formatSpeed(torrent.downloadBps)}
-          </dd>
-        </div>
-        <div className="flex gap-1.5">
-          <dt className="text-faint">Up</dt>
-          <dd className="font-mono tabular-nums">
-            {formatSpeed(torrent.uploadBps)}
-          </dd>
-        </div>
-        <div className="flex gap-1.5">
-          <dt className="text-faint">Peers</dt>
-          <dd className="font-mono tabular-nums">{torrent.livePeers}</dd>
-        </div>
+      <dl className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs">
+        <Stat label="Down" value={formatSpeed(torrent.downloadBps)} />
+        <Stat label="Up" value={formatSpeed(torrent.uploadBps)} />
+        <Stat label="Peers" value={torrent.livePeers} />
         {torrent.etaSeconds !== null ? (
-          <div className="flex gap-1.5">
-            <dt className="text-faint">ETA</dt>
-            <dd className="font-mono tabular-nums">
-              {formatDuration(torrent.etaSeconds)}
-            </dd>
-          </div>
+          <Stat label="ETA" value={formatDuration(torrent.etaSeconds)} />
         ) : null}
-        <div className="flex gap-1.5">
-          <dt className="text-faint">Ratio</dt>
-          <dd className="font-mono tabular-nums">
-            {torrent.progressBytes > 0
-              ? (torrent.uploadedBytes / torrent.progressBytes).toFixed(2)
-              : "0.00"}
-          </dd>
-        </div>
+        <Stat label="Ratio" value={ratio} />
       </dl>
 
       {torrent.error ? (

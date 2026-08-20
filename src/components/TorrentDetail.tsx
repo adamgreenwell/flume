@@ -3,37 +3,60 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { formatBytes } from "@/lib/format";
-import { getTorrentFiles, setOnlyFiles } from "@/lib/ipc/client";
+import {
+  getTorrentDetail,
+  getTorrentFiles,
+  setOnlyFiles,
+} from "@/lib/ipc/client";
 import {
   isCommandError,
+  type TorrentDetail as TorrentDetailData,
   type TorrentFileState,
   type TorrentSummary,
 } from "@/lib/ipc/types";
 
 import { Button } from "./Button";
+import { PeerList } from "./PeerList";
+import { Skeleton } from "./Skeleton";
+import { PieceHeatmap } from "./PieceHeatmap";
 import { ProgressBar } from "./ProgressBar";
+import { TrackerList } from "./TrackerList";
+
+/** Tabs available in the detail panel. */
+const TABS = ["files", "peers", "trackers", "pieces"] as const;
+
+/** One of {@link TABS}. */
+export type DetailTab = (typeof TABS)[number];
+
+/** How often peers and piece data refresh while the panel is open. */
+const DETAIL_REFRESH_MS = 2000;
 
 /** Props for {@link TorrentDetail}. */
 export interface TorrentDetailProps {
-  /** The torrent whose files are shown. */
+  /** The torrent being inspected. */
   torrent: TorrentSummary;
   /** Called when the panel should close. */
   onClose: () => void;
 }
 
 /**
- * Per-torrent detail: the file list, with selection editable after the fact.
+ * Per-torrent detail: files, peers, trackers, and a piece map.
  *
- * File progress is fetched on open rather than streamed in telemetry. A file
- * list is per-torrent and only visible while this panel is open, so pushing it
- * to every client every second would be exactly the kind of unbounded payload
- * the telemetry design avoids.
+ * All of this is fetched on demand rather than streamed in telemetry. It is
+ * per-torrent and only interesting while the panel is open, so pushing it to
+ * every client every second would grow the telemetry payload with the torrent
+ * count for no benefit.
+ *
+ * Peers and pieces refresh on their own slower interval while open, since they
+ * change continuously; the file list only refreshes after an edit.
  *
  * @param props - See {@link TorrentDetailProps}.
  * @returns The rendered panel.
  */
 export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
+  const [tab, setTab] = useState<DetailTab>("files");
   const [files, setFiles] = useState<TorrentFileState[] | null>(null);
+  const [detail, setDetail] = useState<TorrentDetailData | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -47,9 +70,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
     setError(null);
   }, []);
 
-  // Fetch on open, and whenever the panel is pointed at a different torrent.
-  // The `active` guard matters: closing the panel or switching torrents while
-  // a fetch is in flight must not apply the stale result.
+  // Files load once per torrent; they only change when the user edits them.
   useEffect(() => {
     let active = true;
     getTorrentFiles(torrent.id)
@@ -65,6 +86,32 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
       active = false;
     };
   }, [torrent.id, applyLoaded]);
+
+  // Peers and pieces move constantly, so poll them while the panel is open.
+  // Chained timeouts rather than an interval, so a slow call cannot stack.
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const tick = () => {
+      getTorrentDetail(torrent.id)
+        .then((next) => {
+          if (active) setDetail(next);
+        })
+        .catch(() => {
+          // Transient while a torrent restarts; the next tick recovers.
+        })
+        .finally(() => {
+          if (active) timer = setTimeout(tick, DETAIL_REFRESH_MS);
+        });
+    };
+    tick();
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [torrent.id]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -107,6 +154,13 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
     setSelected(next);
   };
 
+  const counts: Record<DetailTab, number | null> = {
+    files: files?.length ?? null,
+    peers: detail?.peers.length ?? null,
+    trackers: detail?.trackers.length ?? null,
+    pieces: null,
+  };
+
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6"
@@ -117,8 +171,8 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Files in ${torrent.name}`}
-        className="border-border-subtle bg-surface flex max-h-[80vh] w-full max-w-2xl flex-col gap-4 rounded-xl border p-5 shadow-2xl"
+        aria-label={`Details for ${torrent.name}`}
+        className="border-border-subtle bg-surface flex max-h-[82vh] w-full max-w-2xl flex-col gap-4 rounded-xl border p-5 shadow-2xl"
       >
         <div className="min-w-0">
           <h2
@@ -128,53 +182,103 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
             {torrent.name}
           </h2>
           <p className="text-muted mt-0.5 text-xs">
-            {files?.length ?? 0} file{files?.length === 1 ? "" : "s"} ·{" "}
-            <span className="font-mono">{formatBytes(torrent.totalBytes)}</span>
+            <span className="font-mono tabular-nums">
+              {formatBytes(torrent.progressBytes)} /{" "}
+              {formatBytes(torrent.totalBytes)}
+            </span>
           </p>
         </div>
 
-        {files === null ? (
-          <p className="text-muted text-sm">Loading files…</p>
-        ) : (
-          <ul className="border-border-subtle bg-bg min-h-0 flex-1 overflow-y-auto rounded-md border">
-            {files.map((file) => {
-              const fraction =
-                file.length === 0 ? 1 : file.progressBytes / file.length;
-              return (
-                <li
-                  key={file.index}
-                  className="border-border-subtle border-b px-3 py-2.5 last:border-b-0"
-                >
-                  <label className="flex cursor-pointer items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(file.index)}
-                      onChange={() => toggle(file.index)}
-                      className="accent-accent h-4 w-4 shrink-0"
-                    />
-                    <span
-                      className={`min-w-0 flex-1 truncate text-sm ${selected.has(file.index) ? "text-text" : "text-faint"}`}
-                      title={file.path}
-                    >
-                      {file.path}
-                    </span>
-                    <span className="text-muted shrink-0 font-mono text-xs tabular-nums">
-                      {formatBytes(file.progressBytes)} /{" "}
-                      {formatBytes(file.length)}
-                    </span>
-                  </label>
-                  <div className="mt-1.5 pl-7">
-                    <ProgressBar
-                      value={fraction}
-                      state={torrent.state}
-                      label={`${file.path} progress`}
-                    />
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <div
+          className="border-border-subtle flex gap-1 border-b"
+          role="tablist"
+          aria-label="Torrent details"
+        >
+          {TABS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              role="tab"
+              aria-selected={tab === name}
+              onClick={() => setTab(name)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm capitalize transition-colors ${
+                tab === name
+                  ? "border-accent text-text"
+                  : "text-muted hover:text-text border-transparent"
+              }`}
+            >
+              {name}
+              {counts[name] !== null ? (
+                <span className="text-faint ml-1.5 font-mono text-xs">
+                  {counts[name]}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
+          {tab === "files" ? (
+            files === null ? (
+              <Skeleton rows={3} label="Loading files" />
+            ) : (
+              <ul className="border-border-subtle bg-bg rounded-md border">
+                {files.map((file) => (
+                  <li
+                    key={file.index}
+                    className="border-border-subtle border-b px-3 py-2.5 last:border-b-0"
+                  >
+                    <label className="flex cursor-pointer items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(file.index)}
+                        onChange={() => toggle(file.index)}
+                        className="accent-accent h-4 w-4 shrink-0"
+                      />
+                      <span
+                        className={`min-w-0 flex-1 truncate text-sm ${selected.has(file.index) ? "text-text" : "text-faint"}`}
+                        title={file.path}
+                      >
+                        {file.path}
+                      </span>
+                      <span className="text-muted shrink-0 font-mono text-xs tabular-nums">
+                        {formatBytes(file.progressBytes)} /{" "}
+                        {formatBytes(file.length)}
+                      </span>
+                    </label>
+                    <div className="mt-1.5 pl-7">
+                      <ProgressBar
+                        value={
+                          file.length === 0
+                            ? 1
+                            : file.progressBytes / file.length
+                        }
+                        state={torrent.state}
+                        label={`${file.path} progress`}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : null}
+
+          {tab === "peers" ? <PeerList peers={detail?.peers ?? []} /> : null}
+
+          {tab === "trackers" ? (
+            <TrackerList trackers={detail?.trackers ?? []} />
+          ) : null}
+
+          {tab === "pieces" ? (
+            detail?.pieces ? (
+              <PieceHeatmap pieces={detail.pieces} />
+            ) : (
+              <p className="text-faint py-6 text-center text-xs">
+                Piece information appears once the torrent is running or paused.
+              </p>
+            )
+          ) : null}
+        </div>
 
         {error ? (
           <p
@@ -187,7 +291,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
 
         <div className="flex items-center justify-between gap-2">
           <p className="text-faint text-xs">
-            {isDirty
+            {tab === "files" && isDirty
               ? "Deselected files stop downloading. Existing data is kept."
               : ""}
           </p>
@@ -195,13 +299,15 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
-            <Button
-              variant="primary"
-              onClick={() => void save()}
-              disabled={!isDirty || selected.size === 0 || isSaving}
-            >
-              {isSaving ? "Saving…" : "Save selection"}
-            </Button>
+            {tab === "files" ? (
+              <Button
+                variant="primary"
+                onClick={() => void save()}
+                disabled={!isDirty || selected.size === 0 || isSaving}
+              >
+                {isSaving ? "Saving…" : "Save selection"}
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

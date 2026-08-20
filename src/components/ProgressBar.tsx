@@ -1,11 +1,17 @@
 import type { TorrentState } from "@/lib/ipc/types";
 
-/** Bar colour per lifecycle state. */
+/**
+ * Bar colour per lifecycle state.
+ *
+ * Paused uses `bg-muted` rather than the fainter `bg-faint`: against the
+ * track, faint was almost invisible, which made a paused torrent look like it
+ * had lost its progress rather than merely stopped.
+ */
 const FILL_BY_STATE: Record<TorrentState, string> = {
   checking: "bg-muted",
   downloading: "bg-accent",
   seeding: "bg-ok",
-  paused: "bg-faint",
+  paused: "bg-muted",
   error: "bg-error",
 };
 

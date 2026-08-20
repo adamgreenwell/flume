@@ -10,7 +10,8 @@ use tauri::State;
 
 use crate::{
     engine::{
-        CoreStatus, EngineError, TelemetrySnapshot, TorrentFileState, TorrentPreview, TorrentSource,
+        CoreStatus, EngineError, TelemetrySnapshot, TorrentDetail, TorrentFileState,
+        TorrentPreview, TorrentSource,
     },
     settings::{Settings, SettingsError},
     state::AppState,
@@ -265,4 +266,22 @@ pub async fn get_torrent_files(
 ) -> Result<Vec<TorrentFileState>, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
     Ok(engine.torrent_files(id)?)
+}
+
+/// Returns peers, trackers, and piece completion for one torrent.
+///
+/// Fetched on demand by the detail view rather than streamed in telemetry:
+/// this data is only interesting while someone is looking at it, and pushing
+/// it every second would grow the telemetry payload with the torrent count.
+///
+/// # Errors
+///
+/// `unknownTorrent` if no such torrent exists.
+#[tauri::command]
+pub async fn get_torrent_detail(
+    state: State<'_, AppState>,
+    id: usize,
+) -> Result<TorrentDetail, CommandError> {
+    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    Ok(engine.torrent_detail(id)?)
 }
