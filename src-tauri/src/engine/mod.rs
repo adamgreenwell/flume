@@ -29,7 +29,7 @@ use librqbit::{
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
-pub use torrent::{TorrentState, TorrentSummary};
+pub use torrent::{TorrentFileState, TorrentState, TorrentSummary};
 
 /// Errors that can arise while starting or querying the engine.
 #[derive(Debug, thiserror::Error)]
@@ -466,6 +466,39 @@ impl Engine {
             .update_only_files(&handle, &files.into_iter().collect())
             .await
             .map_err(EngineError::Operation)
+    }
+
+    /// Lists a torrent's files with their individual progress and selection.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists, or
+    /// [`EngineError::Metadata`] if its metadata has not resolved yet — which
+    /// happens briefly for a magnet added before its file list arrived.
+    pub fn torrent_files(&self, id: usize) -> Result<Vec<TorrentFileState>, EngineError> {
+        let handle = self.handle(id)?;
+        let stats = handle.stats();
+        // `only_files` is None when every file is selected.
+        let selection = handle.only_files();
+
+        handle
+            .with_metadata(|meta| {
+                meta.file_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(index, info)| TorrentFileState {
+                        index,
+                        path: info.relative_filename.to_string_lossy().replace('\\', "/"),
+                        length: info.len,
+                        // `file_progress` is positional and should match
+                        // `file_infos`; fall back to zero rather than panicking
+                        // if a future version ever disagrees.
+                        progress_bytes: stats.file_progress.get(index).copied().unwrap_or(0),
+                        selected: selection.as_ref().is_none_or(|only| only.contains(&index)),
+                    })
+                    .collect()
+            })
+            .map_err(EngineError::Metadata)
     }
 
     /// Applies global transfer limits to the running session.

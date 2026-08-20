@@ -7,6 +7,7 @@ import { AddTorrentDialog } from "@/components/AddTorrentDialog";
 import { Button } from "@/components/Button";
 import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { TorrentDetail } from "@/components/TorrentDetail";
 import { StatusPill } from "@/components/StatusPill";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
@@ -33,6 +34,7 @@ export default function Home() {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
+  const [detailOf, setDetailOf] = useState<TorrentSummary | null>(null);
 
   // Apply the persisted theme once the engine can answer. Until then the
   // stylesheet's own `prefers-color-scheme` default is in force, so there is
@@ -180,6 +182,7 @@ export default function Home() {
               onToggle={(x) => void toggle(x)}
               onRemove={setPendingRemoval}
               onReveal={(x) => void reveal(x)}
+              onOpenDetail={setDetailOf}
             />
           ))}
         </ul>
@@ -187,6 +190,10 @@ export default function Home() {
 
       {isAdding ? (
         <AddTorrentDialog onClose={() => setIsAdding(false)} />
+      ) : null}
+
+      {detailOf ? (
+        <TorrentDetail torrent={detailOf} onClose={() => setDetailOf(null)} />
       ) : null}
 
       {isConfiguring ? (

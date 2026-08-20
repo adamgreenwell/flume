@@ -9,7 +9,9 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::{
-    engine::{CoreStatus, EngineError, TelemetrySnapshot, TorrentPreview, TorrentSource},
+    engine::{
+        CoreStatus, EngineError, TelemetrySnapshot, TorrentFileState, TorrentPreview, TorrentSource,
+    },
     settings::{Settings, SettingsError},
     state::AppState,
 };
@@ -248,4 +250,19 @@ pub async fn set_only_files(
 ) -> Result<(), CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
     Ok(engine.set_only_files(id, files).await?)
+}
+
+/// Lists a torrent's files with their progress and current selection.
+///
+/// # Errors
+///
+/// `unknownTorrent` if no such torrent exists, or `metadata` if the torrent's
+/// file list has not resolved yet.
+#[tauri::command]
+pub async fn get_torrent_files(
+    state: State<'_, AppState>,
+    id: usize,
+) -> Result<Vec<TorrentFileState>, CommandError> {
+    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    Ok(engine.torrent_files(id)?)
 }

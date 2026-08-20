@@ -143,6 +143,26 @@ export interface TorrentPreview {
   alreadyAdded: boolean;
 }
 
+/**
+ * One file inside an *added* torrent, with progress. Mirrors Rust
+ * `TorrentFileState`.
+ *
+ * Distinct from {@link TorrentFile}, which describes a torrent that has not
+ * been added and so has no progress or selection.
+ */
+export interface TorrentFileState {
+  /** Index within the torrent; what selection refers to. */
+  index: number;
+  /** Path relative to the torrent root. */
+  path: string;
+  /** Total size in bytes. */
+  length: number;
+  /** Bytes downloaded and verified for this file. */
+  progressBytes: number;
+  /** Whether this file is currently selected for download. */
+  selected: boolean;
+}
+
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
 export type Theme = "system" | "light" | "dark";
 

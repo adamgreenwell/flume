@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreStatus,
   Settings,
+  TorrentFileState,
   TelemetrySnapshot,
   TorrentPreview,
   TorrentSource,
@@ -147,4 +148,16 @@ export async function getSettings(): Promise<Settings> {
  */
 export async function updateSettings(settings: Settings): Promise<Settings> {
   return invoke<Settings>("update_settings", { settings });
+}
+
+/**
+ * Lists a torrent's files with progress and current selection.
+ *
+ * @param id - Session id from the telemetry stream.
+ * @returns One entry per file, in torrent order.
+ * @throws A {@link CommandError} with kind `metadata` if the file list has not
+ *   resolved yet, which happens briefly for a freshly added magnet.
+ */
+export async function getTorrentFiles(id: number): Promise<TorrentFileState[]> {
+  return invoke<TorrentFileState[]>("get_torrent_files", { id });
 }

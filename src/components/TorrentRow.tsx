@@ -48,6 +48,8 @@ export interface TorrentRowProps {
   onRemove: (t: TorrentSummary) => void;
   /** Reveal the download in the OS file manager. */
   onReveal: (t: TorrentSummary) => void;
+  /** Open the per-torrent file detail. */
+  onOpenDetail: (t: TorrentSummary) => void;
 }
 
 /**
@@ -61,6 +63,7 @@ export function TorrentRow({
   onToggle,
   onRemove,
   onReveal,
+  onOpenDetail,
 }: TorrentRowProps) {
   const fraction = progressFraction(torrent);
   const isPaused = torrent.state === "paused";
@@ -91,6 +94,9 @@ export function TorrentRow({
         </div>
 
         <div className="flex shrink-0 gap-1">
+          <Button variant="ghost" onClick={() => onOpenDetail(torrent)}>
+            Files
+          </Button>
           <Button variant="ghost" onClick={() => onToggle(torrent)}>
             {isPaused ? "Resume" : "Pause"}
           </Button>
