@@ -102,6 +102,47 @@ export interface TelemetrySnapshot {
   torrents: TorrentSummary[];
 }
 
+/**
+ * Where a torrent is being added from. Mirrors Rust `TorrentSource`.
+ *
+ * The `file` variant carries torrent *metadata* — a few kilobytes of names and
+ * piece hashes — not piece data. It is the one payload that legitimately
+ * crosses the boundary, because the user picked the file in the webview.
+ */
+export type TorrentSource =
+  { kind: "magnet"; uri: string } | { kind: "file"; bytes: number[] };
+
+/** One file inside a torrent. Mirrors Rust `TorrentFile`. */
+export interface TorrentFile {
+  /** Index within the torrent; this is what selection refers to. */
+  index: number;
+  /** Path relative to the torrent root, using forward slashes. */
+  path: string;
+  /** Size in bytes. */
+  length: number;
+}
+
+/**
+ * Resolved metadata for a torrent that has not started. Mirrors Rust
+ * `TorrentPreview`.
+ *
+ * Deliberately carries no `.torrent` bytes: the engine holds those and looks
+ * them up by `infoHash` on confirm, so a magnet's metadata is fetched from the
+ * DHT exactly once.
+ */
+export interface TorrentPreview {
+  /** Hex info hash; also the key used to confirm the add. */
+  infoHash: string;
+  /** Display name from the metadata. */
+  name: string;
+  /** Combined size of every file. */
+  totalBytes: number;
+  /** Every file, in torrent order. */
+  files: TorrentFile[];
+  /** Whether this torrent is already in the session. */
+  alreadyAdded: boolean;
+}
+
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {
   /** Stable identifier for the error class, e.g. `"engineNotReady"`. */
