@@ -15,6 +15,7 @@
 use flume_lib::{
     commands,
     engine::{Engine, EngineConfig},
+    settings::Settings,
     state::AppState,
 };
 use tauri::{
@@ -68,7 +69,8 @@ fn invoke_get_core_status<W: AsRef<tauri::Webview<MockRuntime>>>(
 
 #[test]
 fn returns_engine_not_ready_before_the_engine_starts() {
-    let app = mock_app_with_state(AppState::new());
+    let tmp = TempDir::new().expect("temp dir");
+    let app = mock_app_with_state(AppState::new(Settings::default(), tmp.path().to_path_buf()));
     let webview = main_webview(&app);
 
     let err = invoke_get_core_status(&webview).expect_err("should reject while starting");
@@ -96,7 +98,7 @@ fn returns_camel_case_status_once_the_engine_is_running() {
     };
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let state = AppState::new();
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf());
     let engine = runtime
         .block_on(Engine::start(config))
         .expect("engine starts");

@@ -10,6 +10,7 @@ use tauri::State;
 
 use crate::{
     engine::{CoreStatus, EngineError, TelemetrySnapshot, TorrentPreview, TorrentSource},
+    settings::{Settings, SettingsError},
     state::AppState,
 };
 
@@ -83,6 +84,63 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
     Ok(engine.telemetry())
+}
+
+impl From<SettingsError> for CommandError {
+    fn from(err: SettingsError) -> Self {
+        let kind = match &err {
+            SettingsError::Save { .. } => "settingsSaveFailed",
+            SettingsError::Invalid(_) => "settingsInvalid",
+        };
+        Self {
+            kind,
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Returns the current user settings.
+///
+/// # Errors
+///
+/// Never fails in practice; the `Result` keeps the signature uniform with the
+/// other commands.
+#[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, CommandError> {
+    Ok(state.settings().await)
+}
+
+/// Validates, persists, and applies new settings.
+///
+/// Rate limits are applied to the running session immediately. Changing the
+/// listen port, DHT, UPnP, or download directory restarts the session, because
+/// those are fixed when it is constructed.
+///
+/// Settings are persisted *before* being applied, so a restart that fails
+/// still leaves the user's choice recorded rather than silently reverting it.
+///
+/// # Errors
+///
+/// `settingsInvalid` if validation fails, `settingsSaveFailed` if the file
+/// cannot be written, or `engineFailed` if the session will not restart.
+#[tauri::command]
+pub async fn update_settings(
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings, CommandError> {
+    settings.validate()?;
+
+    let previous = state.settings().await;
+    settings.save(state.session_dir())?;
+    state.set_settings(settings.clone()).await;
+
+    if previous.requires_restart(&settings) {
+        state.restart_engine(&settings).await?;
+    } else if let Some(engine) = state.engine().await {
+        engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
+    }
+
+    Ok(settings)
 }
 
 /// Resolves a torrent's metadata and file list without downloading anything.
