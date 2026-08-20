@@ -43,11 +43,14 @@ jobs:
           - name: macOS (Apple Silicon)
             runner: macos-latest
             target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
+            # --bundles dmg suppresses the .app.tar.gz updater artifact, which
+            # is meaningless without an updater and only confuses the download
+            # list. Add it back if an updater is ever configured.
+            args: "--target aarch64-apple-darwin --bundles dmg"
           - name: macOS (Intel)
             runner: macos-latest
             target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
+            args: "--target x86_64-apple-darwin --bundles dmg"
           - name: Windows
             runner: windows-latest
             target: x86_64-pc-windows-msvc
@@ -183,9 +186,27 @@ jobs:
         working-directory: src-tauri
         run: cargo install tauri-cli --version "^2" --locked && cargo tauri build --bundles rpm
 
-      - name: Upload the .rpm
+      # Kept for dispatch runs that build no release, and as a fallback if the
+      # release upload below fails.
+      - name: Upload the .rpm as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: flume-rpm
           path: src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
+
+      # The other legs attach their bundles through tauri-action. This job
+      # cannot use it -- it runs in a Fedora container -- so without this the
+      # .rpm exists only as a workflow artifact, which expires and which users
+      # cannot find. Fedora and RHEL users would see no package at all.
+      - name: Attach the .rpm to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          rpm_file=$(find src-tauri/target/release/bundle/rpm -name '*.rpm' | head -1)
+          echo "Attaching $rpm_file to $TAG"
+          # --clobber so a re-run replaces the asset rather than failing on a
+          # name collision.
+          gh release upload "$TAG" "$rpm_file" --clobber -R "$GITHUB_REPOSITORY"
