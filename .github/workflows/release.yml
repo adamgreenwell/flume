@@ -58,7 +58,12 @@ jobs:
           - name: Linux (.deb / AppImage)
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            args: ""
+            # Restricted explicitly. Left unrestricted the bundler also emits
+            # an .rpm here, but one built on Ubuntu carries Debian-derived
+            # dependency metadata, so it is not the package a Fedora or RHEL
+            # user should install. The dedicated Fedora job below produces the
+            # real one; without this the two race to attach the same filename.
+            args: "--bundles deb,appimage"
 
     steps:
       - uses: actions/checkout@v7
