@@ -1,11 +1,13 @@
 "use client";
 
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { formatBytes } from "@/lib/format";
 import { confirmAdd, discardPreview, previewTorrent } from "@/lib/ipc/client";
 import { isCommandError, type TorrentPreview } from "@/lib/ipc/types";
+import { looksLikeMagnet } from "@/lib/magnet";
 
 import { Button } from "./Button";
 import { FileTree } from "./FileTree";
@@ -16,6 +18,8 @@ export interface AddTorrentDialogProps {
   onClose: () => void;
   /** Optional magnet URI to prefill, e.g. detected from the clipboard. */
   initialMagnet?: string;
+  /** A `.torrent` path to resolve immediately, from a drag-and-drop. */
+  droppedPath?: string;
 }
 
 /**
@@ -35,11 +39,14 @@ export interface AddTorrentDialogProps {
 export function AddTorrentDialog({
   onClose,
   initialMagnet = "",
+  droppedPath,
 }: AddTorrentDialogProps) {
   const [magnet, setMagnet] = useState(initialMagnet);
   const [preview, setPreview] = useState<TorrentPreview | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [isResolving, setIsResolving] = useState(false);
+  // A dialog opened by a drop starts already resolving, so the effect below
+  // never has to flip this synchronously.
+  const [isResolving, setIsResolving] = useState(Boolean(droppedPath));
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,26 +58,72 @@ export function AddTorrentDialog({
   const describe = (caught: unknown, fallback: string) =>
     isCommandError(caught) ? caught.message : fallback;
 
+  /** Applies a successfully resolved preview. */
+  const applyPreview = useCallback((resolved: TorrentPreview) => {
+    setPreview(resolved);
+    pendingHashRef.current = resolved.infoHash;
+    // Everything selected by default: the common case is wanting the whole
+    // torrent, and starting from nothing selected makes the primary action
+    // dead on arrival.
+    setSelected(new Set(resolved.files.map((f) => f.index)));
+    setError(null);
+    setIsResolving(false);
+  }, []);
+
+  /** Records a failed resolution. */
+  const failPreview = useCallback((caught: unknown) => {
+    setError(describe(caught, "Could not read that torrent."));
+    setIsResolving(false);
+  }, []);
+
+  /** Resolves from a user gesture (button press or file picker). */
   const resolve = useCallback(
     async (source: Parameters<typeof previewTorrent>[0]) => {
       setError(null);
       setIsResolving(true);
       try {
-        const resolved = await previewTorrent(source);
-        setPreview(resolved);
-        pendingHashRef.current = resolved.infoHash;
-        // Everything selected by default: the common case is wanting the whole
-        // torrent, and starting from nothing selected makes the primary action
-        // dead on arrival.
-        setSelected(new Set(resolved.files.map((f) => f.index)));
+        applyPreview(await previewTorrent(source));
       } catch (caught: unknown) {
-        setError(describe(caught, "Could not read that torrent."));
-      } finally {
-        setIsResolving(false);
+        failPreview(caught);
       }
     },
-    [],
+    [applyPreview, failPreview],
   );
+
+  // Offer a magnet the user already copied. Read on open rather than on every
+  // window focus: opening this dialog is a deliberate act, so reading the
+  // clipboard then is expected rather than background snooping.
+  useEffect(() => {
+    if (initialMagnet) return;
+    let active = true;
+    readText()
+      .then((text) => {
+        if (active && text && looksLikeMagnet(text)) setMagnet(text.trim());
+      })
+      .catch(() => {
+        // No clipboard access, or nothing text-shaped in it. Not worth saying.
+      });
+    return () => {
+      active = false;
+    };
+  }, [initialMagnet]);
+
+  // A file dropped onto the window resolves immediately. State is only ever
+  // set from the promise callbacks, never synchronously in the effect body.
+  useEffect(() => {
+    if (!droppedPath) return;
+    let active = true;
+    previewTorrent({ kind: "file", path: droppedPath })
+      .then((resolved) => {
+        if (active) applyPreview(resolved);
+      })
+      .catch((caught: unknown) => {
+        if (active) failPreview(caught);
+      });
+    return () => {
+      active = false;
+    };
+  }, [droppedPath, applyPreview, failPreview]);
 
   const pickFile = async () => {
     const path = await open({

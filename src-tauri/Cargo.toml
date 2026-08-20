@@ -50,6 +50,7 @@ log = "0.4"
 directories = "6.0"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-opener = "2.5.4"
+tauri-plugin-clipboard-manager = "2.3.2"
 
 [features]
 default = []

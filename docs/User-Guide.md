@@ -12,7 +12,13 @@ clipboard when the window regains focus and offers to add it.
 Magnet links resolve their metadata over the DHT, so the status indicator must
 read **Ready** first. A magnet added while **Connecting** will sit waiting.
 
-**`.torrent` files.** Use the file picker, or drag the file onto the window.
+**`.torrent` files.** Use the file picker, or drag the file anywhere onto the
+window — Flume highlights the drop target and opens the add dialog with it.
+Non-torrent files are ignored rather than reported as an error.
+
+**Clipboard.** If you have a magnet link on your clipboard when you open the
+add dialog, Flume prefills it. The clipboard is read only at that moment, when
+you have deliberately opened the dialog — never in the background.
 
 ## Selecting files _(Phase 1)_
 

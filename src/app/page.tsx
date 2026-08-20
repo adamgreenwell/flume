@@ -11,6 +11,7 @@ import { TorrentDetail } from "@/components/TorrentDetail";
 import { StatusPill } from "@/components/StatusPill";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
+import { useTorrentFileDrop } from "@/hooks/useTorrentFileDrop";
 import { formatSpeed } from "@/lib/format";
 import {
   getSettings,
@@ -35,6 +36,15 @@ export default function Home() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
   const [detailOf, setDetailOf] = useState<TorrentSummary | null>(null);
+  const [droppedPath, setDroppedPath] = useState<string | undefined>(undefined);
+
+  // Dropping a .torrent anywhere on the window opens the add dialog with it.
+  const { isDraggingTorrent } = useTorrentFileDrop(
+    useCallback((path: string) => {
+      setDroppedPath(path);
+      setIsAdding(true);
+    }, []),
+  );
 
   // Apply the persisted theme once the engine can answer. Until then the
   // stylesheet's own `prefers-color-scheme` default is in force, so there is
@@ -189,7 +199,24 @@ export default function Home() {
       )}
 
       {isAdding ? (
-        <AddTorrentDialog onClose={() => setIsAdding(false)} />
+        <AddTorrentDialog
+          droppedPath={droppedPath}
+          onClose={() => {
+            setIsAdding(false);
+            setDroppedPath(undefined);
+          }}
+        />
+      ) : null}
+
+      {isDraggingTorrent ? (
+        <div
+          className="border-accent bg-accent/10 pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-xl border-2 border-dashed"
+          role="status"
+        >
+          <p className="text-accent text-sm font-medium">
+            Drop to add this torrent
+          </p>
+        </div>
       ) : null}
 
       {detailOf ? (
