@@ -58,13 +58,21 @@ jobs:
         if: matrix.runner == 'ubuntu-22.04'
         run: |
           sudo apt-get update
+          # Tauri v2's documented Linux prerequisites. libayatana-* is the
+          # current name; libappindicator3-dev is only a transitional package
+          # and is what the tray needs on Linux. patchelf is required by the
+          # AppImage bundler.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
             build-essential \
-            libxdo-dev
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev
 
       - uses: actions/setup-node@v7
         with:
