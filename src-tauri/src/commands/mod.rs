@@ -33,7 +33,10 @@ pub struct CommandError {
 
 impl CommandError {
     /// The engine has not finished starting yet.
-    fn not_ready() -> Self {
+    ///
+    /// Public so the IPC contract test can assert its shape without standing
+    /// up a Tauri application.
+    pub fn not_ready() -> Self {
         Self {
             kind: "engineNotReady",
             message: "The torrent engine is still starting.".to_owned(),
