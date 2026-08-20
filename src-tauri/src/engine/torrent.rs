@@ -64,6 +64,37 @@ pub struct TorrentSummary {
     pub output_folder: String,
 }
 
+/// One file inside an *added* torrent, with its download progress.
+///
+/// Distinct from [`super::TorrentFile`], which describes a torrent that has not
+/// been added yet and so has no progress or selection state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentFileState {
+    /// Index within the torrent; what selection refers to.
+    pub index: usize,
+    /// Path relative to the torrent root.
+    pub path: String,
+    /// Total size in bytes.
+    pub length: u64,
+    /// Bytes downloaded and verified for this file.
+    pub progress_bytes: u64,
+    /// Whether this file is currently selected for download.
+    pub selected: bool,
+}
+
+impl TorrentFileState {
+    /// Fraction of this file that is complete, in `0.0..=1.0`.
+    pub fn progress_fraction(&self) -> f64 {
+        if self.length == 0 {
+            return 1.0;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let fraction = self.progress_bytes as f64 / self.length as f64;
+        fraction.clamp(0.0, 1.0)
+    }
+}
+
 impl TorrentSummary {
     /// Fraction complete in `0.0..=1.0`.
     ///

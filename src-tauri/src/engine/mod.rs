@@ -29,7 +29,7 @@ use librqbit::{
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
-pub use torrent::{TorrentState, TorrentSummary};
+pub use torrent::{TorrentFileState, TorrentState, TorrentSummary};
 
 /// Errors that can arise while starting or querying the engine.
 #[derive(Debug, thiserror::Error)]
@@ -466,6 +466,65 @@ impl Engine {
             .update_only_files(&handle, &files.into_iter().collect())
             .await
             .map_err(EngineError::Operation)
+    }
+
+    /// Lists a torrent's files with their individual progress and selection.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists, or
+    /// [`EngineError::Metadata`] if its metadata has not resolved yet — which
+    /// happens briefly for a magnet added before its file list arrived.
+    pub fn torrent_files(&self, id: usize) -> Result<Vec<TorrentFileState>, EngineError> {
+        let handle = self.handle(id)?;
+        let stats = handle.stats();
+        // `only_files` is None when every file is selected.
+        let selection = handle.only_files();
+
+        handle
+            .with_metadata(|meta| {
+                meta.file_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(index, info)| TorrentFileState {
+                        index,
+                        path: info.relative_filename.to_string_lossy().replace('\\', "/"),
+                        length: info.len,
+                        // `file_progress` is positional and should match
+                        // `file_infos`; fall back to zero rather than panicking
+                        // if a future version ever disagrees.
+                        progress_bytes: stats.file_progress.get(index).copied().unwrap_or(0),
+                        selected: selection.as_ref().is_none_or(|only| only.contains(&index)),
+                    })
+                    .collect()
+            })
+            .map_err(EngineError::Metadata)
+    }
+
+    /// Applies global transfer limits to the running session.
+    ///
+    /// Takes effect immediately — librqbit swaps the rate limiter in place, so
+    /// changing a limit never needs a restart. `None` means unlimited.
+    ///
+    /// A limit of `Some(0)` is treated as unlimited rather than as a total
+    /// stall, because `NonZeroU32` cannot represent zero; settings validation
+    /// rejects zero before it reaches here.
+    pub fn apply_limits(&self, download_bps: Option<u32>, upload_bps: Option<u32>) {
+        self.session
+            .ratelimits
+            .set_download_bps(download_bps.and_then(std::num::NonZeroU32::new));
+        self.session
+            .ratelimits
+            .set_upload_bps(upload_bps.and_then(std::num::NonZeroU32::new));
+    }
+
+    /// Reads back the limits currently in force, in bytes per second.
+    pub fn current_limits(&self) -> (Option<u32>, Option<u32>) {
+        let config = self.session.ratelimits.get_config();
+        (
+            config.download_bps.map(std::num::NonZeroU32::get),
+            config.upload_bps.map(std::num::NonZeroU32::get),
+        )
     }
 
     /// Shuts the session down, flushing persistence and fast-resume state.

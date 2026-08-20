@@ -143,6 +143,47 @@ export interface TorrentPreview {
   alreadyAdded: boolean;
 }
 
+/**
+ * One file inside an *added* torrent, with progress. Mirrors Rust
+ * `TorrentFileState`.
+ *
+ * Distinct from {@link TorrentFile}, which describes a torrent that has not
+ * been added and so has no progress or selection.
+ */
+export interface TorrentFileState {
+  /** Index within the torrent; what selection refers to. */
+  index: number;
+  /** Path relative to the torrent root. */
+  path: string;
+  /** Total size in bytes. */
+  length: number;
+  /** Bytes downloaded and verified for this file. */
+  progressBytes: number;
+  /** Whether this file is currently selected for download. */
+  selected: boolean;
+}
+
+/** UI colour scheme preference. Mirrors Rust `Theme`. */
+export type Theme = "system" | "light" | "dark";
+
+/** Everything the user can configure. Mirrors Rust `Settings`. */
+export interface Settings {
+  /** Where downloads are written. Changing this restarts the session. */
+  downloadDir: string;
+  /** TCP port for incoming peers. Changing this restarts the session. */
+  listenPort: number;
+  /** Whether the DHT runs. Required for magnet links. Restarts the session. */
+  enableDht: boolean;
+  /** Whether to request a UPnP port mapping. Restarts the session. */
+  enableUpnp: boolean;
+  /** Global download limit in bytes/sec; `null` is unlimited. Applies live. */
+  downloadLimitBps: number | null;
+  /** Global upload limit in bytes/sec; `null` is unlimited. Applies live. */
+  uploadLimitBps: number | null;
+  /** UI colour scheme. */
+  theme: Theme;
+}
+
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {
   /** Stable identifier for the error class, e.g. `"engineNotReady"`. */

@@ -375,3 +375,97 @@ async fn magnet_resolves_real_metadata_over_the_dht() {
 
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn torrents_survive_a_restart() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    // A fixed config so both runs share a session directory, which is what
+    // makes persistence meaningful.
+    let config = test_config(&tmp, false);
+
+    let info_hash = {
+        let engine = Engine::start(config.clone()).await.expect("first start");
+        let preview = engine
+            .preview(TorrentSource::File { path })
+            .await
+            .expect("preview");
+        engine
+            .confirm_add(&preview.info_hash, None)
+            .await
+            .expect("add");
+
+        assert_eq!(engine.torrent_summaries().len(), 1);
+        // Shutdown is what flushes session state; killing the process without
+        // it is the case that legitimately loses the list.
+        engine.shutdown().await;
+        preview.info_hash
+    };
+
+    let engine = Engine::start(config).await.expect("second start");
+
+    // Restoring reads the persisted list and re-initializes each torrent, so
+    // poll briefly rather than assuming it is synchronous.
+    let mut summaries = engine.torrent_summaries();
+    for _ in 0..20 {
+        if !summaries.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        summaries = engine.torrent_summaries();
+    }
+
+    assert_eq!(
+        summaries.len(),
+        1,
+        "the torrent should be restored from session state"
+    );
+    assert_eq!(summaries[0].info_hash, info_hash);
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn file_selection_survives_a_restart() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    let config = test_config(&tmp, false);
+
+    {
+        let engine = Engine::start(config.clone()).await.expect("first start");
+        let preview = engine
+            .preview(TorrentSource::File { path })
+            .await
+            .expect("preview");
+        let id = engine
+            .confirm_add(&preview.info_hash, Some(vec![0]))
+            .await
+            .expect("add");
+
+        let files = engine.torrent_files(id).expect("files");
+        assert!(files[0].selected, "the chosen file should be selected");
+        engine.shutdown().await;
+    }
+
+    let engine = Engine::start(config).await.expect("second start");
+
+    let mut summaries = engine.torrent_summaries();
+    for _ in 0..20 {
+        if !summaries.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        summaries = engine.torrent_summaries();
+    }
+    assert_eq!(summaries.len(), 1, "torrent should be restored");
+
+    let files = engine
+        .torrent_files(summaries[0].id)
+        .expect("files after restart");
+    assert!(
+        files[0].selected,
+        "the file selection must survive a restart, not silently reset to all"
+    );
+
+    engine.shutdown().await;
+}

@@ -10,6 +10,7 @@
 //!   testable on its own.
 //! * [`state`] — process-wide shared state handed to command handlers.
 //! * [`commands`] — `#[tauri::command]` entry points. Thin by design.
+//! * [`settings`] — user configuration and its persistence. Also Tauri-free.
 //! * [`telemetry`] — pushes batched status to the UI on a fixed cadence.
 //!
 //! Torrent piece data is written to disk by librqbit and never crosses the IPC
@@ -17,10 +18,11 @@
 
 pub mod commands;
 pub mod engine;
+pub mod settings;
 pub mod state;
 pub mod telemetry;
 
-use engine::{Engine, EngineConfig};
+use settings::Settings;
 use state::AppState;
 use tauri::Manager;
 
@@ -37,6 +39,14 @@ use tauri::Manager;
 // malformed; there is no recovery path and no UI to report it in.
 #[allow(clippy::expect_used)]
 pub fn run() {
+    let session_dir = settings::session_directory();
+    let (settings, problem) = Settings::load(&session_dir);
+    if let Some(problem) = &problem {
+        // Logged rather than fatal: a user who cannot launch the app cannot
+        // fix their settings from inside it.
+        eprintln!("flume: {problem}; using defaults");
+    }
+
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::default()
@@ -49,7 +59,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage(AppState::new(settings, session_dir))
         .invoke_handler(tauri::generate_handler![
             commands::get_core_status,
             commands::get_telemetry,
@@ -59,29 +69,25 @@ pub fn run() {
             commands::pause_torrent,
             commands::resume_torrent,
             commands::remove_torrent,
-            commands::set_only_files
+            commands::set_only_files,
+            commands::get_torrent_files,
+            commands::get_settings,
+            commands::update_settings
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             telemetry::spawn(handle.clone());
             tauri::async_runtime::spawn(async move {
-                match EngineConfig::with_os_defaults() {
-                    Ok(config) => {
-                        log::info!(
-                            "starting torrent engine: port={} dht={} upnp={}",
-                            config.listen_port,
-                            config.enable_dht,
-                            config.enable_upnp
-                        );
-                        match Engine::start(config).await {
-                            Ok(engine) => {
-                                log::info!("torrent engine started: {engine:?}");
-                                handle.state::<AppState>().set_engine(engine).await;
-                            }
-                            Err(err) => log::error!("torrent engine failed to start: {err}"),
-                        }
-                    }
-                    Err(err) => log::error!("could not derive engine configuration: {err}"),
+                let state = handle.state::<AppState>();
+                let settings = state.settings().await;
+                log::info!(
+                    "starting torrent engine: port={} dht={} upnp={}",
+                    settings.listen_port,
+                    settings.enable_dht,
+                    settings.enable_upnp
+                );
+                if let Err(err) = state.restart_engine(&settings).await {
+                    log::error!("torrent engine failed to start: {err}");
                 }
             });
             Ok(())

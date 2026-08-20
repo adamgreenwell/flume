@@ -10,6 +10,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   CoreStatus,
+  Settings,
+  TorrentFileState,
   TelemetrySnapshot,
   TorrentPreview,
   TorrentSource,
@@ -121,4 +123,41 @@ export async function removeTorrent(
  */
 export async function setOnlyFiles(id: number, files: number[]): Promise<void> {
   return invoke<void>("set_only_files", { id, files });
+}
+
+/**
+ * Reads the current user settings.
+ *
+ * @returns The persisted {@link Settings}.
+ */
+export async function getSettings(): Promise<Settings> {
+  return invoke<Settings>("get_settings");
+}
+
+/**
+ * Validates, persists, and applies new settings.
+ *
+ * Rate limits take effect immediately. Changing the port, DHT, UPnP, or
+ * download directory restarts the torrent session, which takes a moment and
+ * briefly makes the engine unavailable.
+ *
+ * @param settings - The complete settings object.
+ * @returns The settings as persisted.
+ * @throws A {@link CommandError} with kind `settingsInvalid`,
+ *   `settingsSaveFailed`, or `engineFailed`.
+ */
+export async function updateSettings(settings: Settings): Promise<Settings> {
+  return invoke<Settings>("update_settings", { settings });
+}
+
+/**
+ * Lists a torrent's files with progress and current selection.
+ *
+ * @param id - Session id from the telemetry stream.
+ * @returns One entry per file, in torrent order.
+ * @throws A {@link CommandError} with kind `metadata` if the file list has not
+ *   resolved yet, which happens briefly for a freshly added magnet.
+ */
+export async function getTorrentFiles(id: number): Promise<TorrentFileState[]> {
+  return invoke<TorrentFileState[]>("get_torrent_files", { id });
 }

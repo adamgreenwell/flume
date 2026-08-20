@@ -134,3 +134,25 @@ describe("useTelemetry", () => {
     expect(result.current.telemetry?.core.uptimeSeconds).toBe(3);
   });
 });
+
+describe("useTelemetry outside the Tauri webview", () => {
+  it("reports unavailability instead of raising an unhandled rejection", async () => {
+    // Simulates a plain browser: `listen` has no IPC internals to hook into,
+    // so it rejects rather than resolving to an unlisten function.
+    mockIPC(() => {
+      throw new Error("no IPC");
+    });
+    const internals = (window as unknown as Record<string, unknown>)
+      .__TAURI_INTERNALS__;
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+
+    try {
+      const { result } = renderHook(() => useTelemetry());
+      await waitFor(() => expect(result.current.error).not.toBeNull());
+      expect(result.current.isLoading).toBe(false);
+    } finally {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ =
+        internals;
+    }
+  });
+});

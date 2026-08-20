@@ -4,9 +4,11 @@
  * Flume design tokens.
  *
  * Defined as CSS custom properties rather than Tailwind config values so the
- * theme can be swapped at runtime (Phase 2) by flipping `data-theme` on <html>
- * without a rebuild. `@theme inline` maps them into Tailwind's utility
- * namespace so `bg-surface`, `text-muted` etc. work as normal utilities.
+ * theme swaps at runtime by flipping `data-theme` on <html>, with no rebuild.
+ * `@theme inline` maps them into Tailwind's utility namespace so `bg-surface`,
+ * `text-muted` etc. work as normal utilities.
+ *
+ * Dark is the base palette. Light overrides the same variables below.
  */
 
 :root {
@@ -29,6 +31,53 @@
   --flume-ok: #34d399;
   --flume-warn: #fbbf24;
   --flume-error: #f87171;
+}
+
+/*
+ * Light palette.
+ *
+ * Applied in two situations, which is why the rules are duplicated rather than
+ * combined: an explicit `data-theme="light"` always wins, and the system
+ * preference applies only when the user has not explicitly chosen dark.
+ * A single combined selector cannot express both without one overriding the
+ * other incorrectly.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --flume-bg: #f7f8fa;
+    --flume-surface: #ffffff;
+    --flume-surface-raised: #eef1f6;
+    --flume-border: #dde2ea;
+
+    --flume-text: #141922;
+    --flume-text-muted: #5a6478;
+    --flume-text-faint: #8d97a8;
+
+    --flume-accent: #0284c7;
+    --flume-accent-dim: #0369a1;
+
+    --flume-ok: #059669;
+    --flume-warn: #b45309;
+    --flume-error: #dc2626;
+  }
+}
+
+:root[data-theme="light"] {
+  --flume-bg: #f7f8fa;
+  --flume-surface: #ffffff;
+  --flume-surface-raised: #eef1f6;
+  --flume-border: #dde2ea;
+
+  --flume-text: #141922;
+  --flume-text-muted: #5a6478;
+  --flume-text-faint: #8d97a8;
+
+  --flume-accent: #0284c7;
+  --flume-accent-dim: #0369a1;
+
+  --flume-ok: #059669;
+  --flume-warn: #b45309;
+  --flume-error: #dc2626;
 }
 
 @theme inline {
