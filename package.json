@@ -17,7 +17,8 @@
     "tauri:build": "tauri build",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
     "typegen": "next typegen",
-    "dev:mock": "NEXT_PUBLIC_FLUME_MOCK=1 next dev"
+    "dev:mock": "NEXT_PUBLIC_FLUME_MOCK=1 next dev",
+    "preflight": "./scripts/preflight.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

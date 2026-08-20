@@ -40,17 +40,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS (Apple Silicon)
+          # One universal binary rather than two single-architecture builds.
+          # macOS runners bill at 10x and were roughly two thirds of a release
+          # run's cost; collapsing two jobs into one removes a whole job's
+          # checkout, npm ci, and toolchain setup at that multiplier.
+          #
+          # Users also get one download instead of having to know which Mac
+          # they own. The .dmg is about twice the size (17 MB rather than 9),
+          # which is a fair trade for a desktop app.
+          #
+          # --bundles dmg suppresses the .app.tar.gz updater artifact, which is
+          # meaningless without an updater and only pads the download list.
+          - name: macOS (universal)
             runner: macos-latest
-            target: aarch64-apple-darwin
-            # --bundles dmg suppresses the .app.tar.gz updater artifact, which
-            # is meaningless without an updater and only confuses the download
-            # list. Add it back if an updater is ever configured.
-            args: "--target aarch64-apple-darwin --bundles dmg"
-          - name: macOS (Intel)
-            runner: macos-latest
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg"
+            target: universal-apple-darwin
+            args: "--target universal-apple-darwin --bundles dmg"
           - name: Windows (x64)
             runner: windows-latest
             target: x86_64-pc-windows-msvc
@@ -125,7 +129,10 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          # universal-apple-darwin is not a real rustup target -- it is a lipo
+          # of two builds -- so the two underlying targets must be installed
+          # for that leg instead.
+          targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
       # Deliberately no Rust build cache on release runs. A cached target
       # directory built with different features is exactly the state that

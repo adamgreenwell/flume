@@ -47,6 +47,28 @@ Dependabot opens weekly PRs for cargo, npm, and GitHub Actions. Related
 packages are grouped — Tauri crates and Next packages version together, and a
 split upgrade usually fails to compile.
 
+## Cost
+
+The repository is private, so Actions minutes are billed. A full release run is
+several dollars, and macOS dominates it — those runners bill at 10x, Windows at
+2x, Linux at 1x.
+
+Two habits follow:
+
+1. **Run `npm run preflight` before pushing.** It mirrors what CI checks —
+   typecheck, lint, format, tests, static export, `cargo fmt`, clippy,
+   `cargo test`, and workflow YAML — and `--full` also builds the macOS bundle
+   and asserts the `.dmg` carries no licence gate. A failure caught locally
+   costs nothing.
+2. **Never trigger a release to test a workflow change.** Batch workflow edits
+   and let them ride along with the next release that was going to happen.
+
+macOS ships as a **single universal binary** rather than separate Intel and
+Apple Silicon builds. That removes an entire job's checkout, `npm ci`, and
+toolchain setup at the 10x multiplier, and means users do not have to know
+which Mac they own. The `.dmg` is roughly twice the size, which is a fair
+trade.
+
 ## Releases _(Phase 3 — [#15](https://github.com/adamgreenwell/flume/issues/15))_
 
 Planned: pushing a `v*` tag triggers a matrix build and attaches artifacts to a
