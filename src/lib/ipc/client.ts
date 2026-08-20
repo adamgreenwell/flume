@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreStatus,
   Settings,
+  TorrentDetail,
   TorrentFileState,
   TelemetrySnapshot,
   TorrentPreview,
@@ -160,4 +161,14 @@ export async function updateSettings(settings: Settings): Promise<Settings> {
  */
 export async function getTorrentFiles(id: number): Promise<TorrentFileState[]> {
   return invoke<TorrentFileState[]>("get_torrent_files", { id });
+}
+
+/**
+ * Fetches peers, trackers, and piece completion for one torrent.
+ *
+ * @param id - Session id from the telemetry stream.
+ * @returns The current {@link TorrentDetail}.
+ */
+export async function getTorrentDetail(id: number): Promise<TorrentDetail> {
+  return invoke<TorrentDetail>("get_torrent_detail", { id });
 }

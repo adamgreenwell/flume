@@ -15,19 +15,21 @@
 
 mod add;
 mod config;
+mod detail;
 mod status;
 mod torrent;
 
 use std::{collections::HashMap, sync::Arc};
 
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerMode,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, DhtSessionConfig, ListenerMode,
     ListenerOptions, Magnet, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
     api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
+pub use detail::{MAX_PIECE_BUCKETS, PeerInfo, PieceMap, TorrentDetail};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{TorrentFileState, TorrentState, TorrentSummary};
 
@@ -499,6 +501,65 @@ impl Engine {
                     .collect()
             })
             .map_err(EngineError::Metadata)
+    }
+
+    /// Collects peers, trackers, and piece completion for the detail view.
+    ///
+    /// Peers and pieces are only available while a torrent is live or paused;
+    /// both degrade to empty rather than erroring, because an initializing
+    /// torrent legitimately has neither and the UI should show a quiet empty
+    /// state, not a failure.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists.
+    pub fn torrent_detail(&self, id: usize) -> Result<TorrentDetail, EngineError> {
+        let handle = self.handle(id)?;
+
+        let peers = handle
+            .live()
+            .map(|live| {
+                live.per_peer_stats_snapshot(Default::default())
+                    .peers
+                    .into_iter()
+                    .map(|(address, stats)| detail::PeerInfo {
+                        address,
+                        client: stats.client_name,
+                        transport: stats.conn_kind.map(|k| format!("{k:?}").to_lowercase()),
+                        state: stats.state.to_string(),
+                        downloaded_bytes: stats.counters.fetched_bytes,
+                        uploaded_bytes: stats.counters.uploaded_bytes,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut trackers: Vec<String> = handle
+            .shared()
+            .trackers
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        // A HashSet has no order; sorting keeps the list from reshuffling
+        // every time the panel is opened.
+        trackers.sort();
+
+        // `api_dump_haves` is the only public route to the piece bitfield --
+        // `ManagedTorrent::with_chunk_tracker` is crate-private. It errors when
+        // the torrent is neither live nor paused, which is not a failure worth
+        // surfacing.
+        let pieces = Api::new(Arc::clone(&self.session), None)
+            .api_dump_haves(TorrentIdOrHash::Id(id))
+            .ok()
+            .map(|(bitfield, total_pieces)| {
+                detail::downsample_pieces(bitfield.iter().by_vals(), total_pieces)
+            });
+
+        Ok(TorrentDetail {
+            peers,
+            trackers,
+            pieces,
+        })
     }
 
     /// Applies global transfer limits to the running session.
