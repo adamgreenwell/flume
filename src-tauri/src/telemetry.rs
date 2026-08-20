@@ -7,9 +7,10 @@
 //! the list. Emitting one batched payload per tick keeps IPC volume flat as
 //! the torrent count grows.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 use crate::state::AppState;
 
@@ -35,6 +36,14 @@ pub fn spawn(app: AppHandle) {
         // rather than firing a burst of catch-up events at the webview.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Info hashes already known to be complete, so a torrent is announced
+        // once rather than every second.
+        let mut announced: HashSet<String> = HashSet::new();
+        // Torrents restored from a previous session are already finished; they
+        // must seed this set rather than trigger a burst of notifications for
+        // downloads the user completed days ago.
+        let mut seeded = false;
+
         loop {
             ticker.tick().await;
 
@@ -42,7 +51,26 @@ pub fn spawn(app: AppHandle) {
                 continue;
             };
 
-            if let Err(err) = app.emit(TELEMETRY_EVENT, engine.telemetry()) {
+            let snapshot = engine.telemetry();
+
+            let finished = snapshot
+                .torrents
+                .iter()
+                .filter(|t| t.finished)
+                .map(|t| (t.info_hash.clone(), t.name.clone()));
+
+            if seeded {
+                for (info_hash, name) in finished {
+                    if announced.insert(info_hash) {
+                        notify_complete(&app, &name);
+                    }
+                }
+            } else {
+                announced.extend(finished.map(|(info_hash, _)| info_hash));
+                seeded = true;
+            }
+
+            if let Err(err) = app.emit(TELEMETRY_EVENT, snapshot) {
                 // A failed emit means the webview is gone or shutting down.
                 // Log once per occurrence and keep the loop alive; the window
                 // may still be re-created.
@@ -50,4 +78,21 @@ pub fn spawn(app: AppHandle) {
             }
         }
     });
+}
+
+/// Shows a desktop notification for a completed torrent.
+///
+/// Failures are logged rather than propagated: the user may have denied
+/// notification permission, and that must not disturb the telemetry loop.
+fn notify_complete(app: &AppHandle, name: &str) {
+    log::info!("torrent finished: {name}");
+    if let Err(err) = app
+        .notification()
+        .builder()
+        .title("Download complete")
+        .body(name)
+        .show()
+    {
+        log::warn!("could not show the completion notification: {err}");
+    }
 }

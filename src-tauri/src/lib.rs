@@ -10,17 +10,21 @@
 //!   testable on its own.
 //! * [`state`] — process-wide shared state handed to command handlers.
 //! * [`commands`] — `#[tauri::command]` entry points. Thin by design.
+//! * [`deeplink`] — `magnet:` handling and single-instance behaviour.
 //! * [`settings`] — user configuration and its persistence. Also Tauri-free.
 //! * [`telemetry`] — pushes batched status to the UI on a fixed cadence.
+//! * [`tray`] — system tray icon and quick actions.
 //!
 //! Torrent piece data is written to disk by librqbit and never crosses the IPC
 //! boundary; the WebView only ever receives small JSON status payloads.
 
 pub mod commands;
+pub mod deeplink;
 pub mod engine;
 pub mod settings;
 pub mod state;
 pub mod telemetry;
+pub mod tray;
 
 use settings::Settings;
 use state::AppState;
@@ -48,6 +52,14 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        // Must be registered first: it decides whether this process continues
+        // at all, and a second instance should do as little as possible before
+        // handing off and exiting.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            deeplink::handle_second_instance(app, &argv);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(if cfg!(debug_assertions) {
@@ -79,6 +91,42 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             telemetry::spawn(handle.clone());
+
+            // Deliver magnet links opened from the OS while Flume is running.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let deep_link_handle = handle.clone();
+                app.deep_link().on_open_url(move |event| {
+                    deeplink::focus_main_window(&deep_link_handle);
+                    for url in event.urls() {
+                        deeplink::route_argument(&deep_link_handle, url.as_str());
+                    }
+                });
+
+                // Runtime registration matters for Linux and for development,
+                // where no .desktop entry or bundle exists yet. macOS does not
+                // support it at all -- the association comes from the bundled
+                // app's Info.plist -- so "unsupported platform" here is
+                // expected and not a problem.
+                if let Err(err) = app.deep_link().register_all() {
+                    log::debug!(
+                        "runtime deep-link registration unavailable ({err}); \
+                         on macOS and Windows the installed bundle registers the scheme"
+                    );
+                }
+            }
+
+            // A tray is a nicety, not a requirement: some Linux desktops have
+            // none, and failing to create one must not stop the app starting.
+            if let Err(err) = tray::install(&handle) {
+                log::warn!("could not create the tray icon: {err}");
+            }
+
+            // A magnet passed on the command line at cold start, e.g. the very
+            // first click of a magnet link before Flume was running.
+            for argument in std::env::args().skip(1) {
+                deeplink::route_argument(&handle, &argument);
+            }
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<AppState>();
                 let settings = state.settings().await;
