@@ -1,0 +1,147 @@
+name: Release
+
+# Tagging v* builds installers for every supported platform and attaches them
+# to a draft GitHub Release. Draft rather than published: artifacts should be
+# smoke-tested on each OS before anyone downloads them.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One platform failing should not discard artifacts that already built:
+      # a partial release is still useful, and re-running one leg is cheap.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - name: macOS (Intel)
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+          - name: Windows
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+          # ubuntu-22.04 deliberately: it is the oldest supported base and so
+          # sets the glibc and WebKitGTK floor for the .deb. Building on a
+          # newer runner produces a package that will not install on Debian 12.
+          - name: Linux (.deb / AppImage)
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ""
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Linux dependencies
+        if: matrix.runner == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libxdo-dev
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Deliberately no Rust build cache on release runs. A cached target
+      # directory built with different features is exactly the state that
+      # triggers the proc-macro resolution failure in #22, and a release build
+      # is not worth risking for a few minutes of compile time.
+      - run: npm ci
+
+      - name: Build and bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signing is optional: these are empty for forks and for anyone
+          # without certificates, and the build still produces artifacts.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Flume __VERSION__"
+          releaseBody: |
+            Download the file for your platform below.
+
+            Builds are unsigned unless signing credentials were configured.
+            See the wiki's Platform Notes for how to open an unsigned build on
+            each OS.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  rpm:
+    name: Linux (.rpm)
+    runs-on: ubuntu-22.04
+    # Built in a Fedora container rather than on the runner: .rpm packaging
+    # needs rpmbuild and Fedora's webkit2gtk4.1, neither of which exist on the
+    # Ubuntu image.
+    container:
+      image: fedora:40
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            webkit2gtk4.1-devel openssl-devel curl wget file \
+            libappindicator-gtk3-devel librsvg2-devel \
+            gcc gcc-c++ make rpm-build nodejs npm git
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Bundle the .rpm
+        working-directory: src-tauri
+        run: cargo install tauri-cli --version "^2" --locked && cargo tauri build --bundles rpm
+
+      - name: Upload the .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: flume-rpm
+          path: src-tauri/target/release/bundle/rpm/*.rpm
+          if-no-files-found: error

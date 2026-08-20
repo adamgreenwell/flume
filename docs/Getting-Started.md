@@ -15,7 +15,9 @@ When releases are available:
 | Debian 12+ / Ubuntu 22.04+ | `flume_x.y.z_amd64.deb`     | `sudo apt install ./flume_*.deb`         |
 | Fedora 38+ / RHEL 9.4+     | `flume-x.y.z.rpm`           | `sudo dnf install ./flume-*.rpm`         |
 
-See [[Platform-Notes]] for the unsigned-build workarounds.
+Builds are unsigned, so your OS will likely warn you the first time.
+See [[Signing-and-Distribution]] for what the warning means and the least
+alarming way past it.
 
 ## First run
 

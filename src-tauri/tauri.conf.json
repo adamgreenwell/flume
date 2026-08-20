@@ -69,9 +69,6 @@
       "deb": {
         "depends": []
       }
-    },
-    "macOS": {
-      "minimumSystemVersion": "12.0"
     }
   },
   "plugins": {
