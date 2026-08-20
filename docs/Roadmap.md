@@ -43,12 +43,35 @@ batched events before the torrent count grows.
 - ~~Notifications and system tray~~ ✅ ([#13](https://github.com/adamgreenwell/flume/issues/13))
 - ~~Keyboard shortcuts and accessibility baseline~~ ✅ ([#14](https://github.com/adamgreenwell/flume/issues/14))
 
-## Phase 3 — Hardening & distribution
+## Phase 3 — Hardening & distribution 🚧
 
-- Release pipeline for all four package formats ([#15](https://github.com/adamgreenwell/flume/issues/15))
-- Sequential download for streaming ([#16](https://github.com/adamgreenwell/flume/issues/16))
-- Performance validation with 10+ torrents ([#17](https://github.com/adamgreenwell/flume/issues/17))
-- Signing, notarization, and troubleshooting docs ([#18](https://github.com/adamgreenwell/flume/issues/18))
+- ~~Release pipeline for all four package formats~~ ✅ ([#15](https://github.com/adamgreenwell/flume/issues/15))
+- ~~Performance validation with 10+ torrents~~ ✅ ([#17](https://github.com/adamgreenwell/flume/issues/17))
+- ~~Signing, notarization, and troubleshooting docs~~ ✅ ([#18](https://github.com/adamgreenwell/flume/issues/18))
+- ~~Release build blocked by a proc-macro failure~~ ✅ ([#22](https://github.com/adamgreenwell/flume/issues/22))
+
+Still open, all blocked on something outside the code:
+
+- Sequential download ([#16](https://github.com/adamgreenwell/flume/issues/16)) — **not
+  implementable** against librqbit v9; `FilePriorities` is `pub(crate)` and no priority
+  setter exists. Awaiting a product decision.
+- GTK3 advisories ([#21](https://github.com/adamgreenwell/flume/issues/21)) — upstream in
+  Tauri's Linux backend; resolves when it moves off GTK3.
+- TypeScript 7 ([#28](https://github.com/adamgreenwell/flume/issues/28)) — blocked until
+  `typescript-eslint` supports it.
+
+### Measured performance
+
+With 15 torrents on macOS:
+
+| Metric                 | Value       | Budget                   |
+| ---------------------- | ----------- | ------------------------ |
+| `telemetry()` per call | 171 µs      | 1,000,000 µs (1 Hz tick) |
+| Serialized payload     | 5,345 bytes | —                        |
+| Detail + files query   | 2.2 µs      | 500,000 µs (2 Hz panel)  |
+
+The payload figure is the one to watch: it should scale with torrent _count_,
+never with piece count or file size.
 
 ## Known limitations
 
