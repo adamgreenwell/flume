@@ -18,11 +18,22 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Shared by both build steps below, so they cannot drift apart.
+  RELEASE_BODY: |
+    Download the file for your platform below.
+
+    Builds are unsigned unless signing credentials were configured. See the
+    wiki's Signing & Distribution page for what your OS will say about that
+    and the least alarming way past it.
 
 jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    env:
+      # The `secrets` context is not available in a step-level `if`, so the
+      # presence check is hoisted to a job-level env var and tested from there.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       # One platform failing should not discard artifacts that already built:
       # a partial release is still useful, and re-running one leg is cheap.
@@ -90,12 +101,22 @@ jobs:
       # is not worth risking for a few minutes of compile time.
       - run: npm ci
 
-      - name: Build and bundle
+      # Two steps rather than one, because passing empty APPLE_* variables is
+      # not the same as passing none. tauri-action treats the presence of
+      # APPLE_CERTIFICATE as a request to sign and then fails importing an
+      # empty certificate:
+      #
+      #   security: SecKeychainItemImport: ...parameters...were not valid
+      #   failed codesign application: failed to import keychain certificate
+      #
+      # The application itself builds fine; only bundling fails. So when no
+      # certificate is configured the variables must be absent entirely, which
+      # is exactly the local unsigned build that works.
+      - name: Build and bundle (signed)
+        if: env.HAS_APPLE_CERT == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signing is optional: these are empty for forks and for anyone
-          # without certificates, and the build still produces artifacts.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -105,19 +126,23 @@ jobs:
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Flume __VERSION__"
-          releaseBody: |
-            Download the file for your platform below.
-
-            Builds are unsigned unless signing credentials were configured.
-            See the wiki's Platform Notes for how to open an unsigned build on
-            each OS.
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
-          # Semver treats a hyphen as a prerelease marker, so v0.1.0-rc.1 is
-          # flagged automatically and v0.1.0 is not. Without this, a release
-          # candidate would be published looking like a final release.
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          # Flume has no updater configured, so a latest.json would advertise
-          # an update channel that does not exist.
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      - name: Build and bundle (unsigned)
+        if: env.HAS_APPLE_CERT != 'true'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseName: "Flume __VERSION__"
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
           uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
