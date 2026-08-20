@@ -3,10 +3,10 @@
 What it takes to ship Flume so that a user's operating system does not treat it
 as suspicious, and what to tell them when it does.
 
-> **Current state: builds are unsigned.** Signing is optional in the release
-> pipeline — the secrets are read if present and skipped if not — so anyone can
-> build Flume without certificates. Everything below is what changes when
-> real credentials exist.
+> **Current state: builds are unsigned.** The release pipeline selects between
+> a signed and an unsigned build depending on whether `APPLE_CERTIFICATE` is
+> set, so anyone can build Flume without certificates. See
+> [Setting up macOS signing](#setting-up-macos-signing) to enable it.
 
 ## What signing actually buys
 
@@ -62,6 +62,122 @@ Their options:
 Option 3 is what most guides lead with, and it is the one to put last: telling
 users to strip security attributes from downloaded binaries is a bad habit to
 teach, even when it is correct here.
+
+## Setting up macOS signing
+
+You need an Apple Developer Program membership. Everything below is done by
+**you**, on your own machine — the certificate and passwords must never be
+pasted into a chat, a file in this repository, or a CI log.
+
+### 1. Create a Developer ID Application certificate
+
+It must be this exact type. "Apple Development" and "Mac App Distribution"
+certificates will not work for distributing outside the App Store, and the
+failure mode is confusing — the build signs successfully and then notarization
+rejects it.
+
+1. In Xcode: **Settings → Accounts → Manage Certificates → + → Developer ID
+   Application**. (Or create it at
+   [developer.apple.com/account/resources/certificates](https://developer.apple.com/account/resources/certificates).)
+2. In **Keychain Access**, find it under _My Certificates_ — it must show a
+   disclosure triangle with a private key inside. Without the private key it
+   cannot sign.
+3. Right-click → **Export** → `.p12` format, and set a strong password. You
+   will need that password in step 3.
+
+### 2. Find your signing identity and team ID
+
+```bash
+security find-identity -p codesigning -v
+```
+
+Copy the full quoted string, which looks like:
+
+```
+Developer ID Application: Your Name (A1B2C3D4E5)
+```
+
+The 10-character code in parentheses is your team ID.
+
+### 3. Create an app-specific password for notarization
+
+**Not your Apple ID password.** Generate one at
+[appleid.apple.com](https://appleid.apple.com) → Sign-In and Security →
+App-Specific Passwords.
+
+An app-specific password can be revoked individually and cannot be used to sign
+in to your account, which is exactly what you want sitting in CI.
+
+### 4. Set the repository secrets
+
+```bash
+./scripts/setup-macos-signing.sh ~/Desktop/flume-signing.p12
+```
+
+The script prompts for each value rather than taking it as an argument, so
+nothing lands in shell history or in `ps` output.
+
+`APPLE_SIGNING_IDENTITY` and `APPLE_TEAM_ID` are set separately, because
+neither is actually a secret — both appear in plain text inside every signed
+binary.
+
+> **Why the export is manual.** `security export` cannot select a single
+> identity; it exports every identity of the requested type from the keychain.
+> On a machine that also has an _Apple Development_ certificate, automating it
+> would ship a second private key to CI that CI has no use for. Keychain
+> Access can export exactly one, so fewer keys leave the machine.
+
+| Secret                       | Value                                                |
+| ---------------------------- | ---------------------------------------------------- |
+| `APPLE_CERTIFICATE`          | base64 of the `.p12` (the command above pipes it in) |
+| `APPLE_CERTIFICATE_PASSWORD` | The password you set when exporting                  |
+| `APPLE_SIGNING_IDENTITY`     | The full `Developer ID Application: ...` string      |
+| `APPLE_ID`                   | Your Apple ID email                                  |
+| `APPLE_PASSWORD`             | The **app-specific** password from step 3            |
+| `APPLE_TEAM_ID`              | The 10-character code                                |
+
+Then delete the `.p12` from disk, or move it somewhere encrypted. It is a
+signing key.
+
+### 5. That is all the wiring
+
+The release workflow already branches on whether `APPLE_CERTIFICATE` is
+non-empty. Once the secrets exist, the next tagged build takes the signed path
+automatically — no workflow change needed.
+
+`hardenedRuntime` is already enabled (it is Tauri's default) and is required
+for notarization.
+
+### If notarization fails
+
+Notarization runs after signing and adds several minutes. Common causes:
+
+| Symptom                                             | Cause                                                |
+| --------------------------------------------------- | ---------------------------------------------------- |
+| `The signature does not include a secure timestamp` | Certificate is not a Developer ID Application cert   |
+| `Team is not yet configured for notarization`       | Developer Program enrolment is still processing      |
+| Invalid credentials                                 | Account password used instead of an app-specific one |
+| Something about JIT or unsigned executable memory   | See below                                            |
+
+**On entitlements:** Flume deliberately ships none. The hardened runtime blocks
+JIT, and a common reflex is to add `com.apple.security.cs.allow-jit` and
+`allow-unsigned-executable-memory` pre-emptively. Do not. WKWebView runs
+JavaScript in a separate system process with its own entitlements, so the app
+usually does not need them — and both entitlements meaningfully weaken the
+hardened runtime. If notarization genuinely fails for that reason, add only
+`allow-jit`, and only then.
+
+### Verifying a signed build
+
+```bash
+codesign -dv --verbose=4 /Applications/Flume.app
+spctl -a -vvv -t install /Applications/Flume.app
+xcrun stapler validate /Applications/Flume.app
+```
+
+The second should say `accepted` with `source=Notarized Developer ID`. The
+third confirms the notarization ticket is stapled, which is what lets the app
+open on a machine with no internet connection.
 
 ## Windows
 
