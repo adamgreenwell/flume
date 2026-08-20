@@ -227,18 +227,29 @@ jobs:
           path: src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
 
-      # The other legs attach their bundles through tauri-action. This job
-      # cannot use it -- it runs in a Fedora container -- so without this the
-      # .rpm exists only as a workflow artifact, which expires and which users
-      # cannot find. Fedora and RHEL users would see no package at all.
-      - name: Attach the .rpm to the release
+  attach-rpms:
+    name: Attach .rpm files to the release
+    needs: rpm
+    runs-on: ubuntu-latest
+    steps:
+      # The .rpm jobs run inside a Fedora container, which has no GitHub CLI --
+      # `gh: command not found` is how rc.2 failed. Rather than install one more
+      # package into the container, the upload happens here, on a normal runner
+      # where gh is preinstalled. It also handles both architectures in one
+      # place instead of duplicating the step per matrix leg.
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: flume-rpm-*
+          merge-multiple: true
+          path: rpms
+
+      - name: Upload to the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          rpm_file=$(find src-tauri/target/release/bundle/rpm -name '*.rpm' | head -1)
-          echo "Attaching $rpm_file to $TAG"
-          # --clobber so a re-run replaces the asset rather than failing on a
-          # name collision.
-          gh release upload "$TAG" "$rpm_file" --clobber -R "$GITHUB_REPOSITORY"
+          ls -la rpms/
+          # --clobber so a re-run replaces assets rather than failing on a name
+          # collision.
+          gh release upload "$TAG" rpms/*.rpm --clobber -R "$GITHUB_REPOSITORY"
