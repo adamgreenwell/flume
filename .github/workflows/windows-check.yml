@@ -1,0 +1,51 @@
+name: Windows check
+
+# Manual only. The repository is private, so Actions minutes are billed, and
+# Windows runners bill at a 2x multiplier. This job exists to answer a specific
+# question (issue #9) on demand rather than on every push.
+#
+# Promote it into ci.yml if Windows regressions start slipping through.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows-tests:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      # tauri-build needs the frontend export to exist before the crate builds.
+      - name: Build the frontend
+        run: npm run build
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      # The reason this workflow exists. The whole test file is #[cfg(windows)],
+      # so this is the only place it can run. A failure here is the answer to
+      # issue #9, not a broken build.
+      - name: File-locking reproduction (issue #9)
+        working-directory: src-tauri
+        run: cargo test --test windows_file_locking -- --nocapture
