@@ -18,7 +18,9 @@ and in [issues](https://github.com/adamgreenwell/flume/issues).
 
 ## Phase 1 — Core torrent lifecycle (MVP) 🚧
 
-The phase that makes Flume usable.
+The phase that makes Flume usable. **The core loop works**: telemetry is
+event-based, and torrents can be added by magnet or file with a
+select-files-first flow, then paused, resumed, and removed.
 
 - Add via magnet link, with clipboard detection ([#3](https://github.com/adamgreenwell/flume/issues/3))
 - Add via `.torrent` file picker and drag-and-drop ([#4](https://github.com/adamgreenwell/flume/issues/4))
