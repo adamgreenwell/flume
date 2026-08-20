@@ -90,7 +90,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
     (draft.downloadDir !== original.downloadDir ||
       draft.listenPort !== original.listenPort ||
       draft.enableDht !== original.enableDht ||
-      draft.enableUpnp !== original.enableUpnp);
+      draft.enableUpnp !== original.enableUpnp ||
+      draft.proxyUrl !== original.proxyUrl);
 
   return (
     <div
@@ -217,6 +218,40 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 checked={draft.enableUpnp}
                 onChange={(enableUpnp) => patch({ enableUpnp })}
               />
+            </section>
+
+            <section className="flex flex-col gap-2">
+              <label
+                htmlFor="proxy-url"
+                className="text-faint text-[11px] font-medium tracking-wider uppercase"
+              >
+                SOCKS5 proxy
+              </label>
+              <input
+                id="proxy-url"
+                value={draft.proxyUrl ?? ""}
+                onChange={(e) =>
+                  patch({ proxyUrl: e.target.value.trim() || null })
+                }
+                placeholder="Direct connection"
+                spellCheck={false}
+                className="border-border-subtle bg-bg text-text placeholder:text-faint selectable w-full rounded-md border px-3 py-2 font-mono text-xs"
+              />
+              <p className="text-faint text-xs">
+                Routes outgoing peer connections through a SOCKS5 proxy, for
+                example <code>socks5://127.0.0.1:1080</code>.
+              </p>
+              {draft.proxyUrl ? (
+                <p
+                  className="border-warn/30 bg-warn/10 text-warn rounded-md border px-3 py-2 text-xs"
+                  role="note"
+                >
+                  This covers <strong>outgoing peer connections only</strong>.
+                  Incoming connections still arrive directly on your listen
+                  port, and the DHT uses UDP, which a SOCKS5 proxy does not
+                  carry. It is not a substitute for a VPN.
+                </p>
+              ) : null}
             </section>
 
             <section className="flex flex-col gap-2">

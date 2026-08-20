@@ -147,6 +147,7 @@ const SETTINGS: Settings = {
   enableUpnp: true,
   downloadLimitBps: null,
   uploadLimitBps: 2_097_152,
+  proxyUrl: null,
   theme: "system",
 };
 

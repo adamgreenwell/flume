@@ -66,6 +66,12 @@ pub struct Settings {
     /// Applied live, without a restart.
     pub upload_limit_bps: Option<u32>,
 
+    /// SOCKS5 proxy for outgoing peer connections; `None` connects directly.
+    ///
+    /// Format: `socks5://[user:password@]host:port`. Requires a session
+    /// restart, since the proxy is fixed when the session is constructed.
+    pub proxy_url: Option<String>,
+
     /// UI colour scheme. Frontend-only; persisted here so it survives restarts.
     pub theme: Theme,
 }
@@ -81,6 +87,7 @@ impl Default for Settings {
             enable_upnp: true,
             download_limit_bps: None,
             upload_limit_bps: None,
+            proxy_url: None,
             theme: Theme::System,
         }
     }
@@ -218,6 +225,32 @@ impl Settings {
                 )));
             }
         }
+        if let Some(proxy) = self.proxy_url.as_deref() {
+            let proxy = proxy.trim();
+            if proxy.is_empty() {
+                return Err(SettingsError::Invalid(
+                    "leave the proxy empty to connect directly, or give a full socks5:// URL"
+                        .into(),
+                ));
+            }
+            // Checked here rather than letting the session fail to start.
+            // A bad proxy URL otherwise surfaces as a generic engine failure
+            // several seconds later, with nothing pointing at the cause.
+            if !proxy.starts_with("socks5://") && !proxy.starts_with("socks5h://") {
+                return Err(SettingsError::Invalid(format!(
+                    "the proxy must be a socks5:// or socks5h:// URL, not {proxy:?}"
+                )));
+            }
+            if proxy
+                .trim_start_matches("socks5h://")
+                .trim_start_matches("socks5://")
+                .is_empty()
+            {
+                return Err(SettingsError::Invalid(
+                    "the proxy URL is missing a host and port".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -231,6 +264,7 @@ impl Settings {
             listen_port: self.listen_port,
             enable_dht: self.enable_dht,
             enable_upnp: self.enable_upnp,
+            proxy_url: self.proxy_url.clone(),
         }
     }
 
@@ -243,6 +277,8 @@ impl Settings {
             || self.listen_port != next.listen_port
             || self.enable_dht != next.enable_dht
             || self.enable_upnp != next.enable_upnp
+            // The proxy is fixed when the session is constructed.
+            || self.proxy_url != next.proxy_url
     }
 }
 
@@ -344,6 +380,64 @@ mod tests {
             ..valid()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_a_socks5_proxy() {
+        for url in [
+            "socks5://127.0.0.1:1080",
+            "socks5h://proxy.example:9050",
+            "socks5://user:pass@10.0.0.1:1080",
+        ] {
+            let settings = Settings {
+                proxy_url: Some(url.into()),
+                ..valid()
+            };
+            assert!(settings.validate().is_ok(), "{url} should be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_a_proxy_that_is_not_socks5() {
+        // http:// proxies are not what librqbit routes peer traffic over, and
+        // accepting one would fail later as an opaque engine start failure.
+        for url in ["http://proxy:8080", "proxy:1080", "1.2.3.4:1080"] {
+            let settings = Settings {
+                proxy_url: Some(url.into()),
+                ..valid()
+            };
+            assert!(settings.validate().is_err(), "{url} should be rejected");
+        }
+    }
+
+    #[test]
+    fn rejects_an_empty_proxy_string() {
+        // None means direct. An empty string is a half-cleared field, and
+        // silently treating it as None would hide a typo.
+        let settings = Settings {
+            proxy_url: Some("   ".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_a_proxy_with_no_host() {
+        let settings = Settings {
+            proxy_url: Some("socks5://".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn changing_the_proxy_requires_a_restart() {
+        let before = valid();
+        let after = Settings {
+            proxy_url: Some("socks5://127.0.0.1:1080".into()),
+            ..valid()
+        };
+        assert!(before.requires_restart(&after));
     }
 
     #[test]

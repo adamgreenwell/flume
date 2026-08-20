@@ -39,6 +39,17 @@ pub struct EngineConfig {
 
     /// Whether to ask the router to forward [`Self::listen_port`] via UPnP.
     pub enable_upnp: bool,
+
+    /// SOCKS5 proxy for outgoing peer connections, or `None` for direct.
+    ///
+    /// Format: `socks5://[user:password@]host:port`.
+    ///
+    /// Note what this does and does not cover. librqbit routes outgoing *peer*
+    /// connections over the proxy. Incoming connections still arrive directly
+    /// on the listen port, and the DHT is UDP, which SOCKS5 TCP does not
+    /// carry. A user who assumes this hides all traffic would be wrong, which
+    /// is why the UI says so.
+    pub proxy_url: Option<String>,
 }
 
 impl EngineConfig {
@@ -66,6 +77,7 @@ impl EngineConfig {
             listen_port: DEFAULT_LISTEN_PORT,
             enable_dht: true,
             enable_upnp: true,
+            proxy_url: None,
         })
     }
 }

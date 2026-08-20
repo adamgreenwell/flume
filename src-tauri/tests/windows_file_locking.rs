@@ -45,6 +45,7 @@ fn test_config(tmp: &TempDir) -> EngineConfig {
         listen_port: 0,
         enable_dht: false,
         enable_upnp: false,
+        proxy_url: None,
     }
 }
 
