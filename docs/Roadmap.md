@@ -33,13 +33,15 @@ select-files-first flow, then paused, resumed, and removed.
 Also in this phase: replace the Phase 0 polling hook with backend-pushed,
 batched events before the torrent count grows.
 
-## Phase 2 — Polish & platform integration
+## Phase 2 — Polish & platform integration ✅
 
-- Theming and the visual design pass ([#10](https://github.com/adamgreenwell/flume/issues/10))
-- Per-torrent detail view with piece heatmap ([#11](https://github.com/adamgreenwell/flume/issues/11))
-- Magnet/`.torrent` protocol association and single instance ([#12](https://github.com/adamgreenwell/flume/issues/12))
-- Notifications and system tray ([#13](https://github.com/adamgreenwell/flume/issues/13))
-- Keyboard shortcuts, context menus, accessibility ([#14](https://github.com/adamgreenwell/flume/issues/14))
+**Complete.** Milestone closed 5/5.
+
+- ~~Theming and the visual design pass~~ ✅ ([#10](https://github.com/adamgreenwell/flume/issues/10))
+- ~~Per-torrent detail view with piece heatmap~~ ✅ ([#11](https://github.com/adamgreenwell/flume/issues/11))
+- ~~Magnet protocol association and single instance~~ ✅ ([#12](https://github.com/adamgreenwell/flume/issues/12))
+- ~~Notifications and system tray~~ ✅ ([#13](https://github.com/adamgreenwell/flume/issues/13))
+- ~~Keyboard shortcuts and accessibility baseline~~ ✅ ([#14](https://github.com/adamgreenwell/flume/issues/14))
 
 ## Phase 3 — Hardening & distribution
 
@@ -55,6 +57,11 @@ batched events before the torrent count grows.
 - **Polling, not events.** The Phase 0 status hook polls at 1 Hz. Fine for one
   status card, wrong for a torrent list.
 - **No published builds.** Until Phase 3, build from source.
+- **Magnet association is untested on macOS and Windows.** The OS registration
+  lives in the installed bundle, so it cannot be exercised by `tauri dev` —
+  see [[Platform-Notes]]. Blocked behind the release pipeline
+  ([#15](https://github.com/adamgreenwell/flume/issues/15)), which is itself
+  blocked by [#22](https://github.com/adamgreenwell/flume/issues/22).
 
 ## Out of scope
 

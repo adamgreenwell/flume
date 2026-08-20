@@ -61,6 +61,8 @@ export interface TorrentRowProps {
   onReveal: (t: TorrentSummary) => void;
   /** Open the per-torrent detail panel. */
   onOpenDetail: (t: TorrentSummary) => void;
+  /** Right-clicked, with the pointer position in viewport coordinates. */
+  onContextMenu: (t: TorrentSummary, at: { x: number; y: number }) => void;
 }
 
 /**
@@ -75,6 +77,7 @@ export function TorrentRow({
   onRemove,
   onReveal,
   onOpenDetail,
+  onContextMenu,
 }: TorrentRowProps) {
   const fraction = progressFraction(torrent);
   const isPaused = torrent.state === "paused";
@@ -85,7 +88,13 @@ export function TorrentRow({
       : "0.00";
 
   return (
-    <li className="group border-border-subtle bg-surface hover:border-muted/40 rounded-lg border px-4 py-3.5 transition-colors">
+    <li
+      className="group border-border-subtle bg-surface hover:border-muted/40 rounded-lg border px-4 py-3.5 transition-colors"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onContextMenu(torrent, { x: event.clientX, y: event.clientY });
+      }}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <p
