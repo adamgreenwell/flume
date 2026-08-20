@@ -84,7 +84,15 @@ export function useTelemetry(): UseTelemetryResult {
       }
     };
 
-    void subscribe();
+    // `subscribe` can reject outright — notably when the page is open in a
+    // plain browser rather than the Tauri webview, where `listen` has no IPC
+    // internals to hook into. Unhandled, that surfaces as a console-level
+    // unhandledRejection and the UI just sits there silently.
+    void subscribe().catch(() => {
+      if (!active) return;
+      setError("Live updates are unavailable outside the Flume app.");
+      setIsLoading(false);
+    });
     void primeFirstPaint();
 
     return () => {
