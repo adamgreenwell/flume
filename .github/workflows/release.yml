@@ -91,10 +91,18 @@ jobs:
         if: startsWith(matrix.runner, 'ubuntu-')
         run: |
           sudo apt-get update
-          # Tauri v2's documented Linux prerequisites. libayatana-* is the
-          # current name; libappindicator3-dev is only a transitional package
-          # and is what the tray needs on Linux. patchelf is required by the
-          # AppImage bundler.
+          # Tauri v2's documented Linux prerequisites, plus two the docs omit.
+          # libayatana-* is the current name; libappindicator3-dev is only a
+          # transitional package, and it is what the tray needs on Linux.
+          # patchelf is required by the AppImage bundler.
+          #
+          # xdg-utils provides xdg-mime, which the AppImage bundler shells out
+          # to. It is preinstalled on the x86_64 runner image but *not* on the
+          # arm64 one, so the arm64 leg failed with:
+          #   failed to bundle project: xdg-mime binary not found
+          # desktop-file-utils is installed alongside it for the same reason --
+          # linuxdeploy validates .desktop files, and the arm64 image cannot be
+          # assumed to carry the same tools as the x86_64 one.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
@@ -105,7 +113,9 @@ jobs:
             wget \
             file \
             libxdo-dev \
-            libssl-dev
+            libssl-dev \
+            xdg-utils \
+            desktop-file-utils
 
       - uses: actions/setup-node@v7
         with:
