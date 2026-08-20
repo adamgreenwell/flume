@@ -69,10 +69,6 @@ unwrap_used = "warn"
 expect_used = "warn"
 
 [dev-dependencies]
-# Tauri's mock runtime lets the commands layer be exercised through the real
-# IPC machinery without a WebView, which is the only way to prove the invoke
-# path end to end in an automated test.
-tauri = { version = "2.11.5", features = ["test"] }
 tempfile = "3.27.0"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 
