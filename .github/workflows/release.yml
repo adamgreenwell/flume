@@ -58,13 +58,21 @@ jobs:
         if: matrix.runner == 'ubuntu-22.04'
         run: |
           sudo apt-get update
+          # Tauri v2's documented Linux prerequisites. libayatana-* is the
+          # current name; libappindicator3-dev is only a transitional package
+          # and is what the tray needs on Linux. patchelf is required by the
+          # AppImage bundler.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
+            libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
             build-essential \
-            libxdo-dev
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev
 
       - uses: actions/setup-node@v7
         with:
@@ -83,7 +91,7 @@ jobs:
       - run: npm ci
 
       - name: Build and bundle
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signing is optional: these are empty for forks and for anyone
@@ -104,7 +112,13 @@ jobs:
             See the wiki's Platform Notes for how to open an unsigned build on
             each OS.
           releaseDraft: true
-          prerelease: false
+          # Semver treats a hyphen as a prerelease marker, so v0.1.0-rc.1 is
+          # flagged automatically and v0.1.0 is not. Without this, a release
+          # candidate would be published looking like a final release.
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          # Flume has no updater configured, so a latest.json would advertise
+          # an update channel that does not exist.
+          uploadUpdaterJson: false
           args: ${{ matrix.args }}
 
   rpm:
@@ -140,7 +154,7 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked && cargo tauri build --bundles rpm
 
       - name: Upload the .rpm
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flume-rpm
           path: src-tauri/target/release/bundle/rpm/*.rpm
