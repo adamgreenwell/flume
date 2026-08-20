@@ -51,13 +51,27 @@ jobs:
             runner: macos-latest
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin --bundles dmg"
-          - name: Windows
+          - name: Windows (x64)
             runner: windows-latest
             target: x86_64-pc-windows-msvc
+            args: ""
+          # GitHub's arm64 Windows runner. Native rather than cross-compiled:
+          # Tauri's Windows bundlers (WiX and NSIS) expect to run on the target
+          # architecture, so cross-building produces a binary with no installer.
+          - name: Windows (arm64)
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
             args: ""
           # ubuntu-22.04 deliberately: it is the oldest supported base and so
           # sets the glibc and WebKitGTK floor for the .deb. Building on a
           # newer runner produces a package that will not install on Debian 12.
+          # arm64 Linux builds natively on GitHub's arm64 runner. Cross-
+          # compiling would need an aarch64 sysroot with WebKitGTK in it, which
+          # is far more fragile than using the right machine.
+          - name: Linux arm64 (.deb / AppImage)
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: "--bundles deb,appimage"
           - name: Linux (.deb / AppImage)
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -74,7 +88,7 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Install Linux dependencies
-        if: matrix.runner == 'ubuntu-22.04'
+        if: startsWith(matrix.runner, 'ubuntu-')
         run: |
           sudo apt-get update
           # Tauri v2's documented Linux prerequisites. libayatana-* is the
@@ -155,8 +169,16 @@ jobs:
           args: ${{ matrix.args }}
 
   rpm:
-    name: Linux (.rpm)
-    runs-on: ubuntu-22.04
+    name: Linux ${{ matrix.arch }} (.rpm)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
     # Built in a Fedora container rather than on the runner: .rpm packaging
     # needs rpmbuild and Fedora's webkit2gtk4.1, neither of which exist on the
     # Ubuntu image.
@@ -191,7 +213,7 @@ jobs:
       - name: Upload the .rpm as a workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: flume-rpm
+          name: flume-rpm-${{ matrix.arch }}
           path: src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: error
 
