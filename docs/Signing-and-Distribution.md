@@ -110,17 +110,22 @@ in to your account, which is exactly what you want sitting in CI.
 
 ### 4. Set the repository secrets
 
-Run these yourself. Each command prompts for the value rather than taking it as
-an argument, so nothing lands in your shell history.
-
 ```bash
-base64 -i /path/to/Certificates.p12 | gh secret set APPLE_CERTIFICATE -R adamgreenwell/flume
-gh secret set APPLE_CERTIFICATE_PASSWORD -R adamgreenwell/flume
-gh secret set APPLE_SIGNING_IDENTITY -R adamgreenwell/flume
-gh secret set APPLE_ID -R adamgreenwell/flume
-gh secret set APPLE_PASSWORD -R adamgreenwell/flume
-gh secret set APPLE_TEAM_ID -R adamgreenwell/flume
+./scripts/setup-macos-signing.sh ~/Desktop/flume-signing.p12
 ```
+
+The script prompts for each value rather than taking it as an argument, so
+nothing lands in shell history or in `ps` output.
+
+`APPLE_SIGNING_IDENTITY` and `APPLE_TEAM_ID` are set separately, because
+neither is actually a secret — both appear in plain text inside every signed
+binary.
+
+> **Why the export is manual.** `security export` cannot select a single
+> identity; it exports every identity of the requested type from the keychain.
+> On a machine that also has an _Apple Development_ certificate, automating it
+> would ship a second private key to CI that CI has no use for. Keychain
+> Access can export exactly one, so fewer keys leave the machine.
 
 | Secret                       | Value                                                |
 | ---------------------------- | ---------------------------------------------------- |
