@@ -8,7 +8,10 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::{engine::CoreStatus, state::AppState};
+use crate::{
+    engine::{CoreStatus, TelemetrySnapshot},
+    state::AppState,
+};
 
 /// An error returned across the IPC boundary.
 ///
@@ -36,9 +39,6 @@ impl CommandError {
 
 /// Returns a snapshot of engine and DHT status.
 ///
-/// This is the command that proves the full IPC path end to end: it reads live
-/// counters out of librqbit and returns them as JSON to the WebView.
-///
 /// # Errors
 ///
 /// Returns [`CommandError`] with kind `engineNotReady` while the engine is
@@ -47,4 +47,19 @@ impl CommandError {
 pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
     Ok(engine.core_status())
+}
+
+/// Returns the full telemetry snapshot: session status plus every torrent.
+///
+/// The UI receives this continuously as a pushed event; this command exists so
+/// the first paint does not have to wait up to a full tick for one.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] with kind `engineNotReady` while the engine is
+/// still starting up.
+#[tauri::command]
+pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
+    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    Ok(engine.telemetry())
 }

@@ -52,6 +52,56 @@ export interface CoreStatus {
   health: EngineHealth;
 }
 
+/**
+ * User-facing lifecycle state of a torrent. Mirrors Rust `TorrentState`.
+ *
+ * Deliberately coarser than librqbit's internal states: the engine
+ * distinguishes "live" from "finished", but a user thinks in terms of
+ * downloading versus seeding.
+ */
+export type TorrentState =
+  "checking" | "downloading" | "seeding" | "paused" | "error";
+
+/** A snapshot of one torrent. Mirrors Rust `TorrentSummary`. */
+export interface TorrentSummary {
+  /** Session-local id. Stable while the app runs, not across restarts. */
+  id: number;
+  /** Hex info hash. Stable across restarts, unlike {@link TorrentSummary.id}. */
+  infoHash: string;
+  /** Display name, or the info hash if metadata has not resolved yet. */
+  name: string;
+  /** Coarse lifecycle state. */
+  state: TorrentState;
+  /** Bytes downloaded and verified. */
+  progressBytes: number;
+  /** Total size of the selected files, in bytes. */
+  totalBytes: number;
+  /** Bytes uploaded to peers this session. */
+  uploadedBytes: number;
+  /** Download rate in bytes per second; zero when not live. */
+  downloadBps: number;
+  /** Upload rate in bytes per second; zero when not live. */
+  uploadBps: number;
+  /** Peers currently connected to this torrent. */
+  livePeers: number;
+  /** Estimated seconds to completion, or `null` when not estimable. */
+  etaSeconds: number | null;
+  /** Whether all selected files are complete. */
+  finished: boolean;
+  /** Failure message when {@link TorrentSummary.state} is `"error"`. */
+  error: string | null;
+  /** Absolute directory the files are written to. */
+  outputFolder: string;
+}
+
+/** Everything the UI needs for one render tick. Mirrors Rust `TelemetrySnapshot`. */
+export interface TelemetrySnapshot {
+  /** Session-wide status. */
+  core: CoreStatus;
+  /** One entry per torrent, ordered by id. */
+  torrents: TorrentSummary[];
+}
+
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {
   /** Stable identifier for the error class, e.g. `"engineNotReady"`. */

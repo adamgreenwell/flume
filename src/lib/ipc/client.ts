@@ -8,7 +8,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import type { CoreStatus } from "./types";
+import type { CoreStatus, TelemetrySnapshot } from "./types";
 
 /**
  * Fetches a snapshot of torrent engine and DHT status.
@@ -19,4 +19,18 @@ import type { CoreStatus } from "./types";
  */
 export async function getCoreStatus(): Promise<CoreStatus> {
   return invoke<CoreStatus>("get_core_status");
+}
+
+/**
+ * Fetches the full telemetry snapshot: session status plus every torrent.
+ *
+ * The UI receives this continuously as a pushed event; this call exists so the
+ * first paint does not wait up to a full tick for one.
+ *
+ * @returns The current {@link TelemetrySnapshot}.
+ * @throws A {@link CommandError} if the engine has not finished starting;
+ *   check with `isCommandError`.
+ */
+export async function getTelemetry(): Promise<TelemetrySnapshot> {
+  return invoke<TelemetrySnapshot>("get_telemetry");
 }

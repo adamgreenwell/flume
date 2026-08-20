@@ -2,20 +2,20 @@
 
 import { StatCard } from "@/components/StatCard";
 import { StatusPill } from "@/components/StatusPill";
-import { useCoreStatus } from "@/hooks/useCoreStatus";
+import { useTelemetry } from "@/hooks/useTelemetry";
 import { formatDuration, formatSpeed } from "@/lib/format";
 
 /**
- * Phase 0 landing page.
+ * Application landing page.
  *
- * Its job is to prove the full IPC path: the Rust backend starts a real
- * librqbit session, and these numbers are live counters read out of it over
- * Tauri `invoke`. Phase 1 replaces this with the torrent list.
+ * Renders live session status from backend-pushed telemetry. The torrent list
+ * lands here next; the telemetry stream it will consume is already flowing.
  *
  * @returns The rendered page.
  */
 export default function Home() {
-  const { status, error, isLoading } = useCoreStatus();
+  const { telemetry, error, isLoading } = useTelemetry();
+  const status = telemetry?.core ?? null;
 
   return (
     <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-8 px-8 py-12">
@@ -105,8 +105,9 @@ export default function Home() {
           </div>
         </dl>
         <p className="text-faint mt-3 text-xs">
-          Phase 0 — these figures are live from librqbit over the Tauri IPC
-          bridge. Torrent management arrives in Phase 1.
+          {telemetry?.torrents.length
+            ? `${telemetry.torrents.length} torrent${telemetry.torrents.length === 1 ? "" : "s"} loaded.`
+            : "No torrents yet — adding them arrives next."}
         </p>
       </section>
     </main>

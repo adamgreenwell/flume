@@ -10,6 +10,7 @@
 //!   testable on its own.
 //! * [`state`] — process-wide shared state handed to command handlers.
 //! * [`commands`] — `#[tauri::command]` entry points. Thin by design.
+//! * [`telemetry`] — pushes batched status to the UI on a fixed cadence.
 //!
 //! Torrent piece data is written to disk by librqbit and never crosses the IPC
 //! boundary; the WebView only ever receives small JSON status payloads.
@@ -17,6 +18,7 @@
 pub mod commands;
 pub mod engine;
 pub mod state;
+pub mod telemetry;
 
 use engine::{Engine, EngineConfig};
 use state::AppState;
@@ -46,9 +48,13 @@ pub fn run() {
                 .build(),
         )
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![commands::get_core_status])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_core_status,
+            commands::get_telemetry
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
+            telemetry::spawn(handle.clone());
             tauri::async_runtime::spawn(async move {
                 match EngineConfig::with_os_defaults() {
                     Ok(config) => {
