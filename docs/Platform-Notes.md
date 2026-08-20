@@ -38,6 +38,26 @@ xattr -dr com.apple.quarantine /Applications/Flume.app
 Application certificate, and notarization through Apple's service. Tracked in
 [#18](https://github.com/adamgreenwell/flume/issues/18).
 
+### Do not set `licenseFile` in `tauri.conf.json`
+
+It looks like obvious good practice — ship the licence with the app — and what
+it actually does on macOS is turn the `.dmg` into a **click-through EULA**.
+Every user must accept an agreement before the disk image will open, and
+non-interactive tooling cannot mount it at all (`hdiutil: attach canceled`).
+
+That pattern is inherited from commercial software. Apache-2.0 is permissive
+and applies whether or not anyone clicks Agree; the licence is already in the
+repository, in `NOTICE`, and inside the app bundle. The gate adds friction and
+buys nothing.
+
+Confirm with:
+
+```bash
+hdiutil imageinfo Flume_x.y.z_aarch64.dmg | grep "Software License Agreement"
+```
+
+`false` is correct.
+
 ### Do not set `minimumSystemVersion` in `tauri.conf.json`
 
 It looks like the obvious place to declare the minimum macOS, and it breaks the
