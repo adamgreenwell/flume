@@ -18,14 +18,15 @@ pub enum TorrentSource {
         /// The full magnet URI.
         uri: String,
     },
-    /// The contents of a `.torrent` file, which already contain metadata.
+    /// A path to a `.torrent` file on disk.
     ///
-    /// This is torrent *metadata* — a few kilobytes of file names and piece
-    /// hashes — not piece data. It is the one thing that legitimately crosses
-    /// the boundary, because the user picked the file in the webview.
+    /// Carries the *path*, not the bytes. The webview obtains it from the file
+    /// picker or a drag-and-drop, and the engine does the reading — so the
+    /// frontend needs no filesystem permission at all, and no file contents
+    /// cross the IPC boundary.
     File {
-        /// Raw `.torrent` bytes.
-        bytes: Vec<u8>,
+        /// Absolute path to a `.torrent` file.
+        path: String,
     },
 }
 

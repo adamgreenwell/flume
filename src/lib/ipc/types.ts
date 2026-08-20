@@ -105,12 +105,12 @@ export interface TelemetrySnapshot {
 /**
  * Where a torrent is being added from. Mirrors Rust `TorrentSource`.
  *
- * The `file` variant carries torrent *metadata* — a few kilobytes of names and
- * piece hashes — not piece data. It is the one payload that legitimately
- * crosses the boundary, because the user picked the file in the webview.
+ * The `file` variant carries a *path*, not bytes: the engine does the reading,
+ * so the frontend needs no filesystem permission and no file contents cross
+ * the IPC boundary.
  */
 export type TorrentSource =
-  { kind: "magnet"; uri: string } | { kind: "file"; bytes: number[] };
+  { kind: "magnet"; uri: string } | { kind: "file"; path: string };
 
 /** One file inside a torrent. Mirrors Rust `TorrentFile`. */
 export interface TorrentFile {

@@ -277,7 +277,15 @@ impl Engine {
                 Magnet::parse(uri).map_err(EngineError::InvalidMagnet)?;
                 AddTorrent::from_url(uri.clone())
             }
-            TorrentSource::File { bytes } => AddTorrent::from_bytes(bytes.clone()),
+            TorrentSource::File { path } => {
+                // Read here rather than in the webview: the frontend then needs
+                // no filesystem permission, and `.torrent` contents never cross
+                // the IPC boundary.
+                let bytes = std::fs::read(path).map_err(|e| {
+                    EngineError::Metadata(anyhow::anyhow!("could not read {path}: {e}"))
+                })?;
+                AddTorrent::from_bytes(bytes)
+            }
         };
 
         let response = self

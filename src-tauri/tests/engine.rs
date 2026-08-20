@@ -136,11 +136,12 @@ async fn dht_bootstraps_and_reaches_ready() {
 
 // --- Add flow ------------------------------------------------------------
 
-/// A minimal single-file torrent, built by librqbit so the bytes are valid.
+/// Writes a minimal single-file `.torrent` and returns its path.
 ///
-/// Using a real encoder rather than a checked-in fixture keeps the test honest
-/// if the metadata format handling ever changes.
-async fn sample_torrent_bytes(dir: &std::path::Path) -> Vec<u8> {
+/// Built with librqbit's own encoder rather than a checked-in fixture, so the
+/// test stays honest if metadata handling changes. Returns a *path* because
+/// that is what the app actually receives from the file picker.
+async fn sample_torrent_file(dir: &std::path::Path) -> String {
     std::fs::create_dir_all(dir).expect("dir");
     std::fs::write(dir.join("ubuntu.iso"), vec![7u8; 4096]).expect("write");
 
@@ -156,22 +157,22 @@ async fn sample_torrent_bytes(dir: &std::path::Path) -> Vec<u8> {
     .await
     .expect("create torrent");
 
-    result.as_bytes().expect("encode torrent").to_vec()
+    let path = dir.join("sample.torrent");
+    std::fs::write(&path, result.as_bytes().expect("encode torrent")).expect("write torrent");
+    path.display().to_string()
 }
 
 #[tokio::test]
 async fn preview_lists_files_without_starting_a_download() {
     let tmp = TempDir::new().expect("temp dir");
-    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
 
     let engine = Engine::start(test_config(&tmp, false))
         .await
         .expect("engine starts");
 
     let preview = engine
-        .preview(TorrentSource::File {
-            bytes: bytes.clone(),
-        })
+        .preview(TorrentSource::File { path: path.clone() })
         .await
         .expect("preview succeeds");
 
@@ -190,13 +191,13 @@ async fn preview_lists_files_without_starting_a_download() {
 #[tokio::test]
 async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
     let tmp = TempDir::new().expect("temp dir");
-    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
 
     let engine = Engine::start(test_config(&tmp, false))
         .await
         .expect("engine starts");
     let preview = engine
-        .preview(TorrentSource::File { bytes })
+        .preview(TorrentSource::File { path })
         .await
         .expect("preview");
 
@@ -222,13 +223,13 @@ async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
 #[tokio::test]
 async fn discarding_a_preview_releases_it() {
     let tmp = TempDir::new().expect("temp dir");
-    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
 
     let engine = Engine::start(test_config(&tmp, false))
         .await
         .expect("engine starts");
     let preview = engine
-        .preview(TorrentSource::File { bytes })
+        .preview(TorrentSource::File { path })
         .await
         .expect("preview");
 
@@ -292,13 +293,13 @@ async fn control_operations_reject_unknown_ids() {
 #[tokio::test]
 async fn remove_without_delete_leaves_files_on_disk() {
     let tmp = TempDir::new().expect("temp dir");
-    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
 
     let engine = Engine::start(test_config(&tmp, false))
         .await
         .expect("engine starts");
     let preview = engine
-        .preview(TorrentSource::File { bytes })
+        .preview(TorrentSource::File { path })
         .await
         .expect("preview");
     let id = engine
