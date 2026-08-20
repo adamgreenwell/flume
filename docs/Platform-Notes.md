@@ -34,6 +34,23 @@ xattr -dr com.apple.quarantine /Applications/Flume.app
 Application certificate, and notarization through Apple's service. Tracked in
 [#18](https://github.com/adamgreenwell/flume/issues/18).
 
+### Do not set `minimumSystemVersion` in `tauri.conf.json`
+
+It looks like the obvious place to declare the minimum macOS, and it breaks the
+release build.
+
+Setting it makes the Tauri CLI export `MACOSX_DEPLOYMENT_TARGET` for the entire
+cargo invocation. That variable leaks into the **host** build of proc-macro
+crates, where it breaks `ctor-proc-macro`; the build then fails with
+`can't find crate for ctor_proc_macro`. Any value triggers it.
+
+The minimum is declared in `src-tauri/Info.plist` instead, which
+`tauri-bundler` merges into the generated plist. Finder enforces
+`LSMinimumSystemVersion` either way, so the user-visible behaviour is the same.
+
+See [#22](https://github.com/adamgreenwell/flume/issues/22) for the full
+investigation.
+
 **Universal binaries** (`--target universal-apple-darwin`) roughly double
 bundle size. Decision deferred.
 
@@ -110,9 +127,17 @@ not a fault: macOS has no runtime registration API, so the association only
 exists for an installed bundle.
 
 **Consequence for testing:** clicking a magnet link in a browser cannot be
-verified with `npm run tauri:dev` on macOS or Windows. It needs a bundled
-build, which also means it is untested until the release pipeline
-([#15](https://github.com/adamgreenwell/flume/issues/15)) exists.
+verified with `npm run tauri:dev` on macOS or Windows. Build a bundle
+(`npm run tauri:build`) and launch that instead.
+
+Verified on macOS against a real bundle: `CFBundleURLTypes` registers the
+`magnet` scheme, and launching the app a second time with a magnet argument
+hands it to the running instance and exits, rather than starting a second
+engine.
+
+> **If another client is installed**, it may already own the `magnet:` default.
+> Both apps are registered; macOS picks one. Change the default in the other
+> client's settings, or via a LaunchServices utility.
 
 ## System tray
 
