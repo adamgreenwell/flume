@@ -100,3 +100,18 @@ pub struct CoreStatus {
     /// Derived readiness indicator; see [`EngineHealth`].
     pub health: EngineHealth,
 }
+
+/// Everything the UI needs for one render tick.
+///
+/// Emitted as a single batched event roughly once per second rather than as
+/// per-torrent or per-piece messages. One payload per tick keeps IPC volume
+/// flat as the torrent count grows, which is the whole reason telemetry is
+/// pushed rather than polled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetrySnapshot {
+    /// Session-wide status.
+    pub core: CoreStatus,
+    /// One entry per torrent, ordered by id.
+    pub torrents: Vec<super::TorrentSummary>,
+}

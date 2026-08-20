@@ -52,6 +52,97 @@ export interface CoreStatus {
   health: EngineHealth;
 }
 
+/**
+ * User-facing lifecycle state of a torrent. Mirrors Rust `TorrentState`.
+ *
+ * Deliberately coarser than librqbit's internal states: the engine
+ * distinguishes "live" from "finished", but a user thinks in terms of
+ * downloading versus seeding.
+ */
+export type TorrentState =
+  "checking" | "downloading" | "seeding" | "paused" | "error";
+
+/** A snapshot of one torrent. Mirrors Rust `TorrentSummary`. */
+export interface TorrentSummary {
+  /** Session-local id. Stable while the app runs, not across restarts. */
+  id: number;
+  /** Hex info hash. Stable across restarts, unlike {@link TorrentSummary.id}. */
+  infoHash: string;
+  /** Display name, or the info hash if metadata has not resolved yet. */
+  name: string;
+  /** Coarse lifecycle state. */
+  state: TorrentState;
+  /** Bytes downloaded and verified. */
+  progressBytes: number;
+  /** Total size of the selected files, in bytes. */
+  totalBytes: number;
+  /** Bytes uploaded to peers this session. */
+  uploadedBytes: number;
+  /** Download rate in bytes per second; zero when not live. */
+  downloadBps: number;
+  /** Upload rate in bytes per second; zero when not live. */
+  uploadBps: number;
+  /** Peers currently connected to this torrent. */
+  livePeers: number;
+  /** Estimated seconds to completion, or `null` when not estimable. */
+  etaSeconds: number | null;
+  /** Whether all selected files are complete. */
+  finished: boolean;
+  /** Failure message when {@link TorrentSummary.state} is `"error"`. */
+  error: string | null;
+  /** Absolute directory the files are written to. */
+  outputFolder: string;
+}
+
+/** Everything the UI needs for one render tick. Mirrors Rust `TelemetrySnapshot`. */
+export interface TelemetrySnapshot {
+  /** Session-wide status. */
+  core: CoreStatus;
+  /** One entry per torrent, ordered by id. */
+  torrents: TorrentSummary[];
+}
+
+/**
+ * Where a torrent is being added from. Mirrors Rust `TorrentSource`.
+ *
+ * The `file` variant carries a *path*, not bytes: the engine does the reading,
+ * so the frontend needs no filesystem permission and no file contents cross
+ * the IPC boundary.
+ */
+export type TorrentSource =
+  { kind: "magnet"; uri: string } | { kind: "file"; path: string };
+
+/** One file inside a torrent. Mirrors Rust `TorrentFile`. */
+export interface TorrentFile {
+  /** Index within the torrent; this is what selection refers to. */
+  index: number;
+  /** Path relative to the torrent root, using forward slashes. */
+  path: string;
+  /** Size in bytes. */
+  length: number;
+}
+
+/**
+ * Resolved metadata for a torrent that has not started. Mirrors Rust
+ * `TorrentPreview`.
+ *
+ * Deliberately carries no `.torrent` bytes: the engine holds those and looks
+ * them up by `infoHash` on confirm, so a magnet's metadata is fetched from the
+ * DHT exactly once.
+ */
+export interface TorrentPreview {
+  /** Hex info hash; also the key used to confirm the add. */
+  infoHash: string;
+  /** Display name from the metadata. */
+  name: string;
+  /** Combined size of every file. */
+  totalBytes: number;
+  /** Every file, in torrent order. */
+  files: TorrentFile[];
+  /** Whether this torrent is already in the session. */
+  alreadyAdded: boolean;
+}
+
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {
   /** Stable identifier for the error class, e.g. `"engineNotReady"`. */
