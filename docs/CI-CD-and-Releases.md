@@ -60,7 +60,13 @@ GitHub Release.
 | `build-macos`     | `macos-latest`            | `.dmg`         |
 
 Signing stays optional via repository secrets, empty when unavailable, so forks
-and contributors can build without credentials.
+and contributors can build without credentials. What signing costs and what
+users see without it is covered in [[Signing-and-Distribution]].
+
+Release runs deliberately use **no Rust build cache**. A cached target directory
+built with different features is the state that produced the proc-macro failure
+in [#22](https://github.com/adamgreenwell/flume/issues/22), and a release build
+is not worth risking to save a few minutes of compile time.
 
 ### Release checklist
 
