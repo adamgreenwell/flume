@@ -316,3 +316,62 @@ async fn remove_without_delete_leaves_files_on_disk() {
 
     engine.shutdown().await;
 }
+
+/// Ubuntu 24.04.3 desktop amd64 — a large, extremely well-seeded torrent.
+///
+/// Chosen because it is legal to distribute, reliably available on the DHT,
+/// and representative of Flume's actual use case.
+const UBUNTU_MAGNET: &str = "magnet:?xt=urn:btih:d160b8d8ea35a5b4e52837468fc8f03d55cef1f7";
+
+/// Requires internet access: resolves real metadata over the DHT.
+///
+/// This is the highest-risk path in the add flow — a magnet has no metadata,
+/// so the file list has to come from peers found via the DHT. Offline tests
+/// cannot cover it.
+#[tokio::test]
+#[ignore = "requires network access and DHT peers"]
+async fn magnet_resolves_real_metadata_over_the_dht() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, true))
+        .await
+        .expect("engine starts");
+
+    let preview = tokio::time::timeout(
+        Duration::from_secs(120),
+        engine.preview(TorrentSource::Magnet {
+            uri: UBUNTU_MAGNET.to_string(),
+        }),
+    )
+    .await
+    .expect("metadata resolution timed out")
+    .expect("preview should succeed");
+
+    assert!(
+        preview.name.to_lowercase().contains("ubuntu"),
+        "unexpected torrent name: {}",
+        preview.name
+    );
+    assert!(!preview.files.is_empty(), "torrent should list files");
+    assert!(
+        preview.total_bytes > 1_000_000_000,
+        "a desktop ISO should be over 1 GB, got {}",
+        preview.total_bytes
+    );
+    assert!(!preview.already_added);
+
+    // Confirming must not re-fetch metadata: the engine kept the resolved
+    // bytes, so this returns effectively instantly.
+    let id = tokio::time::timeout(
+        Duration::from_secs(10),
+        engine.confirm_add(&preview.info_hash, Some(vec![0])),
+    )
+    .await
+    .expect("confirm should not re-fetch over the DHT")
+    .expect("add should succeed");
+
+    let summaries = engine.torrent_summaries();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].id, id);
+
+    engine.shutdown().await;
+}
