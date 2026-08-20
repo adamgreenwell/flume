@@ -93,6 +93,36 @@ GDK_BACKEND=x11 flume
 Optional additional output. Bundles more dependencies, so it works across more
 distros at the cost of size.
 
+## Magnet link association
+
+Flume registers itself as a handler for `magnet:` URIs. How that registration
+happens differs by platform, which matters when testing:
+
+| Platform | Registered by                                        | Works in `tauri dev`?              |
+| -------- | ---------------------------------------------------- | ---------------------------------- |
+| macOS    | `CFBundleURLTypes` in the bundled app's `Info.plist` | **No** — needs an installed `.app` |
+| Windows  | Registry entries written by the installer            | **No** — needs an installed build  |
+| Linux    | `.desktop` MIME entry, or at runtime                 | Yes, via runtime registration      |
+
+On macOS the app logs `runtime deep-link registration unavailable
+(unsupported platform)` at debug level on every dev start. That is expected,
+not a fault: macOS has no runtime registration API, so the association only
+exists for an installed bundle.
+
+**Consequence for testing:** clicking a magnet link in a browser cannot be
+verified with `npm run tauri:dev` on macOS or Windows. It needs a bundled
+build, which also means it is untested until the release pipeline
+([#15](https://github.com/adamgreenwell/flume/issues/15)) exists.
+
+## System tray
+
+The tray is optional by design. Some Linux desktops ship no system tray at all,
+so a failure to create the icon is logged and ignored rather than being fatal —
+the app is perfectly usable without one.
+
+Left-clicking the icon reveals the window on Windows and Linux; macOS opens the
+menu on any click, which is the platform convention and is handled by Tauri.
+
 ## Sandboxing and firewalls
 
 Flume needs:

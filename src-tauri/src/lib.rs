@@ -103,12 +103,16 @@ pub fn run() {
                     }
                 });
 
-                // Runtime registration is needed for development and for Linux,
-                // where the .desktop entry is not installed by a dev build. On
-                // macOS and Windows the bundled app registers the scheme at
-                // install time, so a failure here is not fatal.
+                // Runtime registration matters for Linux and for development,
+                // where no .desktop entry or bundle exists yet. macOS does not
+                // support it at all -- the association comes from the bundled
+                // app's Info.plist -- so "unsupported platform" here is
+                // expected and not a problem.
                 if let Err(err) = app.deep_link().register_all() {
-                    log::debug!("could not register the magnet: handler at runtime: {err}");
+                    log::debug!(
+                        "runtime deep-link registration unavailable ({err}); \
+                         on macOS and Windows the installed bundle registers the scheme"
+                    );
                 }
             }
 
