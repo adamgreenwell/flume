@@ -13,17 +13,20 @@
 //! back small scalar counters and hands them to the UI as [`CoreStatus`]. Piece
 //! data never crosses the IPC boundary.
 
+mod add;
 mod config;
 mod status;
 mod torrent;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use librqbit::{
-    DhtSessionConfig, ListenerMode, ListenerOptions, Session, SessionOptions,
-    SessionPersistenceConfig, dht::DhtPersistenceConfig,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerMode,
+    ListenerOptions, Magnet, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
+    api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
+pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{TorrentState, TorrentSummary};
@@ -47,6 +50,26 @@ pub enum EngineError {
     /// exists but is not writable.
     #[error("failed to start the torrent session: {0}")]
     SessionStart(#[source] anyhow::Error),
+
+    /// The supplied magnet URI could not be parsed.
+    #[error("that does not look like a valid magnet link")]
+    InvalidMagnet(#[source] anyhow::Error),
+
+    /// The torrent file could not be parsed, or metadata could not be fetched.
+    #[error("could not read the torrent: {0}")]
+    Metadata(#[source] anyhow::Error),
+
+    /// Confirming an add referenced a preview the engine no longer holds.
+    #[error("that torrent is no longer pending; preview it again")]
+    NoPendingPreview,
+
+    /// No torrent with the given id exists in the session.
+    #[error("no torrent with id {0}")]
+    UnknownTorrent(usize),
+
+    /// A control operation (pause, resume, remove) failed.
+    #[error("the operation failed: {0}")]
+    Operation(#[source] anyhow::Error),
 }
 
 /// An owned, running torrent session.
@@ -56,6 +79,13 @@ pub enum EngineError {
 pub struct Engine {
     session: Arc<Session>,
     config: EngineConfig,
+    /// Resolved `.torrent` bytes from previews awaiting confirmation, keyed by
+    /// hex info hash.
+    ///
+    /// This is why confirming an add does not re-fetch a magnet's metadata
+    /// from the DHT, and why those bytes never need to travel to the webview
+    /// and back.
+    pending: Arc<tokio::sync::RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -131,7 +161,11 @@ impl Engine {
             .await
             .map_err(EngineError::SessionStart)?;
 
-        Ok(Self { session, config })
+        Ok(Self {
+            session,
+            config,
+            pending: Arc::default(),
+        })
     }
 
     /// The configuration this engine was started with.
@@ -221,6 +255,209 @@ impl Engine {
             core: self.core_status(),
             torrents: self.torrent_summaries(),
         }
+    }
+
+    /// Resolves a torrent's metadata and file list without downloading it.
+    ///
+    /// For a magnet link this fetches metadata from the DHT, which can take
+    /// several seconds and requires a bootstrapped routing table. The resolved
+    /// `.torrent` bytes are retained internally so that [`Self::confirm_add`]
+    /// does not have to fetch them a second time.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::InvalidMagnet`] for an unparseable magnet URI, or
+    /// [`EngineError::Metadata`] if metadata cannot be read or fetched.
+    pub async fn preview(&self, source: TorrentSource) -> Result<TorrentPreview, EngineError> {
+        let add = match &source {
+            TorrentSource::Magnet { uri } => {
+                // Validate before handing it to the session: an unparseable
+                // magnet otherwise surfaces as an opaque metadata failure
+                // after a long DHT timeout.
+                Magnet::parse(uri).map_err(EngineError::InvalidMagnet)?;
+                AddTorrent::from_url(uri.clone())
+            }
+            TorrentSource::File { bytes } => AddTorrent::from_bytes(bytes.clone()),
+        };
+
+        let response = self
+            .session
+            .add_torrent(
+                add,
+                Some(AddTorrentOptions {
+                    list_only: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(EngineError::Metadata)?;
+
+        let listed = match response {
+            AddTorrentResponse::ListOnly(listed) => listed,
+            // `list_only` should always yield ListOnly; treat anything else as
+            // a contract change rather than silently mis-reporting.
+            other => {
+                let already = matches!(other, AddTorrentResponse::AlreadyManaged(..));
+                return Err(EngineError::Metadata(anyhow::anyhow!(
+                    "expected a listing from a list-only add (already managed: {already})"
+                )));
+            }
+        };
+
+        let info_hash = listed.info_hash.as_string();
+        let files: Vec<TorrentFile> = listed
+            .info
+            .iter_file_details()
+            .enumerate()
+            .map(|(index, details)| TorrentFile {
+                index,
+                path: details
+                    .filename
+                    .to_pathbuf()
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                length: details.len,
+            })
+            .collect();
+
+        let already_added = self
+            .session
+            .get(TorrentIdOrHash::Hash(listed.info_hash))
+            .is_some();
+
+        self.pending
+            .write()
+            .await
+            .insert(info_hash.clone(), listed.torrent_bytes.to_vec());
+
+        Ok(TorrentPreview {
+            name: listed
+                .info
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| info_hash.clone()),
+            total_bytes: files.iter().map(|f| f.length).sum(),
+            files,
+            info_hash,
+            already_added,
+        })
+    }
+
+    /// Starts a previewed torrent, downloading only `only_files`.
+    ///
+    /// `only_files` holds indices from [`TorrentPreview::files`]. Passing
+    /// `None` downloads everything.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::NoPendingPreview`] if [`Self::preview`] was not called
+    /// for this hash (or its result was already consumed), or
+    /// [`EngineError::Metadata`] if the session rejects the torrent.
+    pub async fn confirm_add(
+        &self,
+        info_hash: &str,
+        only_files: Option<Vec<usize>>,
+    ) -> Result<usize, EngineError> {
+        let bytes = self
+            .pending
+            .write()
+            .await
+            .remove(info_hash)
+            .ok_or(EngineError::NoPendingPreview)?;
+
+        let response = self
+            .session
+            .add_torrent(
+                AddTorrent::from_bytes(bytes),
+                Some(AddTorrentOptions {
+                    only_files,
+                    // Required for librqbit to resume or seed over files that
+                    // already exist on disk; without it a restarted download
+                    // refuses to touch its own partial data.
+                    overwrite: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(EngineError::Metadata)?;
+
+        match response {
+            AddTorrentResponse::Added(id, _) | AddTorrentResponse::AlreadyManaged(id, _) => Ok(id),
+            AddTorrentResponse::ListOnly(_) => Err(EngineError::Metadata(anyhow::anyhow!(
+                "session unexpectedly returned a listing"
+            ))),
+        }
+    }
+
+    /// Discards a pending preview the user cancelled.
+    ///
+    /// Without this, abandoning an add dialog would leak the resolved metadata
+    /// for the life of the process.
+    pub async fn discard_preview(&self, info_hash: &str) {
+        self.pending.write().await.remove(info_hash);
+    }
+
+    /// Looks up a torrent handle by session id.
+    fn handle(&self, id: usize) -> Result<Arc<ManagedTorrent>, EngineError> {
+        self.session
+            .get(TorrentIdOrHash::Id(id))
+            .ok_or(EngineError::UnknownTorrent(id))
+    }
+
+    /// Pauses a torrent, stopping transfer but keeping it in the session.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists.
+    pub async fn pause(&self, id: usize) -> Result<(), EngineError> {
+        let handle = self.handle(id)?;
+        self.session
+            .pause(&handle)
+            .await
+            .map_err(EngineError::Operation)
+    }
+
+    /// Resumes a paused torrent.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists.
+    pub async fn resume(&self, id: usize) -> Result<(), EngineError> {
+        let handle = self.handle(id)?;
+        self.session
+            .unpause(&handle)
+            .await
+            .map_err(EngineError::Operation)
+    }
+
+    /// Removes a torrent, optionally deleting its downloaded files.
+    ///
+    /// `delete_files` is destructive and irreversible. The UI must confirm it
+    /// explicitly and must never default it to true.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists.
+    pub async fn remove(&self, id: usize, delete_files: bool) -> Result<(), EngineError> {
+        // Fail on an unknown id before deleting anything.
+        self.handle(id)?;
+        self.session
+            .delete(TorrentIdOrHash::Id(id), delete_files)
+            .await
+            .map_err(EngineError::Operation)
+    }
+
+    /// Changes which files a torrent downloads.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::UnknownTorrent`] if no such torrent exists.
+    pub async fn set_only_files(&self, id: usize, files: Vec<usize>) -> Result<(), EngineError> {
+        let handle = self.handle(id)?;
+        self.session
+            .update_only_files(&handle, &files.into_iter().collect())
+            .await
+            .map_err(EngineError::Operation)
     }
 
     /// Shuts the session down, flushing persistence and fast-resume state.

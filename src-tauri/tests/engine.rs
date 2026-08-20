@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use flume_lib::engine::{Engine, EngineConfig, EngineHealth};
+use flume_lib::engine::{Engine, EngineConfig, EngineHealth, TorrentSource};
 use tempfile::TempDir;
 
 /// Builds a config rooted in a temporary directory, so tests never touch the
@@ -130,6 +130,188 @@ async fn dht_bootstraps_and_reaches_ready() {
     );
     assert!(status.dht.enabled);
     assert!(status.dht.total_nodes() > 0);
+
+    engine.shutdown().await;
+}
+
+// --- Add flow ------------------------------------------------------------
+
+/// A minimal single-file torrent, built by librqbit so the bytes are valid.
+///
+/// Using a real encoder rather than a checked-in fixture keeps the test honest
+/// if the metadata format handling ever changes.
+async fn sample_torrent_bytes(dir: &std::path::Path) -> Vec<u8> {
+    std::fs::create_dir_all(dir).expect("dir");
+    std::fs::write(dir.join("ubuntu.iso"), vec![7u8; 4096]).expect("write");
+
+    let result = librqbit::create_torrent(
+        dir,
+        librqbit::CreateTorrentOptions {
+            name: Some("flume-test"),
+            piece_length: Some(1024),
+            ..Default::default()
+        },
+        &librqbit::spawn_utils::BlockingSpawner::new(1),
+    )
+    .await
+    .expect("create torrent");
+
+    result.as_bytes().expect("encode torrent").to_vec()
+}
+
+#[tokio::test]
+async fn preview_lists_files_without_starting_a_download() {
+    let tmp = TempDir::new().expect("temp dir");
+    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    let preview = engine
+        .preview(TorrentSource::File {
+            bytes: bytes.clone(),
+        })
+        .await
+        .expect("preview succeeds");
+
+    assert_eq!(preview.files.len(), 1);
+    assert!(preview.files[0].path.contains("ubuntu.iso"));
+    assert_eq!(preview.total_bytes, 4096);
+    assert!(!preview.already_added);
+    assert!(
+        engine.torrent_summaries().is_empty(),
+        "preview must not add the torrent to the session"
+    );
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
+    let tmp = TempDir::new().expect("temp dir");
+    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { bytes })
+        .await
+        .expect("preview");
+
+    let id = engine
+        .confirm_add(&preview.info_hash, None)
+        .await
+        .expect("add succeeds");
+
+    let summaries = engine.torrent_summaries();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].id, id);
+    assert_eq!(summaries[0].info_hash, preview.info_hash);
+
+    // The stashed metadata is single-use, so an abandoned dialog cannot leak it.
+    assert!(matches!(
+        engine.confirm_add(&preview.info_hash, None).await,
+        Err(flume_lib::engine::EngineError::NoPendingPreview)
+    ));
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn discarding_a_preview_releases_it() {
+    let tmp = TempDir::new().expect("temp dir");
+    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { bytes })
+        .await
+        .expect("preview");
+
+    engine.discard_preview(&preview.info_hash).await;
+
+    assert!(matches!(
+        engine.confirm_add(&preview.info_hash, None).await,
+        Err(flume_lib::engine::EngineError::NoPendingPreview)
+    ));
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn invalid_magnet_is_rejected_before_any_network_work() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    let err = engine
+        .preview(TorrentSource::Magnet {
+            uri: "magnet:?xt=urn:btih:not-a-real-hash".into(),
+        })
+        .await
+        .expect_err("should reject");
+
+    assert!(
+        matches!(err, flume_lib::engine::EngineError::InvalidMagnet(_)),
+        "expected InvalidMagnet, got {err:?}"
+    );
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn control_operations_reject_unknown_ids() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    for result in [
+        engine.pause(999).await,
+        engine.resume(999).await,
+        engine.remove(999, false).await,
+        engine.set_only_files(999, vec![0]).await,
+    ] {
+        assert!(
+            matches!(
+                result,
+                Err(flume_lib::engine::EngineError::UnknownTorrent(999))
+            ),
+            "expected UnknownTorrent, got {result:?}"
+        );
+    }
+
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn remove_without_delete_leaves_files_on_disk() {
+    let tmp = TempDir::new().expect("temp dir");
+    let bytes = sample_torrent_bytes(&tmp.path().join("src")).await;
+
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { bytes })
+        .await
+        .expect("preview");
+    let id = engine
+        .confirm_add(&preview.info_hash, None)
+        .await
+        .expect("add");
+
+    engine.remove(id, false).await.expect("remove");
+
+    assert!(
+        engine.torrent_summaries().is_empty(),
+        "torrent should be gone from the session"
+    );
 
     engine.shutdown().await;
 }
