@@ -30,8 +30,9 @@
 use flume_lib::{
     commands::CommandError,
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, PeerInfo, PieceMap, TelemetrySnapshot, TorrentDetail,
-        TorrentFile, TorrentFileState, TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
+        CoreStatus, DhtStatus, EngineHealth, PeerInfo, PieceMap, SwarmStats, TelemetrySnapshot,
+        TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview, TorrentSource, TorrentState,
+        TorrentSummary,
     },
     settings::{Settings, Theme},
 };
@@ -221,6 +222,8 @@ fn torrent_detail_matches_the_typescript_mirror() {
             state: "live".into(),
             downloaded_bytes: 10,
             uploaded_bytes: 20,
+            pieces_contributed: 4,
+            errors: 0,
         }],
         trackers: vec!["https://tracker/announce".into()],
         pieces: Some(PieceMap {
@@ -228,8 +231,34 @@ fn torrent_detail_matches_the_typescript_mirror() {
             pieces_per_bucket: 1,
             buckets: vec![255, 0],
         }),
+        swarm: SwarmStats {
+            live: 3,
+            connecting: 1,
+            queued: 8,
+            seen: 40,
+            dead: 2,
+            live_tcp: 2,
+            live_utp: 1,
+        },
     };
-    assert_keys(&detail, &["peers", "trackers", "pieces"], "TorrentDetail");
+    assert_keys(
+        &detail,
+        &["peers", "trackers", "pieces", "swarm"],
+        "TorrentDetail",
+    );
+    assert_keys(
+        &detail.swarm,
+        &[
+            "live",
+            "connecting",
+            "queued",
+            "seen",
+            "dead",
+            "liveTcp",
+            "liveUtp",
+        ],
+        "SwarmStats",
+    );
     assert_keys(
         &detail.peers[0],
         &[
@@ -239,6 +268,8 @@ fn torrent_detail_matches_the_typescript_mirror() {
             "state",
             "downloadedBytes",
             "uploadedBytes",
+            "piecesContributed",
+            "errors",
         ],
         "PeerInfo",
     );
@@ -258,8 +289,20 @@ fn torrent_file_state_matches_the_typescript_mirror() {
             length: 100,
             progress_bytes: 50,
             selected: true,
+            first_piece: 0,
+            last_piece: 4,
+            piece_buckets: vec![255, 255, 0, 0],
         },
-        &["index", "path", "length", "progressBytes", "selected"],
+        &[
+            "index",
+            "path",
+            "length",
+            "progressBytes",
+            "selected",
+            "firstPiece",
+            "lastPiece",
+            "pieceBuckets",
+        ],
         "TorrentFileState",
     );
 }

@@ -95,6 +95,18 @@ const TORRENTS: TorrentSummary[] = [
   },
 ];
 
+/**
+ * A ragged fragment pattern: a solid head, a working edge, then nothing.
+ * Exercises all three visual regions of a per-file strip.
+ */
+function fragments(count: number, completeUpTo: number): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    if (i < completeUpTo) return 255;
+    if (i < completeUpTo + 6) return (i * 53) % 255;
+    return 0;
+  });
+}
+
 const FILES: TorrentFileState[] = [
   {
     index: 0,
@@ -102,6 +114,9 @@ const FILES: TorrentFileState[] = [
     length: 6_100_000_000,
     progressBytes: 3_100_000_000,
     selected: true,
+    firstPiece: 0,
+    lastPiece: 23_270,
+    pieceBuckets: fragments(120, 60),
   },
   {
     index: 1,
@@ -109,6 +124,9 @@ const FILES: TorrentFileState[] = [
     length: 2048,
     progressBytes: 2048,
     selected: true,
+    firstPiece: 23_270,
+    lastPiece: 23_271,
+    pieceBuckets: [255],
   },
   {
     index: 2,
@@ -116,6 +134,9 @@ const FILES: TorrentFileState[] = [
     length: 833,
     progressBytes: 0,
     selected: false,
+    firstPiece: 23_271,
+    lastPiece: 23_272,
+    pieceBuckets: [0],
   },
 ];
 
@@ -151,6 +172,8 @@ const DETAIL: TorrentDetail = {
       state: "live",
       downloadedBytes: 940_000_000,
       uploadedBytes: 12_000_000,
+      piecesContributed: 448,
+      errors: 0,
     },
     {
       address: "91.189.91.157:6889",
@@ -159,6 +182,8 @@ const DETAIL: TorrentDetail = {
       state: "live",
       downloadedBytes: 610_000_000,
       uploadedBytes: 4_100_000,
+      piecesContributed: 291,
+      errors: 1,
     },
     {
       address: "[2001:67c:1360:8001::23]:51413",
@@ -167,6 +192,8 @@ const DETAIL: TorrentDetail = {
       state: "live",
       downloadedBytes: 305_000_000,
       uploadedBytes: 900_000,
+      piecesContributed: 145,
+      errors: 0,
     },
     {
       address: "203.0.113.44:6881",
@@ -175,6 +202,8 @@ const DETAIL: TorrentDetail = {
       state: "live",
       downloadedBytes: 88_000_000,
       uploadedBytes: 0,
+      piecesContributed: 0,
+      errors: 7,
     },
   ],
   trackers: [
@@ -182,6 +211,15 @@ const DETAIL: TorrentDetail = {
     "https://torrent.ubuntu.com/announce",
   ],
   pieces: pieceMap(),
+  swarm: {
+    live: 28,
+    connecting: 4,
+    queued: 61,
+    seen: 214,
+    dead: 19,
+    liveTcp: 26,
+    liveUtp: 2,
+  },
 };
 
 /**

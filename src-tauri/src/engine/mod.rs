@@ -29,7 +29,9 @@ use librqbit::{
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
-pub use detail::{MAX_PIECE_BUCKETS, PeerInfo, PieceMap, TorrentDetail};
+pub use detail::{
+    MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
+};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{TorrentFileState, TorrentState, TorrentSummary};
 
@@ -483,20 +485,36 @@ impl Engine {
         // `only_files` is None when every file is selected.
         let selection = handle.only_files();
 
+        // Read the piece bitfield once and slice it per file, rather than
+        // asking for it inside the loop. It is the same call the whole-torrent
+        // heatmap uses; `None` here just means no fragment strips, which is
+        // correct for an initializing or errored torrent.
+        let have: Option<Vec<bool>> = Api::new(Arc::clone(&self.session), None)
+            .api_dump_haves(TorrentIdOrHash::Id(id))
+            .ok()
+            .map(|(bitfield, total)| bitfield.iter().by_vals().take(total as usize).collect());
+
         handle
             .with_metadata(|meta| {
                 meta.file_infos
                     .iter()
                     .enumerate()
-                    .map(|(index, info)| TorrentFileState {
-                        index,
-                        path: info.relative_filename.to_string_lossy().replace('\\', "/"),
-                        length: info.len,
-                        // `file_progress` is positional and should match
-                        // `file_infos`; fall back to zero rather than panicking
-                        // if a future version ever disagrees.
-                        progress_bytes: stats.file_progress.get(index).copied().unwrap_or(0),
-                        selected: selection.as_ref().is_none_or(|only| only.contains(&index)),
+                    .map(|(index, info)| {
+                        let first_piece = info.piece_range.start;
+                        let last_piece = info.piece_range.end;
+                        TorrentFileState {
+                            index,
+                            path: info.relative_filename.to_string_lossy().replace('\\', "/"),
+                            length: info.len,
+                            progress_bytes: stats.file_progress.get(index).copied().unwrap_or(0),
+                            selected: selection.as_ref().is_none_or(|only| only.contains(&index)),
+                            first_piece,
+                            last_piece,
+                            piece_buckets: have
+                                .as_deref()
+                                .map(|h| detail::downsample_file_pieces(h, first_piece, last_piece))
+                                .unwrap_or_default(),
+                        }
                     })
                     .collect()
             })
@@ -529,6 +547,8 @@ impl Engine {
                         state: stats.state.to_string(),
                         downloaded_bytes: stats.counters.fetched_bytes,
                         uploaded_bytes: stats.counters.uploaded_bytes,
+                        pieces_contributed: stats.counters.downloaded_and_checked_pieces,
+                        errors: stats.counters.errors,
                     })
                     .collect()
             })
@@ -555,10 +575,37 @@ impl Engine {
                 detail::downsample_pieces(bitfield.iter().by_vals(), total_pieces)
             });
 
+        // Peer-pool counts come from the live state's aggregate stats. They
+        // are pool health, not a seeds/leechers split -- see SwarmStats.
+        let swarm = handle
+            .live()
+            .map(|live| {
+                let p = live.stats_snapshot().peer_stats;
+                detail::SwarmStats {
+                    live: p.live as usize,
+                    connecting: p.connecting as usize,
+                    queued: p.queued as usize,
+                    seen: p.seen as usize,
+                    dead: p.dead as usize,
+                    live_tcp: p.live_tcp as usize,
+                    live_utp: p.live_utp as usize,
+                }
+            })
+            .unwrap_or(detail::SwarmStats {
+                live: 0,
+                connecting: 0,
+                queued: 0,
+                seen: 0,
+                dead: 0,
+                live_tcp: 0,
+                live_utp: 0,
+            });
+
         Ok(TorrentDetail {
             peers,
             trackers,
             pieces,
+            swarm,
         })
     }
 
