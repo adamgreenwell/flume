@@ -1,7 +1,7 @@
 "use client";
 
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AddTorrentDialog } from "@/components/AddTorrentDialog";
 import { Button } from "@/components/Button";
@@ -12,6 +12,11 @@ import { TorrentDetail } from "@/components/TorrentDetail";
 import { StatusPill } from "@/components/StatusPill";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
+import {
+  useKeyboardShortcuts,
+  type Shortcut,
+} from "@/hooks/useKeyboardShortcuts";
+import { useMagnetLinks } from "@/hooks/useMagnetLinks";
 import { useTorrentFileDrop } from "@/hooks/useTorrentFileDrop";
 import { formatSpeed } from "@/lib/format";
 import {
@@ -38,6 +43,20 @@ export default function Home() {
   const [isConfiguring, setIsConfiguring] = useState(false);
   const [detailOf, setDetailOf] = useState<TorrentSummary | null>(null);
   const [droppedPath, setDroppedPath] = useState<string | undefined>(undefined);
+  const [incomingMagnet, setIncomingMagnet] = useState<string | undefined>(
+    undefined,
+  );
+
+  // A magnet clicked in a browser, or passed on the command line, opens the
+  // add dialog prefilled rather than adding silently -- the file-selection
+  // step is the whole point of the add flow.
+  useMagnetLinks(
+    useCallback((uri: string) => {
+      setIncomingMagnet(uri);
+      setDroppedPath(undefined);
+      setIsAdding(true);
+    }, []),
+  );
 
   // Dropping a .torrent anywhere on the window opens the add dialog with it.
   const { isDraggingTorrent } = useTorrentFileDrop(
@@ -105,6 +124,32 @@ export default function Home() {
     [pendingRemoval, report],
   );
 
+  const anyDialogOpen =
+    isAdding || isConfiguring || detailOf !== null || pendingRemoval !== null;
+
+  // Suspended while a dialog is open: those handle their own keys (Escape to
+  // close), and a background shortcut firing behind a modal is disorienting.
+  useKeyboardShortcuts(
+    useMemo<Shortcut[]>(
+      () => [
+        {
+          key: "n",
+          meta: true,
+          description: "Add a torrent",
+          run: () => setIsAdding(true),
+        },
+        {
+          key: ",",
+          meta: true,
+          description: "Open settings",
+          run: () => setIsConfiguring(true),
+        },
+      ],
+      [],
+    ),
+    !anyDialogOpen,
+  );
+
   return (
     <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6 px-8 py-10">
       <header className="flex items-start justify-between gap-4">
@@ -134,10 +179,18 @@ export default function Home() {
             health={status?.health ?? "starting"}
             pulse={isLoading || status?.health === "connecting"}
           />
-          <Button variant="ghost" onClick={() => setIsConfiguring(true)}>
+          <Button
+            variant="ghost"
+            onClick={() => setIsConfiguring(true)}
+            title="Settings (⌘,)"
+          >
             Settings
           </Button>
-          <Button variant="primary" onClick={() => setIsAdding(true)}>
+          <Button
+            variant="primary"
+            onClick={() => setIsAdding(true)}
+            title="Add a torrent (⌘N)"
+          >
             Add torrent
           </Button>
         </div>
@@ -189,9 +242,11 @@ export default function Home() {
       {isAdding ? (
         <AddTorrentDialog
           droppedPath={droppedPath}
+          initialMagnet={incomingMagnet}
           onClose={() => {
             setIsAdding(false);
             setDroppedPath(undefined);
+            setIncomingMagnet(undefined);
           }}
         />
       ) : null}
