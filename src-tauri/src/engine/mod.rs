@@ -15,6 +15,7 @@
 
 mod config;
 mod status;
+mod torrent;
 
 use std::sync::Arc;
 
@@ -24,7 +25,8 @@ use librqbit::{
 };
 
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
-pub use status::{CoreStatus, DhtStatus, EngineHealth};
+pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
+pub use torrent::{TorrentState, TorrentSummary};
 
 /// Errors that can arise while starting or querying the engine.
 #[derive(Debug, thiserror::Error)]
@@ -185,6 +187,39 @@ impl Engine {
             download_bps: stats.download_speed.as_bytes(),
             upload_bps: stats.upload_speed.as_bytes(),
             live_peers: stats.peers.live,
+        }
+    }
+
+    /// Snapshots every torrent currently known to the session.
+    ///
+    /// Ordered by id so the UI list does not reshuffle between ticks; the
+    /// session's internal ordering is not guaranteed.
+    pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
+        let mut summaries = self.session.with_torrents(|torrents| {
+            torrents
+                .map(|(id, handle)| {
+                    torrent::summarize(
+                        id,
+                        // `as_string` is hex encoding. `Id20`'s Debug impl
+                        // happens to produce the same thing, but relying on a
+                        // Debug format for a wire value is a trap.
+                        handle.info_hash().as_string(),
+                        handle.name(),
+                        handle.output_folder().display().to_string(),
+                        &handle.stats(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        summaries.sort_by_key(|s| s.id);
+        summaries
+    }
+
+    /// Builds the full telemetry payload pushed to the UI each tick.
+    pub fn telemetry(&self) -> TelemetrySnapshot {
+        TelemetrySnapshot {
+            core: self.core_status(),
+            torrents: self.torrent_summaries(),
         }
     }
 
