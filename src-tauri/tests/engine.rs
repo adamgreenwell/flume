@@ -470,3 +470,40 @@ async fn file_selection_survives_a_restart() {
 
     engine.shutdown().await;
 }
+
+/// Requires internet access and a SOCKS5 proxy on 127.0.0.1:1080.
+///
+/// Proves that configuring a proxy actually routes peer traffic through it,
+/// rather than merely being accepted by validation and then ignored. Run a
+/// SOCKS5 server locally first and watch its log while this runs.
+#[tokio::test]
+#[ignore = "requires a SOCKS5 proxy on 127.0.0.1:1080 and network access"]
+async fn peer_connections_go_through_a_configured_proxy() {
+    let tmp = TempDir::new().expect("temp dir");
+    let config = EngineConfig {
+        proxy_url: Some("socks5://127.0.0.1:1080".into()),
+        ..test_config(&tmp, true)
+    };
+
+    let engine = Engine::start(config).await.expect("engine starts");
+
+    // Resolving a magnet needs the DHT to find peers and then *connect* to
+    // them. Those outgoing connections are what should appear in the proxy log.
+    let preview = tokio::time::timeout(
+        Duration::from_secs(120),
+        engine.preview(TorrentSource::Magnet {
+            uri: UBUNTU_MAGNET.to_string(),
+        }),
+    )
+    .await
+    .expect("metadata resolution timed out")
+    .expect("preview should succeed through the proxy");
+
+    assert!(
+        preview.name.to_lowercase().contains("ubuntu"),
+        "unexpected torrent name: {}",
+        preview.name
+    );
+
+    engine.shutdown().await;
+}
