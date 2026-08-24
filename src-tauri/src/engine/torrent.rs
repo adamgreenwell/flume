@@ -81,6 +81,19 @@ pub struct TorrentFileState {
     pub progress_bytes: u64,
     /// Whether this file is currently selected for download.
     pub selected: bool,
+    /// First piece index covering this file.
+    pub first_piece: u32,
+    /// Piece index just past the last one covering this file.
+    pub last_piece: u32,
+    /// Downsampled completion across this file's own piece range, `0..=255`.
+    ///
+    /// Empty when piece state is unavailable — a torrent that is initializing
+    /// or errored has no chunk tracker to read.
+    ///
+    /// This is what makes "which parts of this file do I actually have"
+    /// answerable. Overall progress says 60%; this says *which* 60%, which is
+    /// what matters when a download stalls against a partial swarm.
+    pub piece_buckets: Vec<u8>,
 }
 
 impl TorrentFileState {

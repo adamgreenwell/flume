@@ -41,6 +41,13 @@ export function PeerList({ peers }: PeerListProps) {
           <th scope="col" className="py-2 text-right font-medium">
             Up
           </th>
+          <th
+            scope="col"
+            className="py-2 text-right font-medium"
+            title="Pieces this peer supplied that passed verification"
+          >
+            Pieces
+          </th>
         </tr>
       </thead>
       <tbody className="text-muted">
@@ -68,6 +75,23 @@ export function PeerList({ peers }: PeerListProps) {
             </td>
             <td className="py-2 text-right font-mono tabular-nums">
               {formatBytes(peer.uploadedBytes)}
+            </td>
+            <td className="py-2 text-right font-mono tabular-nums">
+              <span
+                className={
+                  peer.piecesContributed > 0 ? "text-text" : "text-faint"
+                }
+              >
+                {peer.piecesContributed}
+              </span>
+              {peer.errors > 0 ? (
+                <span
+                  className="text-error ml-1.5"
+                  title={`${peer.errors} connection error${peer.errors === 1 ? "" : "s"}`}
+                >
+                  !{peer.errors}
+                </span>
+              ) : null}
             </td>
           </tr>
         ))}

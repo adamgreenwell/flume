@@ -17,6 +17,32 @@ use serde::{Deserialize, Serialize};
 /// horizontal resolution any window will give the widget.
 pub const MAX_PIECE_BUCKETS: usize = 1600;
 
+/// Health of the peer pool for one torrent.
+///
+/// These are *pool* counts, not seeds versus leechers. librqbit v9 tracks
+/// whether a peer holds the whole torrent (`LivePeerState::has_full_torrent`),
+/// but `PeerStates` is private on the live state and the public per-peer
+/// snapshot does not carry it — so a seeds/leechers split is not available
+/// without an upstream change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwarmStats {
+    /// Peers with an established connection right now.
+    pub live: usize,
+    /// Peers currently being connected to.
+    pub connecting: usize,
+    /// Known peers waiting for a connection slot.
+    pub queued: usize,
+    /// Distinct peers discovered for this torrent, ever.
+    pub seen: usize,
+    /// Peers that failed and were dropped.
+    pub dead: usize,
+    /// Live peers connected over TCP.
+    pub live_tcp: usize,
+    /// Live peers connected over uTP.
+    pub live_utp: usize,
+}
+
 /// One connected peer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +59,13 @@ pub struct PeerInfo {
     pub downloaded_bytes: u64,
     /// Bytes uploaded to this peer.
     pub uploaded_bytes: u64,
+    /// Pieces this peer supplied that passed verification.
+    ///
+    /// The most honest measure of whether a peer is actually helping: bytes
+    /// can be sent and then fail their hash check.
+    pub pieces_contributed: u32,
+    /// Errors encountered on this connection.
+    pub errors: u32,
 }
 
 /// A downsampled view of which pieces are present.
@@ -66,6 +99,8 @@ pub struct TorrentDetail {
     /// Piece completion, or `None` when the torrent is not live or paused
     /// (there is no chunk tracker to read while initializing or errored).
     pub pieces: Option<PieceMap>,
+    /// Peer pool health.
+    pub swarm: SwarmStats,
 }
 
 /// Downsamples a per-piece present/absent iterator into a compact heatmap.
@@ -117,6 +152,35 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
         buckets,
     }
 }
+
+/// Downsamples one file's slice of the piece bitfield.
+///
+/// Files are shown in a narrow row, so the cap is lower than the whole-torrent
+/// heatmap's. A file spanning three pieces gets three buckets; one spanning
+/// thousands gets [`MAX_FILE_PIECE_BUCKETS`].
+pub(super) fn downsample_file_pieces(have: &[bool], first: u32, last: u32) -> Vec<u8> {
+    let (start, end) = (first as usize, last as usize);
+    if end <= start || start >= have.len() {
+        return Vec::new();
+    }
+    let slice = &have[start..end.min(have.len())];
+    let bucket_count = slice.len().min(MAX_FILE_PIECE_BUCKETS);
+    if bucket_count == 0 {
+        return Vec::new();
+    }
+    let per_bucket = slice.len().div_ceil(bucket_count);
+
+    slice
+        .chunks(per_bucket)
+        .map(|chunk| level(chunk.iter().filter(|p| **p).count(), chunk.len()))
+        .collect()
+}
+
+/// Upper bound on buckets in a per-file fragment strip.
+///
+/// Lower than the whole-torrent cap because a file row is a fraction of the
+/// window's width; more buckets than pixels buys nothing.
+pub const MAX_FILE_PIECE_BUCKETS: usize = 400;
 
 /// Scales a present/total ratio to `0..=255`.
 fn level(present: usize, total: usize) -> u8 {
@@ -208,6 +272,46 @@ mod tests {
             map.buckets.iter().all(|&b| (120..=135).contains(&b)),
             "expected mid-range levels, got a sample of {:?}",
             &map.buckets[..5.min(map.buckets.len())]
+        );
+    }
+
+    #[test]
+    fn a_file_maps_to_its_own_piece_range() {
+        // Pieces 2..5 present, everything else absent. A file covering 2..5
+        // should read as complete even though the torrent is not.
+        let have = [false, false, true, true, true, false, false];
+        assert_eq!(downsample_file_pieces(&have, 2, 5), vec![255, 255, 255]);
+    }
+
+    #[test]
+    fn a_file_outside_the_bitfield_yields_nothing() {
+        // Rather than panicking on a range past the end, which can happen
+        // transiently while metadata and piece state disagree.
+        let have = [true, true];
+        assert!(downsample_file_pieces(&have, 5, 9).is_empty());
+    }
+
+    #[test]
+    fn a_file_range_is_clamped_to_the_bitfield() {
+        let have = [true, true, true];
+        assert_eq!(downsample_file_pieces(&have, 1, 99).len(), 2);
+    }
+
+    #[test]
+    fn an_empty_file_range_yields_nothing() {
+        // A zero-length file occupies no pieces.
+        let have = [true, true, true];
+        assert!(downsample_file_pieces(&have, 2, 2).is_empty());
+    }
+
+    #[test]
+    fn a_large_file_is_capped_at_the_file_bucket_limit() {
+        let have = vec![true; 10_000];
+        let buckets = downsample_file_pieces(&have, 0, 10_000);
+        assert!(
+            buckets.len() <= MAX_FILE_PIECE_BUCKETS,
+            "expected at most {MAX_FILE_PIECE_BUCKETS}, got {}",
+            buckets.len()
         );
     }
 

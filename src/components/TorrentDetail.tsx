@@ -16,8 +16,10 @@ import {
 } from "@/lib/ipc/types";
 
 import { Button } from "./Button";
+import { FragmentStrip } from "./FragmentStrip";
 import { PeerList } from "./PeerList";
 import { Skeleton } from "./Skeleton";
+import { SwarmSummary } from "./SwarmSummary";
 import { PieceHeatmap } from "./PieceHeatmap";
 import { ProgressBar } from "./ProgressBar";
 import { TrackerList } from "./TrackerList";
@@ -246,7 +248,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
                         {formatBytes(file.length)}
                       </span>
                     </label>
-                    <div className="mt-1.5 pl-7">
+                    <div className="mt-1.5 flex flex-col gap-1 pl-7">
                       <ProgressBar
                         value={
                           file.length === 0
@@ -256,6 +258,19 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
                         state={torrent.state}
                         label={`${file.path} progress`}
                       />
+                      {/* Overall progress says how much; the fragment strip
+                          says which parts, which is what matters when a
+                          download stalls against a partial swarm. */}
+                      <FragmentStrip
+                        buckets={file.pieceBuckets}
+                        label={file.path}
+                      />
+                      {file.pieceBuckets.length > 0 ? (
+                        <p className="text-faint text-[10px]">
+                          pieces {file.firstPiece.toLocaleString()}–
+                          {(file.lastPiece - 1).toLocaleString()}
+                        </p>
+                      ) : null}
                     </div>
                   </li>
                 ))}
@@ -263,7 +278,12 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
             )
           ) : null}
 
-          {tab === "peers" ? <PeerList peers={detail?.peers ?? []} /> : null}
+          {tab === "peers" ? (
+            <div className="flex flex-col gap-3">
+              {detail ? <SwarmSummary swarm={detail.swarm} /> : null}
+              <PeerList peers={detail?.peers ?? []} />
+            </div>
+          ) : null}
 
           {tab === "trackers" ? (
             <TrackerList trackers={detail?.trackers ?? []} />

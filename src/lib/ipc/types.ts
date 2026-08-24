@@ -161,6 +161,41 @@ export interface TorrentFileState {
   progressBytes: number;
   /** Whether this file is currently selected for download. */
   selected: boolean;
+  /** First piece index covering this file. */
+  firstPiece: number;
+  /** Piece index just past the last one covering this file. */
+  lastPiece: number;
+  /**
+   * Downsampled completion across this file's own piece range, `0..=255`.
+   *
+   * Empty when piece state is unavailable. This is what answers "which parts
+   * of this file do I have" — overall progress says 60%, this says *which* 60%.
+   */
+  pieceBuckets: number[];
+}
+
+/**
+ * Health of the peer pool for one torrent. Mirrors Rust `SwarmStats`.
+ *
+ * These are *pool* counts, not seeds versus leechers. librqbit v9 knows
+ * whether a peer holds the whole torrent, but does not expose it through the
+ * public per-peer snapshot, so that split is unavailable.
+ */
+export interface SwarmStats {
+  /** Peers with an established connection right now. */
+  live: number;
+  /** Peers currently being connected to. */
+  connecting: number;
+  /** Known peers waiting for a connection slot. */
+  queued: number;
+  /** Distinct peers discovered for this torrent, ever. */
+  seen: number;
+  /** Peers that failed and were dropped. */
+  dead: number;
+  /** Live peers connected over TCP. */
+  liveTcp: number;
+  /** Live peers connected over uTP. */
+  liveUtp: number;
 }
 
 /** One connected peer. Mirrors Rust `PeerInfo`. */
@@ -177,6 +212,15 @@ export interface PeerInfo {
   downloadedBytes: number;
   /** Bytes uploaded to this peer. */
   uploadedBytes: number;
+  /**
+   * Pieces this peer supplied that passed verification.
+   *
+   * The most honest measure of whether a peer is helping — bytes can arrive
+   * and then fail their hash check.
+   */
+  piecesContributed: number;
+  /** Errors encountered on this connection. */
+  errors: number;
 }
 
 /**
@@ -209,6 +253,8 @@ export interface TorrentDetail {
   trackers: string[];
   /** Piece completion, or `null` when the torrent is not live or paused. */
   pieces: PieceMap | null;
+  /** Peer pool health. */
+  swarm: SwarmStats;
 }
 
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
