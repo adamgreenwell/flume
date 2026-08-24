@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::egress::EgressGuard;
 use crate::engine::{DEFAULT_LISTEN_PORT, EngineConfig};
+use crate::policy::Rules;
 
 /// Filename inside the app-data directory.
 const SETTINGS_FILE: &str = "settings.json";
@@ -73,7 +74,10 @@ pub enum RailState {
 /// Everything the user can configure.
 ///
 /// Mirrored in `src/lib/ipc/types.ts`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` is deliberately absent: `policy_rules` contains a seed-ratio `f64`, and
+// floats are not `Eq` because of NaN. `PartialEq` is all this needs -- it is
+// used for change detection, never as a map key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     /// Where downloads are written.
@@ -106,6 +110,12 @@ pub struct Settings {
     /// Format: `socks5://[user:password@]host:port`. Requires a session
     /// restart, since the proxy is fixed when the session is constructed.
     pub proxy_url: Option<String>,
+
+    /// Rules the policy engine applies: seed limits, and later queueing.
+    ///
+    /// Applied live -- these are evaluated on each telemetry tick, so a change
+    /// takes effect within a second and needs no session restart.
+    pub policy_rules: Rules,
 
     /// UI colour scheme. Frontend-only; persisted here so it survives restarts.
     pub theme: Theme,
@@ -159,6 +169,7 @@ impl Default for Settings {
             download_limit_bps: None,
             upload_limit_bps: None,
             proxy_url: None,
+            policy_rules: Rules::default(),
             theme: Theme::System,
             density: Density::Comfortable,
             rail: RailState::Expanded,

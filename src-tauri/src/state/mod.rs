@@ -8,6 +8,7 @@ use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError},
     library::{Library, Noted, persisted_info_hashes, write_atomically},
+    policy::{PolicyState, Rules},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -21,6 +22,12 @@ use crate::{
 pub struct AppState {
     engine: RwLock<Option<Engine>>,
     settings: RwLock<Settings>,
+    /// Bookkeeping carried between policy evaluations.
+    ///
+    /// Held here rather than inside the telemetry loop so that commands can
+    /// read it -- the UI needs to know *why* a torrent was stopped -- and
+    /// clear it when a user overrides a limit.
+    policy_state: RwLock<PolicyState>,
     /// Directory holding settings and session state. Not user-configurable.
     session_dir: PathBuf,
     /// Whether no settings file existed when the app started.
@@ -107,6 +114,7 @@ impl AppState {
         Self {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
+            policy_state: RwLock::default(),
             session_dir,
             first_run,
             usage,
@@ -226,6 +234,21 @@ impl AppState {
     /// Replaces the stored settings.
     pub async fn set_settings(&self, settings: Settings) {
         *self.settings.write().await = settings;
+    }
+
+    /// The rules policy should apply, derived from current settings.
+    pub async fn policy_rules(&self) -> Rules {
+        self.settings.read().await.policy_rules.clone()
+    }
+
+    /// A copy of the bookkeeping carried between policy evaluations.
+    pub async fn policy_state(&self) -> PolicyState {
+        self.policy_state.read().await.clone()
+    }
+
+    /// Replaces the policy bookkeeping.
+    pub async fn set_policy_state(&self, state: PolicyState) {
+        *self.policy_state.write().await = state;
     }
 
     /// Stops the running engine and starts a fresh one from `settings`.

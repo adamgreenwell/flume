@@ -12,7 +12,10 @@ use std::{collections::HashSet, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::state::AppState;
+use crate::{
+    policy::{self, Action},
+    state::AppState,
+};
 
 /// Event name the frontend subscribes to.
 ///
@@ -57,6 +60,36 @@ pub fn spawn(app: AppHandle) {
             // copy would show a torrent the user just added with no arrival
             // time until the next restart.
             let snapshot = engine.telemetry_with(&state.added_times().await);
+
+            // Policy decides; this loop acts. The split is deliberate --
+            // `evaluate` is pure and testable, and everything that touches the
+            // engine stays here.
+            {
+                let state = app.state::<AppState>();
+                let rules = state.policy_rules().await;
+                let previous = state.policy_state().await;
+                let outcome =
+                    policy::evaluate(&snapshot, &rules, &previous, TELEMETRY_INTERVAL.as_secs());
+
+                for action in &outcome.actions {
+                    match action {
+                        Action::Pause { id, reason } => {
+                            log::info!("policy pausing torrent {id}: {reason:?}");
+                            if let Err(err) = engine.pause(*id).await {
+                                log::warn!("policy could not pause {id}: {err}");
+                            }
+                        }
+                        Action::Resume { id } => {
+                            log::info!("policy resuming torrent {id}");
+                            if let Err(err) = engine.resume(*id).await {
+                                log::warn!("policy could not resume {id}: {err}");
+                            }
+                        }
+                    }
+                }
+
+                state.set_policy_state(outcome.state).await;
+            }
 
             let finished = snapshot
                 .torrents

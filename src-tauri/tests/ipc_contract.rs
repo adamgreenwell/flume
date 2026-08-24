@@ -191,6 +191,7 @@ fn settings_match_the_typescript_mirror() {
             "downloadLimitBps",
             "uploadLimitBps",
             "proxyUrl",
+            "policyRules",
             "theme",
             "density",
             "rail",
