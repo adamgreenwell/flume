@@ -22,9 +22,9 @@ mod torrent;
 use std::{collections::HashMap, sync::Arc};
 
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, DhtSessionConfig, ListenerMode,
-    ListenerOptions, Magnet, ManagedTorrent, Session, SessionOptions, SessionPersistenceConfig,
-    api::TorrentIdOrHash, dht::DhtPersistenceConfig,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, DhtSessionConfig,
+    ListenerMode, ListenerOptions, Magnet, ManagedTorrent, Session, SessionOptions,
+    SessionPersistenceConfig, api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
@@ -155,6 +155,16 @@ impl Engine {
                 enable_upnp_port_forwarding: config.enable_upnp,
                 ..Default::default()
             }),
+
+            // Outgoing peer connections go through the proxy when one is
+            // configured. Left as None, librqbit connects directly.
+            connect: config
+                .proxy_url
+                .as_ref()
+                .map(|proxy_url| ConnectionOptions {
+                    proxy_url: Some(proxy_url.clone()),
+                    ..Default::default()
+                }),
 
             client_name_and_version: Some(format!("Flume {}", env!("CARGO_PKG_VERSION"))),
 

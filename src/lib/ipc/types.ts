@@ -274,6 +274,12 @@ export interface Settings {
   downloadLimitBps: number | null;
   /** Global upload limit in bytes/sec; `null` is unlimited. Applies live. */
   uploadLimitBps: number | null;
+  /**
+   * SOCKS5 proxy for outgoing peer connections; `null` connects directly.
+   *
+   * Format: `socks5://[user:password@]host:port`. Requires a session restart.
+   */
+  proxyUrl: string | null;
   /** UI colour scheme. */
   theme: Theme;
 }

@@ -181,6 +181,7 @@ fn settings_match_the_typescript_mirror() {
             "enableUpnp",
             "downloadLimitBps",
             "uploadLimitBps",
+            "proxyUrl",
             "theme",
         ],
         "Settings",

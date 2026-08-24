@@ -125,3 +125,39 @@ outside the WebView. Useful for pure layout work.
   `starting`.
 - **Two instances collide.** By design each instance wants the same listen
   port and session directory. Use a separate session directory to run two.
+
+## Testing the SOCKS5 proxy setting
+
+Verifying that a proxy setting _works_ needs a proxy, and most people do not
+have one lying around. `scripts/socks5-test-proxy.py` is a disposable one —
+standard library only, no dependencies, no install.
+
+```bash
+python3 scripts/socks5-test-proxy.py     # listens on 127.0.0.1:1080
+```
+
+It logs every connection, which is the point: seeing real peer addresses appear
+proves traffic is going through the proxy rather than merely being accepted by
+validation and then ignored.
+
+Then either set the proxy in Settings and add a torrent, or run the test that
+does it automatically:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml \
+  --test engine peer_connections_go_through -- --ignored --nocapture
+```
+
+A successful run looks like this in the proxy's output:
+
+```
+  #146  CONNECT 158.173.21.94:32419
+  #147  CONNECT 14.155.232.52:1111
+  #148  CONNECT 73.14.216.61:15675
+```
+
+Those are BitTorrent peers on their own ports, reached through the proxy.
+
+The server implements only the no-auth handshake and `CONNECT` from RFC 1928.
+That is all librqbit needs, and deliberately not more — it is a test fixture,
+not something to leave running.
