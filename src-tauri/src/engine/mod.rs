@@ -33,7 +33,7 @@ pub use detail::{
     MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
 };
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
-pub use torrent::{TorrentFileState, TorrentState, TorrentSummary};
+pub use torrent::{SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
 /// Errors that can arise while starting or querying the engine.
 #[derive(Debug, thiserror::Error)]
