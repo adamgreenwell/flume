@@ -43,7 +43,7 @@ export function FragmentStrip({ buckets, label }: FragmentStripProps) {
 
   return (
     <div
-      className="bg-surface-raised text-accent h-1.5 w-full overflow-hidden rounded-full"
+      className="bg-bg-2 text-acc h-1.5 w-full overflow-hidden rounded-full"
       role="img"
       aria-label={`${label}: roughly ${percent}% of this file's pieces downloaded`}
       style={{ backgroundImage: `linear-gradient(to right, ${stops})` }}

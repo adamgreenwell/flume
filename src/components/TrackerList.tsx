@@ -20,7 +20,7 @@ export interface TrackerListProps {
 export function TrackerList({ trackers }: TrackerListProps) {
   if (trackers.length === 0) {
     return (
-      <p className="text-faint py-6 text-center text-xs">
+      <p className="text-fg-3 py-6 text-center text-xs">
         No trackers. This torrent relies on the DHT to find peers.
       </p>
     );
@@ -32,14 +32,14 @@ export function TrackerList({ trackers }: TrackerListProps) {
         {trackers.map((url) => (
           <li
             key={url}
-            className="border-border-subtle bg-bg text-text selectable truncate rounded border px-2.5 py-1.5 font-mono text-xs"
+            className="border-line bg-bg-0 text-fg-0 selectable truncate rounded border px-2.5 py-1.5 font-mono text-xs"
             title={url}
           >
             {url}
           </li>
         ))}
       </ul>
-      <p className="text-faint mt-2 text-xs">
+      <p className="text-fg-3 mt-2 text-xs">
         Per-tracker announce status is not available from the torrent engine.
       </p>
     </>

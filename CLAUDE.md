@@ -28,7 +28,7 @@ flume.dev (a React node editor). Both verified unrelated.
 | Tracking           | GitHub Project #8 + issues per roadmap item            | Transparent audit trail before going public                                                                                       |
 | Bundle ID          | `io.github.adamgreenwell.flume`                        | `dev.flume.*` would claim an unrelated project's domain                                                                           |
 | TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                                                                     |
-| Fonts              | System font stack, not `next/font/google`              | Avoids build-time network fetch; native feel per OS                                                                               |
+| Fonts              | Instrument Sans + IBM Plex Mono, vendored as woff2     | Still no build-time or runtime fetch; the type ramp is measured against these metrics, and the app must render offline            |
 | MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more                                              |
 | Node (CI + dev)    | 26, matching `@types/node`                             | Build tooling only, never shipped; matching the dev env beats tracking LTS and avoids CI drift                                    |
 | TypeScript         | Stay on 5.x                                            | TS 7 (native Go compiler) breaks `typescript-eslint`, so `npm run lint` cannot run — Dependabot ignores the major; revisit in #28 |
@@ -45,6 +45,37 @@ flume.dev (a React node editor). Both verified unrelated.
 5. Telemetry throttled to ~1 Hz and batched. No per-piece events.
 6. Rust `serde` structs and their TypeScript mirrors (`src/lib/ipc/types.ts`) change together.
 7. Minimal Tauri permissions. No shell plugin.
+8. The UI vocabulary is the token set in `src/app/globals.css`. See below.
+
+## Design tokens
+
+`src/app/globals.css` holds the whole visual vocabulary. Rules that hold across
+the frontend:
+
+- **Never introduce a colour that is not a token.** Tailwind utilities are named
+  after the tokens — `bg-bg-1`, `text-fg-2`, `border-line`, `bg-acc-deep`. There
+  is no second set of friendlier names, deliberately: two vocabularies is how
+  `--flume-line` and "gray-800" end up meaning the same thing to different
+  people. A step that is genuinely missing is derived in OKLCH at fixed chroma
+  and hue, never eyeballed between two existing values.
+- **Sizes and rates are decimal** (GB, MB/s) because that is what disks and ISPs
+  quote. Piece length is the only binary figure, rendered MiB, because that is
+  what the wire format uses.
+- **Every number is `flume-num`** (mono, tabular figures). Without it, columns
+  jitter on every 1 Hz tick.
+- `fg-3` is the floor for text and `line-2` the floor for control borders.
+  `fg-dis` is for disabled controls only and must never carry text the user
+  needs to read. `src/app/tokens.test.ts` enforces this and records the
+  pairings that currently fall short.
+- **Status is never colour alone** — a dot, a word, and a sentence. Download and
+  upload are always labelled, never distinguished by colour alone.
+- Icons are stroked SVG on a 16×16 grid at a constant 1.5px optical weight. No
+  emoji, no icon font, nothing filled.
+- Control heights are 28 / 30 / 34px; radii 4 / 6 / 9px. Do not round these to a
+  framework scale — the spacing was chosen against the type ramp.
+
+`npm run storybook` renders every primitive in both themes with axe running
+beside it.
 
 ## librqbit v9 API notes
 

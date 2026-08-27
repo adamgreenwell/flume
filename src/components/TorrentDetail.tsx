@@ -174,16 +174,16 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
         role="dialog"
         aria-modal="true"
         aria-label={`Details for ${torrent.name}`}
-        className="border-border-subtle bg-surface flex max-h-[82vh] w-full max-w-2xl flex-col gap-4 rounded-xl border p-5 shadow-2xl"
+        className="border-line bg-bg-1 flex max-h-[82vh] w-full max-w-2xl flex-col gap-4 rounded-xl border p-5 shadow-2xl"
       >
         <div className="min-w-0">
           <h2
-            className="text-text truncate text-base font-semibold"
+            className="text-fg-0 truncate text-base font-semibold"
             title={torrent.name}
           >
             {torrent.name}
           </h2>
-          <p className="text-muted mt-0.5 text-xs">
+          <p className="text-fg-2 mt-0.5 text-xs">
             <span className="font-mono tabular-nums">
               {formatBytes(torrent.progressBytes)} /{" "}
               {formatBytes(torrent.totalBytes)}
@@ -192,7 +192,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
         </div>
 
         <div
-          className="border-border-subtle flex gap-1 border-b"
+          className="border-line flex gap-1 border-b"
           role="tablist"
           aria-label="Torrent details"
         >
@@ -205,13 +205,13 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
               onClick={() => setTab(name)}
               className={`-mb-px border-b-2 px-3 py-2 text-sm capitalize transition-colors ${
                 tab === name
-                  ? "border-accent text-text"
-                  : "text-muted hover:text-text border-transparent"
+                  ? "border-acc text-fg-0"
+                  : "text-fg-2 hover:text-fg-0 border-transparent"
               }`}
             >
               {name}
               {counts[name] !== null ? (
-                <span className="text-faint ml-1.5 font-mono text-xs">
+                <span className="text-fg-3 ml-1.5 font-mono text-xs">
                   {counts[name]}
                 </span>
               ) : null}
@@ -224,26 +224,26 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
             files === null ? (
               <Skeleton rows={3} label="Loading files" />
             ) : (
-              <ul className="border-border-subtle bg-bg rounded-md border">
+              <ul className="border-line bg-bg-0 rounded-md border">
                 {files.map((file) => (
                   <li
                     key={file.index}
-                    className="border-border-subtle border-b px-3 py-2.5 last:border-b-0"
+                    className="border-line border-b px-3 py-2.5 last:border-b-0"
                   >
                     <label className="flex cursor-pointer items-center gap-3">
                       <input
                         type="checkbox"
                         checked={selected.has(file.index)}
                         onChange={() => toggle(file.index)}
-                        className="accent-accent h-4 w-4 shrink-0"
+                        className="accent-acc h-4 w-4 shrink-0"
                       />
                       <span
-                        className={`min-w-0 flex-1 truncate text-sm ${selected.has(file.index) ? "text-text" : "text-faint"}`}
+                        className={`min-w-0 flex-1 truncate text-sm ${selected.has(file.index) ? "text-fg-0" : "text-fg-3"}`}
                         title={file.path}
                       >
                         {file.path}
                       </span>
-                      <span className="text-muted shrink-0 font-mono text-xs tabular-nums">
+                      <span className="text-fg-2 shrink-0 font-mono text-xs tabular-nums">
                         {formatBytes(file.progressBytes)} /{" "}
                         {formatBytes(file.length)}
                       </span>
@@ -266,7 +266,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
                         label={file.path}
                       />
                       {file.pieceBuckets.length > 0 ? (
-                        <p className="text-faint text-[10px]">
+                        <p className="text-fg-3 text-[10px]">
                           pieces {file.firstPiece.toLocaleString()}–
                           {(file.lastPiece - 1).toLocaleString()}
                         </p>
@@ -293,7 +293,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
             detail?.pieces ? (
               <PieceHeatmap pieces={detail.pieces} />
             ) : (
-              <p className="text-faint py-6 text-center text-xs">
+              <p className="text-fg-3 py-6 text-center text-xs">
                 Piece information appears once the torrent is running or paused.
               </p>
             )
@@ -302,7 +302,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
 
         {error ? (
           <p
-            className="border-error/30 bg-error/10 text-error rounded-md border px-3 py-2 text-xs"
+            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
             role="alert"
           >
             {error}
@@ -310,7 +310,7 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
         ) : null}
 
         <div className="flex items-center justify-between gap-2">
-          <p className="text-faint text-xs">
+          <p className="text-fg-3 text-xs">
             {tab === "files" && isDirty
               ? "Deselected files stop downloading. Existing data is kept."
               : ""}

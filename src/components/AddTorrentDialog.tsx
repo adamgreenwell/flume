@@ -189,16 +189,16 @@ export function AddTorrentDialog({
         aria-modal="true"
         aria-label="Add a torrent"
         tabIndex={-1}
-        className="border-border-subtle bg-surface flex max-h-[80vh] w-full max-w-xl flex-col gap-4 rounded-xl border p-5 shadow-2xl outline-none"
+        className="border-line bg-bg-1 flex max-h-[80vh] w-full max-w-xl flex-col gap-4 rounded-xl border p-5 shadow-2xl outline-none"
       >
-        <h2 className="text-text text-lg font-semibold">Add a torrent</h2>
+        <h2 className="text-fg-0 text-lg font-semibold">Add a torrent</h2>
 
         {preview === null ? (
           <>
             <div className="flex flex-col gap-2">
               <label
                 htmlFor="magnet-input"
-                className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
               >
                 Magnet link
               </label>
@@ -215,7 +215,7 @@ export function AddTorrentDialog({
                   placeholder="magnet:?xt=urn:btih:…"
                   spellCheck={false}
                   autoFocus
-                  className="border-border-subtle bg-bg text-text placeholder:text-faint selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-sm"
+                  className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-sm"
                 />
                 <Button
                   variant="primary"
@@ -230,9 +230,9 @@ export function AddTorrentDialog({
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="bg-border-subtle h-px flex-1" />
-              <span className="text-faint text-xs">or</span>
-              <span className="bg-border-subtle h-px flex-1" />
+              <span className="bg-line h-px flex-1" />
+              <span className="text-fg-3 text-xs">or</span>
+              <span className="bg-line h-px flex-1" />
             </div>
 
             <Button onClick={() => void pickFile()} disabled={isResolving}>
@@ -240,7 +240,7 @@ export function AddTorrentDialog({
             </Button>
 
             {isResolving ? (
-              <p className="text-muted text-xs" role="status">
+              <p className="text-fg-2 text-xs" role="status">
                 Fetching metadata from the DHT. This can take a few seconds for
                 a magnet link.
               </p>
@@ -250,12 +250,12 @@ export function AddTorrentDialog({
           <>
             <div className="min-w-0">
               <p
-                className="text-text truncate text-sm font-medium"
+                className="text-fg-0 truncate text-sm font-medium"
                 title={preview.name}
               >
                 {preview.name}
               </p>
-              <p className="text-muted mt-0.5 text-xs">
+              <p className="text-fg-2 mt-0.5 text-xs">
                 {preview.files.length} file
                 {preview.files.length === 1 ? "" : "s"} ·{" "}
                 <span className="font-mono">
@@ -284,7 +284,7 @@ export function AddTorrentDialog({
 
         {error ? (
           <p
-            className="border-error/30 bg-error/10 text-error rounded-md border px-3 py-2 text-xs"
+            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
             role="alert"
           >
             {error}

@@ -23,12 +23,19 @@ next-env.d.ts
 # --- Testing ----------------------------------------------------------------
 /coverage
 
+# --- Storybook --------------------------------------------------------------
+/storybook-static/
+
 # --- Environment & secrets --------------------------------------------------
 .env*
 !.env.example
 *.pem
 *.p12
 *.keystore
+
+# --- Claude Code -----------------------------------------------------------
+# Per-machine permission grants. `launch.json` is shared; this is not.
+.claude/settings.local.json
 
 # --- Editors & OS -----------------------------------------------------------
 .DS_Store

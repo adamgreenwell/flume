@@ -1,110 +1,288 @@
 @import "tailwindcss";
 
 /*
- * Flume design tokens.
+ * Flume type — Instrument Sans and IBM Plex Mono, vendored as woff2.
  *
- * Defined as CSS custom properties rather than Tailwind config values so the
- * theme swaps at runtime by flipping `data-theme` on <html>, with no rebuild.
- * `@theme inline` maps them into Tailwind's utility namespace so `bg-surface`,
- * `text-muted` etc. work as normal utilities.
+ * Self-hosted rather than fetched from a font CDN: the app runs in a Tauri
+ * webview that may have no network at all, and a build that reaches out for
+ * assets is not reproducible in CI. Files came from the Fontsource packages
+ * (both faces are OFL-1.1, licences alongside them in `fonts/`) and are checked
+ * in directly, so there is no dependency to drift and no resolution step.
  *
- * Dark is the base palette. Light overrides the same variables below.
+ * `font-display: block` rather than `swap`. The files are local and decode in
+ * a frame or two, so the swap period buys nothing and costs a visible reflow:
+ * the type ramp and every tabular column were measured against these metrics,
+ * and re-laying them out after first paint is more jarring than a frame of
+ * invisible text.
  */
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url("./fonts/instrument-sans-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
 
-:root {
-  /* Backdrop and elevated surfaces. */
-  --flume-bg: #0b0e14;
-  --flume-surface: #121722;
-  --flume-surface-raised: #1a2130;
-  --flume-border: #232c3d;
-
-  /* Text. */
-  --flume-text: #e6ebf4;
-  --flume-text-muted: #8b97ad;
-  --flume-text-faint: #5d6880;
-
-  /* Accent: the "flume" water channel. */
-  --flume-accent: #38bdf8;
-  --flume-accent-dim: #0ea5e9;
-
-  /* Status. */
-  --flume-ok: #34d399;
-  --flume-warn: #fbbf24;
-  --flume-error: #f87171;
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url("./fonts/instrument-sans-latin-ext-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 /*
- * Light palette.
- *
- * Applied in two situations, which is why the rules are duplicated rather than
- * combined: an explicit `data-theme="light"` always wins, and the system
- * preference applies only when the user has not explicitly chosen dark.
- * A single combined selector cannot express both without one overriding the
- * other incorrectly.
+ * Mono ships only the three weights the design uses (400 body, 500 stats,
+ * 600 emphasis) and only the latin subset — it renders numbers, not prose.
+ * Anything outside that range falls through to the platform mono stack.
  */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: block;
+  src: url("./fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: block;
+  src: url("./fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
+}
+
+/*
+ * Flume design tokens.
+ *
+ * Values are transcribed verbatim from the design system. They were derived in
+ * OKLCH at fixed chroma and hue and then converted to sRGB, so they are not
+ * interpolatable in this space — a step that is not listed here has to be
+ * derived in OKLCH, never eyeballed between two of these.
+ *
+ * Defined as custom properties rather than Tailwind config values so the theme
+ * swaps at runtime by flipping `data-theme` on <html>, with no rebuild.
+ * `@theme inline` maps them into Tailwind's utility namespace below.
+ *
+ * Dark is the default. Light is a deliberate re-step of the same roles rather
+ * than an inversion, which is why every value is written out again rather than
+ * computed from the dark one.
+ */
+:root {
+  /* Surfaces. */
+  --flume-bg-0: #12100e; /* window ground, list background */
+  --flume-bg-1: #1b1816; /* rails, docks, cards */
+  --flume-bg-2: #23211e; /* inputs, raised rows */
+  --flume-bg-3: #2d2a27; /* hover, empty progress track */
+
+  /* Lines. */
+  --flume-line: #373330; /* hairline between rows */
+  --flume-line-2: #6a6660; /* control borders — clears 3:1 everywhere */
+
+  /* Ink. */
+  --flume-fg-0: #f2f0ec; /* primary text */
+  --flume-fg-1: #c2c0bc; /* secondary text, consequence lines */
+  --flume-fg-2: #9d9a96; /* meta lines, units */
+  --flume-fg-3: #85827e; /* 10px labels — the floor that clears 4.5:1 */
+  --flume-fg-dis: #5f5c58; /* disabled only — never load-bearing text */
+
+  /* Accent: the one interactive colour. */
+  --flume-acc: #5ab8ea; /* primary buttons, selection, focus, downloading */
+  --flume-acc-dim: #3a83aa; /* verified pieces, filled tracks */
+  --flume-acc-deep: #184258; /* selected chips, tinted cards */
+
+  /*
+   * Two roles the screens use that the token file does not name.
+   *
+   * `on-acc` is the ink that sits on an accent fill — primary button labels,
+   * checkbox ticks, toggle knobs. The mockups hardcode #0b1116 in five places;
+   * it is a role, so it gets a name here. On light it has to become white:
+   * near-black on the light accent (#007ab0) measures 4.02:1, under the 4.5:1
+   * a 12.5px/600 button label needs, while white measures 4.76:1.
+   *
+   * `acc-hi` is the accent's hover step. Dark is the design's own #79c8f0.
+   * Light is DERIVED — the design only ever shows hover on dark. Taken in
+   * OKLCH at fixed chroma and hue as tokens.css instructs, mirroring the dark
+   * step's ΔL of +0.0513 as −0.0513 because light has to darken rather than
+   * lighten: brightening #007ab0 pushes white ink below 4.5:1. The result
+   * carries white at 5.82:1. Flagged for the designer to confirm.
+   */
+  --flume-on-acc: #0b1116;
+  --flume-acc-hi: #79c8f0;
+
+  /* Status: reserved, never reused as a series colour. */
+  --flume-ok: #76c68d; /* seeding, healthy swarm, verified */
+  --flume-ok-deep: #23462d;
+  --flume-warn: #e6b55d; /* thin swarm, below ratio, verifying */
+  --flume-err: #e86c66; /* stopped, disk full, tracker refusal */
+
+  /* Chart series: own steps on dark, mid-lightness band. */
+  --flume-chart-down: #009cd9;
+  --flume-chart-up: #44a866;
+
+  /* Type. */
+  --flume-font-ui:
+    "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --flume-font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Radii (4px base). */
+  --flume-r-sm: 4px; /* chips, tags, small controls */
+  --flume-r-md: 6px; /* buttons, inputs, nav items */
+  --flume-r-lg: 9px; /* cards, panels */
+
+  /* Control heights. */
+  --flume-h-chip: 28px;
+  --flume-h-control: 30px;
+  --flume-h-primary: 34px; /* dialog primary action; 36px in first-run */
+
+  /* Row heights. */
+  --flume-row-comfortable: 58px;
+  --flume-row-compact: 40px;
+}
+
+/*
+ * The light palette is written twice on purpose.
+ *
+ * An explicit `data-theme="light"` must win outright, while the system
+ * preference must apply only when the user has not explicitly chosen dark.
+ * A single combined selector cannot express both without one of them
+ * overriding the other incorrectly.
+ */
+:root[data-theme="light"] {
+  --flume-bg-0: #f7f6f3;
+  --flume-bg-1: #fefdfc;
+  --flume-bg-2: #ffffff;
+  --flume-bg-3: #efece8;
+
+  --flume-line: #dedcd7;
+  --flume-line-2: #8f8b85;
+
+  --flume-fg-0: #26221e;
+  --flume-fg-1: #55514c;
+  --flume-fg-2: #6d6964;
+  --flume-fg-3: #57534e;
+  --flume-fg-dis: #9a968f;
+
+  --flume-acc: #007ab0;
+  --flume-acc-dim: #4f9ec9;
+  --flume-acc-deep: #c5e3f5;
+
+  --flume-on-acc: #ffffff;
+  --flume-acc-hi: #006ba0;
+
+  --flume-ok: #26844a;
+  --flume-ok-deep: #cbe6d1;
+  --flume-warn: #b47300;
+  --flume-err: #bf3a39;
+
+  --flume-chart-down: #007ab0;
+  --flume-chart-up: #26844a;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --flume-bg: #f7f8fa;
-    --flume-surface: #ffffff;
-    --flume-surface-raised: #eef1f6;
-    --flume-border: #dde2ea;
+    --flume-bg-0: #f7f6f3;
+    --flume-bg-1: #fefdfc;
+    --flume-bg-2: #ffffff;
+    --flume-bg-3: #efece8;
 
-    --flume-text: #141922;
-    --flume-text-muted: #5a6478;
-    --flume-text-faint: #8d97a8;
+    --flume-line: #dedcd7;
+    --flume-line-2: #8f8b85;
 
-    --flume-accent: #0284c7;
-    --flume-accent-dim: #0369a1;
+    --flume-fg-0: #26221e;
+    --flume-fg-1: #55514c;
+    --flume-fg-2: #6d6964;
+    --flume-fg-3: #57534e;
+    --flume-fg-dis: #9a968f;
 
-    --flume-ok: #059669;
-    --flume-warn: #b45309;
-    --flume-error: #dc2626;
+    --flume-acc: #007ab0;
+    --flume-acc-dim: #4f9ec9;
+    --flume-acc-deep: #c5e3f5;
+
+    --flume-on-acc: #ffffff;
+    --flume-acc-hi: #006ba0;
+
+    --flume-ok: #26844a;
+    --flume-ok-deep: #cbe6d1;
+    --flume-warn: #b47300;
+    --flume-err: #bf3a39;
+
+    --flume-chart-down: #007ab0;
+    --flume-chart-up: #26844a;
   }
 }
 
-:root[data-theme="light"] {
-  --flume-bg: #f7f8fa;
-  --flume-surface: #ffffff;
-  --flume-surface-raised: #eef1f6;
-  --flume-border: #dde2ea;
-
-  --flume-text: #141922;
-  --flume-text-muted: #5a6478;
-  --flume-text-faint: #8d97a8;
-
-  --flume-accent: #0284c7;
-  --flume-accent-dim: #0369a1;
-
-  --flume-ok: #059669;
-  --flume-warn: #b45309;
-  --flume-error: #dc2626;
-}
-
+/*
+ * Tailwind utility namespace.
+ *
+ * Names mirror the design tokens one-for-one — `bg-bg-1`, `text-fg-2`,
+ * `border-line`. Deliberately not renamed to friendlier words: the design
+ * treats these as the vocabulary, and a second set of names is how a codebase
+ * ends up with `--flume-line` and "gray-800" meaning the same thing to
+ * different people.
+ *
+ * `inline` keeps the utilities pointing at the custom properties rather than
+ * inlining the hex at build time, which is what lets the runtime theme swap
+ * work.
+ */
 @theme inline {
-  --color-bg: var(--flume-bg);
-  --color-surface: var(--flume-surface);
-  --color-surface-raised: var(--flume-surface-raised);
-  --color-border-subtle: var(--flume-border);
-  --color-text: var(--flume-text);
-  --color-muted: var(--flume-text-muted);
-  --color-faint: var(--flume-text-faint);
-  --color-accent: var(--flume-accent);
-  --color-accent-dim: var(--flume-accent-dim);
+  --color-bg-0: var(--flume-bg-0);
+  --color-bg-1: var(--flume-bg-1);
+  --color-bg-2: var(--flume-bg-2);
+  --color-bg-3: var(--flume-bg-3);
+
+  --color-line: var(--flume-line);
+  --color-line-2: var(--flume-line-2);
+
+  --color-fg-0: var(--flume-fg-0);
+  --color-fg-1: var(--flume-fg-1);
+  --color-fg-2: var(--flume-fg-2);
+  --color-fg-3: var(--flume-fg-3);
+  --color-fg-dis: var(--flume-fg-dis);
+
+  --color-acc: var(--flume-acc);
+  --color-acc-dim: var(--flume-acc-dim);
+  --color-acc-deep: var(--flume-acc-deep);
+  --color-on-acc: var(--flume-on-acc);
+  --color-acc-hi: var(--flume-acc-hi);
+
   --color-ok: var(--flume-ok);
+  --color-ok-deep: var(--flume-ok-deep);
   --color-warn: var(--flume-warn);
-  --color-error: var(--flume-error);
+  --color-err: var(--flume-err);
+
+  --color-chart-down: var(--flume-chart-down);
+  --color-chart-up: var(--flume-chart-up);
+
+  --font-sans: var(--flume-font-ui);
+  --font-mono: var(--flume-font-mono);
 
   /*
-   * System font stacks rather than a webfont. next/font/google would add a
-   * build-time network fetch (bad for reproducible CI) and the OS UI font is
-   * what makes a desktop app feel native on each platform.
+   * Overrides Tailwind's default radius scale so `rounded-sm/md/lg` are the
+   * design's 4/6/9 rather than 4/6/8. The 9px card radius is a real value from
+   * the mockups, not a rounding of 8.
    */
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI",
-    Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono:
-    ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
-    "Roboto Mono", Menlo, Consolas, monospace;
+  --radius-sm: var(--flume-r-sm);
+  --radius-md: var(--flume-r-md);
+  --radius-lg: var(--flume-r-lg);
 }
 
 html,
@@ -112,15 +290,31 @@ body {
   height: 100%;
 }
 
+/*
+ * 13px / 1.45 is the design's base step, not a browser default scaled down.
+ * The rest of the ramp is measured against it, so changing it moves every
+ * screen.
+ */
 body {
-  background-color: var(--flume-bg);
-  color: var(--flume-text);
-  font-family: var(--font-sans);
+  background-color: var(--flume-bg-0);
+  color: var(--flume-fg-0);
+  font-family: var(--flume-font-ui);
+  font-size: 13px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   /* A desktop chrome should not rubber-band or let text be selected like a page. */
   overscroll-behavior: none;
   user-select: none;
   cursor: default;
+}
+
+/*
+ * Every number in the app. Tabular figures are not optional — without them,
+ * columns jitter on every 1 Hz tick.
+ */
+.flume-num {
+  font-family: var(--flume-font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Visually hidden, but still announced by assistive technology. */
@@ -144,9 +338,9 @@ body {
 
 /* A single visible, consistent focus treatment across the app. */
 :focus-visible {
-  outline: 2px solid var(--flume-accent);
+  outline: 2px solid var(--flume-acc);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--flume-r-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {

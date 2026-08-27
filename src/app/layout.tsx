@@ -27,7 +27,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full">
-      <body className="bg-bg text-text min-h-full antialiased">
+      <body className="bg-bg-0 text-fg-0 min-h-full antialiased">
         <DevMockGate>{children}</DevMockGate>
       </body>
     </html>

@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     // are not ours to lint.
     "src-tauri/target/**",
     "src-tauri/gen/**",
+    // Storybook's static build — bundled third-party code, not ours to lint.
+    "storybook-static/**",
   ]),
 ]);
 

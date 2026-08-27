@@ -104,9 +104,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="border-border-subtle bg-surface flex max-h-[85vh] w-full max-w-lg flex-col gap-5 overflow-y-auto rounded-xl border p-5 shadow-2xl"
+        className="border-line bg-bg-1 flex max-h-[85vh] w-full max-w-lg flex-col gap-5 overflow-y-auto rounded-xl border p-5 shadow-2xl"
       >
-        <h2 className="text-text text-lg font-semibold">Settings</h2>
+        <h2 className="text-fg-0 text-lg font-semibold">Settings</h2>
 
         {draft === null ? (
           <Skeleton rows={4} label="Loading settings" />
@@ -115,7 +115,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <section className="flex flex-col gap-2">
               <label
                 htmlFor="download-dir"
-                className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
               >
                 Download folder
               </label>
@@ -125,11 +125,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   value={draft.downloadDir}
                   onChange={(e) => patch({ downloadDir: e.target.value })}
                   spellCheck={false}
-                  className="border-border-subtle bg-bg text-text selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-xs"
+                  className="border-line bg-bg-0 text-fg-0 selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-xs"
                 />
                 <Button onClick={() => void chooseFolder()}>Browse…</Button>
               </div>
-              <p className="text-faint text-xs">
+              <p className="text-fg-3 text-xs">
                 Applies to new torrents. Existing ones keep their location.
               </p>
             </section>
@@ -138,7 +138,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               <div className="flex flex-col gap-2">
                 <label
                   htmlFor="down-limit"
-                  className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                  className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
                 >
                   Download limit
                 </label>
@@ -153,16 +153,16 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     onChange={(e) =>
                       patch({ downloadLimitBps: fromKbInput(e.target.value) })
                     }
-                    className="border-border-subtle bg-bg text-text placeholder:text-faint w-full rounded-md border px-3 py-2 font-mono text-sm"
+                    className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 w-full rounded-md border px-3 py-2 font-mono text-sm"
                   />
-                  <span className="text-muted shrink-0 text-xs">KB/s</span>
+                  <span className="text-fg-2 shrink-0 text-xs">KB/s</span>
                 </div>
               </div>
 
               <div className="flex flex-col gap-2">
                 <label
                   htmlFor="up-limit"
-                  className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                  className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
                 >
                   Upload limit
                 </label>
@@ -177,9 +177,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     onChange={(e) =>
                       patch({ uploadLimitBps: fromKbInput(e.target.value) })
                     }
-                    className="border-border-subtle bg-bg text-text placeholder:text-faint w-full rounded-md border px-3 py-2 font-mono text-sm"
+                    className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 w-full rounded-md border px-3 py-2 font-mono text-sm"
                   />
-                  <span className="text-muted shrink-0 text-xs">KB/s</span>
+                  <span className="text-fg-2 shrink-0 text-xs">KB/s</span>
                 </div>
               </div>
             </section>
@@ -187,7 +187,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <section className="flex flex-col gap-2">
               <label
                 htmlFor="listen-port"
-                className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
               >
                 Listen port
               </label>
@@ -201,7 +201,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 onChange={(e) =>
                   patch({ listenPort: Number(e.target.value) || 0 })
                 }
-                className="border-border-subtle bg-bg text-text w-40 rounded-md border px-3 py-2 font-mono text-sm"
+                className="border-line bg-bg-0 text-fg-0 w-40 rounded-md border px-3 py-2 font-mono text-sm"
               />
             </section>
 
@@ -223,7 +223,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             <section className="flex flex-col gap-2">
               <label
                 htmlFor="proxy-url"
-                className="text-faint text-[11px] font-medium tracking-wider uppercase"
+                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
               >
                 SOCKS5 proxy
               </label>
@@ -235,9 +235,9 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 }
                 placeholder="Direct connection"
                 spellCheck={false}
-                className="border-border-subtle bg-bg text-text placeholder:text-faint selectable w-full rounded-md border px-3 py-2 font-mono text-xs"
+                className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 selectable w-full rounded-md border px-3 py-2 font-mono text-xs"
               />
-              <p className="text-faint text-xs">
+              <p className="text-fg-3 text-xs">
                 Routes outgoing peer connections through a SOCKS5 proxy, for
                 example <code>socks5://127.0.0.1:1080</code>.
               </p>
@@ -255,11 +255,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             </section>
 
             <section className="flex flex-col gap-2">
-              <span className="text-faint text-[11px] font-medium tracking-wider uppercase">
+              <span className="text-fg-3 text-[11px] font-medium tracking-wider uppercase">
                 Theme
               </span>
               <div
-                className="border-border-subtle flex gap-1 rounded-md border p-1"
+                className="border-line flex gap-1 rounded-md border p-1"
                 role="radiogroup"
                 aria-label="Theme"
               >
@@ -276,8 +276,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     }}
                     className={`flex-1 rounded px-3 py-1.5 text-sm capitalize transition-colors ${
                       draft.theme === option
-                        ? "bg-accent text-bg font-medium"
-                        : "text-muted hover:text-text"
+                        ? "bg-acc text-bg-0 font-medium"
+                        : "text-fg-2 hover:text-fg-0"
                     }`}
                   >
                     {option}
@@ -300,7 +300,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
         {error ? (
           <p
-            className="border-error/30 bg-error/10 text-error rounded-md border px-3 py-2 text-xs"
+            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
             role="alert"
           >
             {error}
@@ -342,16 +342,16 @@ interface ToggleProps {
 /** A labelled checkbox row with explanatory text. */
 function Toggle({ label, hint, checked, onChange }: ToggleProps) {
   return (
-    <label className="border-border-subtle hover:border-muted/50 flex cursor-pointer items-start gap-3 rounded-md border p-3">
+    <label className="border-line hover:border-fg-2/50 flex cursor-pointer items-start gap-3 rounded-md border p-3">
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="accent-accent mt-0.5 h-4 w-4 shrink-0"
+        className="accent-acc mt-0.5 h-4 w-4 shrink-0"
       />
       <span className="text-sm">
-        <span className="text-text block">{label}</span>
-        <span className="text-faint mt-0.5 block text-xs">{hint}</span>
+        <span className="text-fg-0 block">{label}</span>
+        <span className="text-fg-3 mt-0.5 block text-xs">{hint}</span>
       </span>
     </label>
   );

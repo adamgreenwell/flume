@@ -114,7 +114,7 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
       aria-label="Torrent actions"
       tabIndex={-1}
       style={{ left: placement.x, top: placement.y }}
-      className="border-border-subtle bg-surface fixed z-50 min-w-44 rounded-lg border p-1 shadow-2xl outline-none"
+      className="border-line bg-bg-1 fixed z-50 min-w-44 rounded-lg border p-1 shadow-2xl outline-none"
       // The menu's own mousedown must not reach the dismiss listener.
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -129,8 +129,8 @@ export function ContextMenu({ position, items, onClose }: ContextMenuProps) {
             onClose();
           }}
           className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors ${
-            index === activeIndex ? "bg-surface-raised" : ""
-          } ${item.destructive ? "text-error" : "text-text"}`}
+            index === activeIndex ? "bg-bg-2" : ""
+          } ${item.destructive ? "text-err" : "text-fg-0"}`}
         >
           {item.icon ? (
             <Icon name={item.icon} size={14} className="shrink-0 opacity-70" />

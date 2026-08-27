@@ -1,4 +1,5 @@
 out/
+storybook-static/
 .next/
 src-tauri/target/
 src-tauri/gen/
