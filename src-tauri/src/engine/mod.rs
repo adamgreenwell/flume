@@ -16,6 +16,7 @@
 mod add;
 mod config;
 mod detail;
+mod import;
 mod note;
 mod preflight;
 mod status;
@@ -34,6 +35,7 @@ pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use detail::{
     MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
 };
+pub use import::{ClientKind, DetectedClient, ImportOutcome};
 pub use note::{Note, NoteSeverity};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
@@ -643,6 +645,72 @@ impl Engine {
             swarm,
             note,
         })
+    }
+
+    /// Finds other BitTorrent clients installed for the current user.
+    ///
+    /// Returns an empty list when the platform exposes no home directory,
+    /// rather than failing: a first-run screen that errors because it could
+    /// not go looking is worse than one that simply offers nothing.
+    #[must_use]
+    pub fn detect_clients() -> Vec<import::DetectedClient> {
+        let Some(user) = directories::UserDirs::new() else {
+            return Vec::new();
+        };
+        import::detect(user.home_dir())
+    }
+
+    /// Adds every `.torrent` in `torrents_dir`, saving into `output_folder`.
+    ///
+    /// Each torrent is added with `overwrite`, which is what makes this a
+    /// takeover rather than a re-download: librqbit hashes what is already on
+    /// disk at that path and keeps every piece that verifies. A torrent the
+    /// other client had finished arrives complete and starts seeding.
+    ///
+    /// Failures are counted, not propagated. A directory of torrents will
+    /// contain the occasional truncated or half-written file, and losing the
+    /// other forty-six because of one is not a trade worth making. The counts
+    /// are what the UI reports.
+    ///
+    /// # Errors
+    ///
+    /// Never returns `Err`; the signature is `Result` for symmetry with the
+    /// other commands and to leave room for a future failure mode.
+    pub async fn import_from(
+        &self,
+        torrents_dir: &std::path::Path,
+        output_folder: Option<String>,
+    ) -> Result<ImportOutcome, EngineError> {
+        let mut outcome = ImportOutcome::default();
+
+        for path in import::torrent_files(torrents_dir) {
+            let Ok(bytes) = std::fs::read(&path) else {
+                outcome.failed += 1;
+                continue;
+            };
+
+            let response = self
+                .session
+                .add_torrent(
+                    AddTorrent::from_bytes(bytes),
+                    Some(AddTorrentOptions {
+                        overwrite: true,
+                        output_folder: output_folder.clone(),
+                        ..Default::default()
+                    }),
+                )
+                .await;
+
+            match response {
+                Ok(AddTorrentResponse::Added(..)) => outcome.added += 1,
+                // Already in the session, e.g. a second run of the import or a
+                // torrent the user had added by hand. Not a failure.
+                Ok(AddTorrentResponse::AlreadyManaged(..)) => outcome.skipped += 1,
+                Ok(AddTorrentResponse::ListOnly(_)) | Err(_) => outcome.failed += 1,
+            }
+        }
+
+        Ok(outcome)
     }
 
     /// Applies global transfer limits to the running session.

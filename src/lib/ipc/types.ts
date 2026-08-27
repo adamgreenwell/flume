@@ -367,6 +367,50 @@ export type Theme = "system" | "light" | "dark";
  */
 export type Density = "comfortable" | "compact";
 
+/** A BitTorrent client Flume can import from. Mirrors Rust `ClientKind`. */
+export type ClientKind = "transmission" | "qBittorrent" | "deluge";
+
+/**
+ * Another client found on this machine. Mirrors Rust `DetectedClient`.
+ *
+ * Only the torrent store and download directory are read. Categories and
+ * seeding rules are deliberately not: Flume has no model for either, so there
+ * is nowhere to put them and offering to bring them across would be a lie.
+ */
+export interface DetectedClient {
+  /** Which client this is. */
+  kind: ClientKind;
+  /** Its name, ready to show. */
+  name: string;
+  /** How many `.torrent` files are in its store. */
+  torrentCount: number;
+  /**
+   * Where it saves downloads, or `null` if its config could not be read.
+   *
+   * `null` means unreadable, not absent — the UI says so rather than implying
+   * the client has no download folder.
+   */
+  downloadDir: string | null;
+  /** The directory its `.torrent` files live in. */
+  torrentsDir: string;
+}
+
+/**
+ * What an import actually did. Mirrors Rust `ImportOutcome`.
+ *
+ * Three numbers rather than a success flag: all three happen in a normal run
+ * and they mean different things. `skipped` is a torrent Flume already had;
+ * `failed` is a file it could not read.
+ */
+export interface ImportOutcome {
+  /** Torrents taken over. Their files are being verified in place. */
+  added: number;
+  /** Torrents Flume already had. */
+  skipped: number;
+  /** Files that could not be read or parsed. */
+  failed: number;
+}
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */
