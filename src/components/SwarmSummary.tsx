@@ -13,7 +13,7 @@ function Figure({
   label,
   value,
   hint,
-  tone = "text-text",
+  tone = "text-fg-0",
 }: {
   label: string;
   value: number;
@@ -22,9 +22,7 @@ function Figure({
 }) {
   return (
     <div className="flex flex-col gap-0.5" title={hint}>
-      <dt className="text-faint text-[11px] tracking-wide uppercase">
-        {label}
-      </dt>
+      <dt className="text-fg-3 text-[11px] tracking-wide uppercase">{label}</dt>
       <dd className={`font-mono text-sm tabular-nums ${tone}`}>
         {value.toLocaleString()}
       </dd>
@@ -45,13 +43,13 @@ function Figure({
  */
 export function SwarmSummary({ swarm }: SwarmSummaryProps) {
   return (
-    <div className="border-border-subtle bg-bg rounded-md border p-3">
+    <div className="border-line bg-bg-0 rounded-md border p-3">
       <dl className="grid grid-cols-5 gap-3">
         <Figure
           label="Live"
           value={swarm.live}
           hint="Peers with an established connection right now"
-          tone="text-accent"
+          tone="text-acc"
         />
         <Figure
           label="Connecting"
@@ -72,10 +70,10 @@ export function SwarmSummary({ swarm }: SwarmSummaryProps) {
           label="Dead"
           value={swarm.dead}
           hint="Peers that failed and were dropped"
-          tone="text-faint"
+          tone="text-fg-3"
         />
       </dl>
-      <p className="text-faint mt-2.5 text-[11px]">
+      <p className="text-fg-3 mt-2.5 text-[11px]">
         {swarm.liveTcp} over TCP · {swarm.liveUtp} over uTP. The torrent engine
         does not report which peers are seeds, so there is no seeds/leechers
         split.

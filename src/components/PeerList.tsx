@@ -18,7 +18,7 @@ export interface PeerListProps {
 export function PeerList({ peers }: PeerListProps) {
   if (peers.length === 0) {
     return (
-      <p className="text-faint py-6 text-center text-xs">
+      <p className="text-fg-3 py-6 text-center text-xs">
         No connected peers. This is normal while a torrent is starting, paused,
         or fully seeded with nobody asking for it.
       </p>
@@ -27,8 +27,8 @@ export function PeerList({ peers }: PeerListProps) {
 
   return (
     <table className="w-full text-left text-xs">
-      <thead className="text-faint">
-        <tr className="border-border-subtle border-b">
+      <thead className="text-fg-3">
+        <tr className="border-line border-b">
           <th scope="col" className="py-2 font-medium">
             Address
           </th>
@@ -50,16 +50,16 @@ export function PeerList({ peers }: PeerListProps) {
           </th>
         </tr>
       </thead>
-      <tbody className="text-muted">
+      <tbody className="text-fg-2">
         {peers.map((peer) => (
           <tr
             key={peer.address}
-            className="border-border-subtle border-b last:border-b-0"
+            className="border-line border-b last:border-b-0"
           >
-            <td className="text-text py-2 font-mono">
+            <td className="text-fg-0 py-2 font-mono">
               {peer.address}
               {peer.transport ? (
-                <span className="text-faint ml-1.5 uppercase">
+                <span className="text-fg-3 ml-1.5 uppercase">
                   {peer.transport}
                 </span>
               ) : null}
@@ -79,14 +79,14 @@ export function PeerList({ peers }: PeerListProps) {
             <td className="py-2 text-right font-mono tabular-nums">
               <span
                 className={
-                  peer.piecesContributed > 0 ? "text-text" : "text-faint"
+                  peer.piecesContributed > 0 ? "text-fg-0" : "text-fg-3"
                 }
               >
                 {peer.piecesContributed}
               </span>
               {peer.errors > 0 ? (
                 <span
-                  className="text-error ml-1.5"
+                  className="text-err ml-1.5"
                   title={`${peer.errors} connection error${peer.errors === 1 ? "" : "s"}`}
                 >
                   !{peer.errors}

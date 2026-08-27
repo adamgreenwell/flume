@@ -30,10 +30,10 @@ export function EmptyState({ status, onAdd }: EmptyStateProps) {
   const dhtReady = status?.health === "ready";
 
   return (
-    <div className="border-border-subtle flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
+    <div className="border-line flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
       <div className="max-w-sm">
-        <h2 className="text-text text-sm font-medium">No torrents yet</h2>
-        <p className="text-muted mt-1.5 text-xs leading-relaxed">
+        <h2 className="text-fg-0 text-sm font-medium">No torrents yet</h2>
+        <p className="text-fg-2 mt-1.5 text-xs leading-relaxed">
           Paste a magnet link, choose a <code>.torrent</code> file, or drop one
           onto this window. Flume shows you the file list first, so you only
           download what you actually want.
@@ -45,11 +45,11 @@ export function EmptyState({ status, onAdd }: EmptyStateProps) {
       </Button>
 
       {status ? (
-        <dl className="text-faint mt-2 flex flex-col gap-1 text-[11px]">
+        <dl className="text-fg-3 mt-2 flex flex-col gap-1 text-[11px]">
           <div className="flex items-center justify-center gap-1.5">
             <dt>Saving to</dt>
             <dd
-              className="text-muted selectable font-mono"
+              className="text-fg-2 selectable font-mono"
               title={status.downloadDir}
             >
               {status.downloadDir}

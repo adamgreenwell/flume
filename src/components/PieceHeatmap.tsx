@@ -52,9 +52,9 @@ export function PieceHeatmap({ pieces }: PieceHeatmapProps) {
       // Read the theme's accent at draw time so a theme switch repaints
       // correctly rather than baking in the palette that was active at mount.
       const accent = getComputedStyle(document.documentElement)
-        .getPropertyValue("--flume-accent")
+        .getPropertyValue("--flume-acc")
         .trim();
-      context.fillStyle = accent || "#38bdf8";
+      context.fillStyle = accent || "#5ab8ea";
 
       const step = width / buckets.length;
       buckets.forEach((level, index) => {
@@ -79,7 +79,7 @@ export function PieceHeatmap({ pieces }: PieceHeatmapProps) {
 
   if (buckets.length === 0) {
     return (
-      <p className="text-faint text-xs">
+      <p className="text-fg-3 text-xs">
         No piece information yet — this appears once the torrent is running.
       </p>
     );
@@ -93,11 +93,11 @@ export function PieceHeatmap({ pieces }: PieceHeatmapProps) {
       <canvas
         ref={canvasRef}
         style={{ height: HEIGHT }}
-        className="border-border-subtle bg-surface-raised w-full rounded-md border"
+        className="border-line bg-bg-2 w-full rounded-md border"
         role="img"
         aria-label={`Piece map: roughly ${percentComplete}% of ${totalPieces} pieces downloaded`}
       />
-      <p className="text-faint text-xs">
+      <p className="text-fg-3 text-xs">
         {totalPieces.toLocaleString()} pieces
         {piecesPerBucket > 1
           ? ` · ${piecesPerBucket} per column (downsampled to fit)`

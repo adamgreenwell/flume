@@ -52,27 +52,27 @@ export function ConfirmRemoveDialog({
         role="alertdialog"
         aria-modal="true"
         aria-label={`Remove ${torrent.name}`}
-        className="border-border-subtle bg-surface flex w-full max-w-md flex-col gap-4 rounded-xl border p-5 shadow-2xl"
+        className="border-line bg-bg-1 flex w-full max-w-md flex-col gap-4 rounded-xl border p-5 shadow-2xl"
       >
         <div>
-          <h2 className="text-text text-base font-semibold">Remove torrent?</h2>
-          <p className="text-muted mt-1 truncate text-sm" title={torrent.name}>
+          <h2 className="text-fg-0 text-base font-semibold">Remove torrent?</h2>
+          <p className="text-fg-2 mt-1 truncate text-sm" title={torrent.name}>
             {torrent.name}
           </p>
         </div>
 
-        <label className="border-border-subtle hover:border-error/40 flex cursor-pointer items-start gap-3 rounded-md border p-3">
+        <label className="border-line hover:border-err/40 flex cursor-pointer items-start gap-3 rounded-md border p-3">
           <input
             type="checkbox"
             checked={deleteFiles}
             onChange={(e) => setDeleteFiles(e.target.checked)}
-            className="accent-error mt-0.5 h-4 w-4 shrink-0"
+            className="accent-err mt-0.5 h-4 w-4 shrink-0"
           />
           <span className="text-sm">
-            <span className="text-text block">
+            <span className="text-fg-0 block">
               Also delete downloaded files
             </span>
-            <span className="text-faint mt-0.5 block text-xs">
+            <span className="text-fg-3 mt-0.5 block text-xs">
               This permanently deletes the data from disk. It cannot be undone.
             </span>
           </span>

@@ -159,10 +159,10 @@ export default function Home() {
     <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6 px-8 py-10">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-text text-2xl font-semibold tracking-tight">
+          <h1 className="text-fg-0 text-2xl font-semibold tracking-tight">
             Flume
           </h1>
-          <p className="text-muted mt-0.5 text-sm">
+          <p className="text-fg-2 mt-0.5 text-sm">
             {status ? (
               <>
                 <span className="font-mono tabular-nums">
@@ -212,14 +212,14 @@ export default function Home() {
 
       {actionError ? (
         <div
-          className="border-error/30 bg-error/10 text-error flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm"
+          className="border-err/30 bg-err/10 text-err flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm"
           role="alert"
         >
           <span>{actionError}</span>
           <button
             type="button"
             onClick={() => setActionError(null)}
-            className="text-error/70 hover:text-error shrink-0"
+            className="text-err/70 hover:text-err shrink-0"
             aria-label="Dismiss error"
           >
             ✕
@@ -259,10 +259,10 @@ export default function Home() {
 
       {isDraggingTorrent ? (
         <div
-          className="border-accent bg-accent/10 pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-xl border-2 border-dashed"
+          className="border-acc bg-acc/10 pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-xl border-2 border-dashed"
           role="status"
         >
-          <p className="text-accent text-sm font-medium">
+          <p className="text-acc text-sm font-medium">
             Drop to add this torrent
           </p>
         </div>

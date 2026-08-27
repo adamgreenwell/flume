@@ -34,7 +34,7 @@ export function Skeleton({ rows = 3, label }: SkeletonProps) {
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="bg-surface-raised h-9 animate-pulse rounded-md"
+          className="bg-bg-2 h-9 animate-pulse rounded-md"
           style={{ width: widths[index % widths.length] }}
         />
       ))}

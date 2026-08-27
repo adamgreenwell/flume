@@ -40,7 +40,7 @@ export function FileTree({ files, selected, onChange }: FileTreeProps) {
   return (
     <div className="flex min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-muted text-xs">
+        <p className="text-fg-2 text-xs">
           {selected.size} of {files.length} selected ·{" "}
           <span className="font-mono">{formatBytes(selectedBytes)}</span>
         </p>
@@ -62,25 +62,25 @@ export function FileTree({ files, selected, onChange }: FileTreeProps) {
         </div>
       </div>
 
-      <ul className="border-border-subtle bg-bg min-h-0 flex-1 overflow-y-auto rounded-md border">
+      <ul className="border-line bg-bg-0 min-h-0 flex-1 overflow-y-auto rounded-md border">
         {files.map((file) => {
           const isSelected = selected.has(file.index);
           return (
             <li key={file.index}>
-              <label className="border-border-subtle hover:bg-surface-raised flex cursor-pointer items-center gap-3 border-b px-3 py-2 last:border-b-0">
+              <label className="border-line hover:bg-bg-2 flex cursor-pointer items-center gap-3 border-b px-3 py-2 last:border-b-0">
                 <input
                   type="checkbox"
                   checked={isSelected}
                   onChange={() => toggle(file.index)}
-                  className="accent-accent h-4 w-4 shrink-0"
+                  className="accent-acc h-4 w-4 shrink-0"
                 />
                 <span
-                  className={`min-w-0 flex-1 truncate text-sm ${isSelected ? "text-text" : "text-faint"}`}
+                  className={`min-w-0 flex-1 truncate text-sm ${isSelected ? "text-fg-0" : "text-fg-3"}`}
                   title={file.path}
                 >
                   {file.path}
                 </span>
-                <span className="text-muted shrink-0 font-mono text-xs tabular-nums">
+                <span className="text-fg-2 shrink-0 font-mono text-xs tabular-nums">
                   {formatBytes(file.length)}
                 </span>
               </label>
