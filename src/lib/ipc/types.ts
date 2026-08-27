@@ -264,6 +264,14 @@ export interface PeerInfo {
 export interface PieceMap {
   /** Total pieces in the torrent. */
   totalPieces: number;
+  /**
+   * How many are downloaded and verified.
+   *
+   * Counted from the bitfield, not inferred from the buckets — a bucket holds
+   * an averaged level, so summing them back would give an estimate where an
+   * exact number is free.
+   */
+  piecesComplete: number;
   /** How many pieces each bucket represents. */
   piecesPerBucket: number;
   /** Completion level per bucket, `0..=255`. */
@@ -271,6 +279,31 @@ export interface PieceMap {
 }
 
 /** Detail-view data beyond the file list. Mirrors Rust `TorrentDetail`. */
+/**
+ * How much attention a {@link Note} wants. Mirrors Rust `NoteSeverity`.
+ *
+ * `"neutral"` is not an absence of severity. It is the deliberate statement
+ * that nothing is wrong, which a paused torrent needs to make loudly enough
+ * that the user does not think something broke.
+ */
+export type NoteSeverity = "ok" | "warn" | "err" | "neutral";
+
+/**
+ * What a torrent is actually doing, in words. Mirrors Rust `Note`.
+ *
+ * The expanded row's reason for existing, and the design's third principle in
+ * one object: never a bare adjective. "Stalled" is not a status; "12 peers are
+ * known and none of them is answering" is.
+ */
+export interface Note {
+  /** How much attention this wants. */
+  severity: NoteSeverity;
+  /** The headline. A claim about this torrent, never a state word. */
+  title: string;
+  /** Two or three sentences: what is happening, and what to do about it. */
+  body: string;
+}
+
 export interface TorrentDetail {
   /** Connected peers; empty when the torrent is not live. */
   peers: PeerInfo[];
@@ -286,6 +319,14 @@ export interface TorrentDetail {
   pieces: PieceMap | null;
   /** Peer pool health. */
   swarm: SwarmStats;
+  /**
+   * What this torrent is actually doing, in words.
+   *
+   * Carried here rather than on the 1 Hz summary because only an expanded row
+   * shows it, and a three-sentence string per torrent per second is a lot of
+   * IPC for something nobody is reading.
+   */
+  note: Note;
 }
 
 /** UI colour scheme preference. Mirrors Rust `Theme`. */

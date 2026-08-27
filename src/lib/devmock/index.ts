@@ -277,7 +277,76 @@ function pieceMap(): TorrentDetail["pieces"] {
     if (i < 175) return Math.floor(((i * 37) % 255) / 1);
     return 0;
   });
-  return { totalPieces: 23280, piecesPerBucket: 73, buckets };
+  // 150 full buckets plus a ragged 25, at 73 pieces each.
+  const complete = 150 * 73 + Math.round(25 * 73 * 0.5);
+  return {
+    totalPieces: 23280,
+    piecesComplete: complete,
+    piecesPerBucket: 73,
+    buckets,
+  };
+}
+
+/**
+ * Detail for one torrent, with the parts that must agree with its row
+ * recomputed from that row.
+ *
+ * A fixed fixture would show "28 of 214 peers" in the note under a row reading
+ * "41 / 206" — and the whole point of the note is that it explains the numbers
+ * beside it. In the real engine both come off the same handle and cannot
+ * disagree; a mock that does disagree teaches the wrong thing while you build
+ * against it.
+ *
+ * @param id - Which torrent to describe.
+ * @returns Detail matching that torrent's summary.
+ */
+function detailFor(id: number): TorrentDetail {
+  const torrent = TORRENTS.find((t) => t.id === id) ?? TORRENTS[0];
+  const remaining = Math.max(torrent.totalBytes - torrent.progressBytes, 0);
+
+  return {
+    ...DETAIL,
+    // Live peers only exist while something is running.
+    peers: torrent.livePeers === 0 ? [] : DETAIL.peers,
+    pieces: torrent.livePeers === 0 && !torrent.finished ? null : DETAIL.pieces,
+    swarm: {
+      ...DETAIL.swarm,
+      live: torrent.livePeers,
+      seen: torrent.knownPeers,
+    },
+    note: {
+      severity:
+        torrent.state === "error"
+          ? "err"
+          : torrent.health === "none"
+            ? "err"
+            : torrent.state === "paused" || torrent.state === "checking"
+              ? "neutral"
+              : "ok",
+      title:
+        torrent.state === "error"
+          ? "The disk this is saving to is full"
+          : torrent.health === "none"
+            ? "Nobody reachable has the rest of this"
+            : torrent.state === "paused"
+              ? "Paused, nothing lost"
+              : torrent.state === "checking"
+                ? "Checking what is already on disk"
+                : torrent.state === "seeding"
+                  ? `Serving ${torrent.livePeers} of ${torrent.knownPeers} known peers`
+                  : `Pulling from ${torrent.livePeers} of ${torrent.knownPeers} known peers`,
+      body:
+        torrent.state === "error"
+          ? `${torrent.error ?? ""} Free some space, then press Resume — everything already verified is kept and will not be downloaded again.`
+          : torrent.health === "none"
+            ? `${torrent.knownPeers} peers are known for this torrent and none of them is answering right now. Flume keeps asking the DHT and the trackers every few minutes.`
+            : torrent.state === "paused"
+              ? "Your data is verified on disk. Resuming reconnects to the swarm and picks up from there — nothing is downloaded twice."
+              : torrent.state === "checking"
+                ? "Flume is re-hashing to find out what survived. Anything that verifies is kept; only pieces that fail are downloaded again."
+                : `${remaining.toLocaleString()} bytes to go at the current rate.`,
+    },
+  };
 }
 
 const DETAIL: TorrentDetail = {
@@ -337,6 +406,13 @@ const DETAIL: TorrentDetail = {
     liveTcp: 26,
     liveUtp: 2,
   },
+  // What the Rust derivation produces for a healthy download with these
+  // numbers. Kept in step with `describe` in `src-tauri/src/engine/note.rs`.
+  note: {
+    severity: "ok",
+    title: "Pulling from 28 of 214 known peers",
+    body: "19.7 GB verified so far, 26.4 GB to go, arriving at 6.6 MB/s. About 1 h 07 min left at this rate.",
+  },
 };
 
 /**
@@ -383,7 +459,9 @@ export function install(): void {
         case "get_torrent_files":
           return FILES;
         case "get_torrent_detail":
-          return DETAIL;
+          return detailFor(
+            (args as { id?: number } | undefined)?.id ?? TORRENTS[0].id,
+          );
         default:
           return null;
       }

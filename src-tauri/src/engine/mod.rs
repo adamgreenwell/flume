@@ -16,6 +16,7 @@
 mod add;
 mod config;
 mod detail;
+mod note;
 mod status;
 mod torrent;
 
@@ -32,6 +33,7 @@ pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use detail::{
     MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
 };
+pub use note::{Note, NoteSeverity};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
@@ -611,11 +613,24 @@ impl Engine {
                 live_utp: 0,
             });
 
+        // Built from the same summary the list row shows, so the panel's
+        // sentence and the row's line above it cannot disagree about what is
+        // happening.
+        let summary = torrent::summarize(
+            id,
+            handle.info_hash().as_string(),
+            handle.name(),
+            handle.output_folder().display().to_string(),
+            &handle.stats(),
+        );
+        let note = note::describe(&summary, &swarm);
+
         Ok(TorrentDetail {
             peers,
             trackers,
             pieces,
             swarm,
+            note,
         })
     }
 

@@ -30,9 +30,9 @@
 use flume_lib::{
     commands::CommandError,
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, PeerInfo, PieceMap, SwarmHealth, SwarmStats,
-        TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview,
-        TorrentSource, TorrentState, TorrentSummary,
+        CoreStatus, DhtStatus, EngineHealth, Note, NoteSeverity, PeerInfo, PieceMap, SwarmHealth,
+        SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState,
+        TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
     },
     settings::{Settings, Theme},
 };
@@ -235,6 +235,7 @@ fn torrent_detail_matches_the_typescript_mirror() {
         trackers: vec!["https://tracker/announce".into()],
         pieces: Some(PieceMap {
             total_pieces: 100,
+            pieces_complete: 42,
             pieces_per_bucket: 1,
             buckets: vec![255, 0],
         }),
@@ -247,10 +248,15 @@ fn torrent_detail_matches_the_typescript_mirror() {
             live_tcp: 2,
             live_utp: 1,
         },
+        note: Note {
+            severity: NoteSeverity::Ok,
+            title: "Pulling from 3 of 40 known peers".into(),
+            body: "500 B verified so far, 500 B to go.".into(),
+        },
     };
     assert_keys(
         &detail,
-        &["peers", "trackers", "pieces", "swarm"],
+        &["peers", "trackers", "pieces", "swarm", "note"],
         "TorrentDetail",
     );
     assert_keys(
@@ -282,7 +288,12 @@ fn torrent_detail_matches_the_typescript_mirror() {
     );
     assert_keys(
         detail.pieces.as_ref().expect("pieces"),
-        &["totalPieces", "piecesPerBucket", "buckets"],
+        &[
+            "totalPieces",
+            "piecesComplete",
+            "piecesPerBucket",
+            "buckets",
+        ],
         "PieceMap",
     );
 }
