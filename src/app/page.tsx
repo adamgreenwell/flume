@@ -22,6 +22,7 @@ import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
+import { useThroughputHistory } from "@/hooks/useThroughputHistory";
 import {
   useKeyboardShortcuts,
   type Shortcut,
@@ -56,6 +57,7 @@ import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
  */
 export default function Home() {
   const { telemetry, error, isLoading } = useTelemetry();
+  const history = useThroughputHistory(telemetry);
   const [isAdding, setIsAdding] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<TorrentSummary | null>(
     null,
@@ -79,6 +81,7 @@ export default function Home() {
   // Read through useSyncExternalStore rather than an effect: the value differs
   // between the static export and the client, and this is the one pattern that
   // handles that without a hydration mismatch or a cascading render.
+  const [downloadLimitBps, setDownloadLimitBps] = useState<number | null>(null);
   const controls = useSyncExternalStore(
     subscribeToWindowControls,
     detectWindowControls,
@@ -117,7 +120,12 @@ export default function Home() {
   // no flash of the wrong palette.
   useEffect(() => {
     void getSettings()
-      .then((s) => applyTheme(s.theme))
+      .then((s) => {
+        applyTheme(s.theme);
+        // Kept so the chart can draw the ceiling at the configured limit
+        // rather than rescaling its axis as traffic varies.
+        setDownloadLimitBps(s.downloadLimitBps);
+      })
       .catch(() => {
         // Engine still starting; the system default remains in force.
       });
@@ -313,7 +321,12 @@ export default function Home() {
           </div>
         )}
 
-        <Dock status={status} torrents={torrents} />
+        <Dock
+          status={status}
+          torrents={torrents}
+          history={history}
+          limitBps={downloadLimitBps}
+        />
       </div>
 
       {isAdding ? (

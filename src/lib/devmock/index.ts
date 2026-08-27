@@ -403,13 +403,46 @@ export function install(): void {
   );
 
   // Drive the telemetry stream at the same 1 Hz the backend uses.
+  //
+  // Each tick advances uptime and jitters the session rates. A mock that
+  // resent one frozen snapshot would leave anything reading a history — the
+  // dock's throughput chart — with a single sample and a flat line, which is
+  // exactly the case least worth looking at while building it.
+  let tick = 0;
   setInterval(() => {
     const handler = listeners.get("flume://telemetry");
     if (handler === undefined) return;
+
+    tick += 1;
+    // Two sine waves at different periods, so the trace has the uneven shape
+    // of real traffic rather than an obvious repeating pattern.
+    const wobble = (period: number, phase: number) =>
+      Math.sin((tick / period) * Math.PI * 2 + phase);
+    const downloadBps = Math.max(
+      0,
+      Math.round(
+        CORE.downloadBps * (1 + 0.28 * wobble(17, 0) + 0.12 * wobble(5, 1.7)),
+      ),
+    );
+    const uploadBps = Math.max(
+      0,
+      Math.round(
+        CORE.uploadBps * (1 + 0.34 * wobble(11, 2.4) + 0.15 * wobble(4, 0.6)),
+      ),
+    );
+
     callbacks.get(handler)?.({
       event: "flume://telemetry",
       id: handler,
-      payload: { core: CORE, torrents },
+      payload: {
+        core: {
+          ...CORE,
+          uptimeSeconds: CORE.uptimeSeconds + tick,
+          downloadBps,
+          uploadBps,
+        },
+        torrents,
+      },
     });
   }, 1000);
 }
