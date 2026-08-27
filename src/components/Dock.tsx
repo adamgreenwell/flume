@@ -49,9 +49,25 @@ export function Dock({ status, torrents, history, limitBps }: DockProps) {
 
   return (
     <div className="bg-bg-1 border-line flex h-[116px] shrink-0 items-stretch border-t">
-      <ThroughputChart history={history} limitBps={limitBps} />
+      {/*
+        The chart is the first thing to go when the window is narrow. Below
+        about 1024px the rail plus a readable stat grid already fills the row,
+        and a chart squeezed into what is left stops being readable before the
+        numbers do — the numbers are the part you cannot reconstruct by
+        looking.
+      */}
+      <div className="hidden min-w-0 flex-1 lg:flex">
+        <ThroughputChart history={history} limitBps={limitBps} />
+      </div>
 
-      <div className="border-line grid grow grid-cols-4 content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5">
+      {/*
+        `auto-fit` with an 88px floor rather than a fixed four columns. Four
+        columns at a 1100px window left each stat about 47px, which wrapped
+        "0 of 0" onto three lines, collided the two peer labels, and pushed
+        Uptime out of the bottom of the dock. Columns now drop to three or two
+        instead of shrinking past legibility.
+      */}
+      <div className="border-line grid grow grid-cols-[repeat(auto-fit,minmax(88px,1fr))] content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5 lg:grow-0 lg:basis-[420px]">
         <StatCard label="Active" value={`${active} of ${torrents.length}`} />
         <StatCard label="Session down" value={formatBytes(downloaded)} />
         <StatCard label="Session up" value={formatBytes(uploaded)} />

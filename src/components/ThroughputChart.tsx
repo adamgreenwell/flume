@@ -110,7 +110,7 @@ export function ThroughputChart({
   const secondsAgo = hover === null ? 0 : history.length - 1 - hover;
 
   return (
-    <div className="relative flex shrink-0 flex-col gap-1.5 px-5 pt-3 pb-2.5">
+    <div className="relative flex min-w-0 flex-1 flex-col gap-1.5 px-5 pt-3 pb-2.5">
       <div className="flex items-center gap-4">
         <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
           {label} · last {WINDOW_SIZE} s
@@ -130,9 +130,12 @@ export function ThroughputChart({
 
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        width={WIDTH}
-        height={HEIGHT}
-        className="block max-w-full overflow-visible"
+        // Stretches to whatever width it is given rather than holding 620px.
+        // A time series has no meaningful aspect ratio — squeezing the minute
+        // into less space is the correct response to a narrower window, and
+        // letterboxing it would waste the room instead.
+        preserveAspectRatio="none"
+        className="block h-[88px] w-full overflow-visible"
         role="img"
         aria-label={
           history.length === 0
@@ -191,6 +194,7 @@ export function ThroughputChart({
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
         <path
           d={linePath(upPoints)}
@@ -199,6 +203,7 @@ export function ThroughputChart({
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
 
         {at ? (
