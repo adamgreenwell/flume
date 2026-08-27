@@ -49,8 +49,9 @@ import {
   pauseTorrent,
   removeTorrent,
   resumeTorrent,
+  updateSettings,
 } from "@/lib/ipc/client";
-import { applyTheme } from "@/lib/theme";
+import { applyDensity, applyTheme } from "@/lib/theme";
 import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
 
 /**
@@ -91,6 +92,8 @@ export default function Home() {
   const [view, setView] = useState<ViewId>("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortId>("activity");
+  // Mirrors the persisted `ui.density` setting. Held here so the toolbar chip
+  // stays instant, and written back so the choice survives a restart.
   const [compact, setCompact] = useState(false);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
   // Read through useSyncExternalStore rather than an effect: the value differs
@@ -106,9 +109,7 @@ export default function Home() {
   // Density lives on <html> so a row can read it as a CSS variable rather than
   // every row branching on a prop.
   useEffect(() => {
-    const root = document.documentElement;
-    if (compact) root.setAttribute("data-density", "compact");
-    else root.removeAttribute("data-density");
+    applyDensity(compact ? "compact" : "comfortable");
   }, [compact]);
 
   // A magnet clicked in a browser, or passed on the command line, opens the
@@ -137,6 +138,7 @@ export default function Home() {
     void getSettings()
       .then((s) => {
         applyTheme(s.theme);
+        setCompact(s.density === "compact");
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
         setDownloadLimitBps(s.downloadLimitBps);
@@ -278,7 +280,23 @@ export default function Home() {
           sort={sort}
           onSortChange={setSort}
           compact={compact}
-          onDensityToggle={() => setCompact((c) => !c)}
+          onDensityToggle={() => {
+            const next = !compact;
+            setCompact(next);
+            // Persisted so the choice survives a restart, and so the settings
+            // screen and this chip cannot disagree about what density is.
+            void getSettings()
+              .then((s) =>
+                updateSettings({
+                  ...s,
+                  density: next ? "compact" : "comfortable",
+                }),
+              )
+              .catch(() => {
+                // A density that failed to persist still applied locally;
+                // it is not worth an error banner over the list.
+              });
+          }}
           onAdd={() => setIsAdding(true)}
         />
 

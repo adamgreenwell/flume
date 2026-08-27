@@ -35,6 +35,20 @@ pub enum Theme {
     Dark,
 }
 
+/// How tall a torrent row is drawn.
+///
+/// Frontend-only, like [`Theme`], and persisted here for the same reason: a
+/// preference the user re-sets on every launch is not a preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Density {
+    /// 58px rows with a second line of detail.
+    #[default]
+    Comfortable,
+    /// 40px rows; the detail line is hidden.
+    Compact,
+}
+
 /// Everything the user can configure.
 ///
 /// Mirrored in `src/lib/ipc/types.ts`.
@@ -74,6 +88,9 @@ pub struct Settings {
 
     /// UI colour scheme. Frontend-only; persisted here so it survives restarts.
     pub theme: Theme,
+
+    /// Row height in the library. Frontend-only, persisted for the same reason.
+    pub density: Density,
 }
 
 impl Default for Settings {
@@ -89,6 +106,7 @@ impl Default for Settings {
             upload_limit_bps: None,
             proxy_url: None,
             theme: Theme::System,
+            density: Density::Comfortable,
         }
     }
 }

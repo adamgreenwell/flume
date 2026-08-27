@@ -358,6 +358,15 @@ export interface TorrentDetail {
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
 export type Theme = "system" | "light" | "dark";
 
+/**
+ * How tall a torrent row is drawn. Mirrors Rust `Density`.
+ *
+ * `compact` does not shrink the row's second line, it removes it — at 40px
+ * there is no room, and a squeezed sentence is the first thing to become
+ * unreadable.
+ */
+export type Density = "comfortable" | "compact";
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */
@@ -380,6 +389,13 @@ export interface Settings {
   proxyUrl: string | null;
   /** UI colour scheme. */
   theme: Theme;
+  /**
+   * Row height in the library.
+   *
+   * Frontend-only, like {@link Settings.theme}, and persisted for the same
+   * reason: a preference the user re-sets on every launch is not a preference.
+   */
+  density: Density;
 }
 
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */

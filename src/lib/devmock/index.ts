@@ -266,6 +266,7 @@ const SETTINGS: Settings = {
   uploadLimitBps: 2_097_152,
   proxyUrl: null,
   theme: "system",
+  density: "comfortable",
 };
 
 /**
@@ -502,6 +503,8 @@ export function install(): void {
   // screens that get neglected, so they need to be easy to look at.
   const scenario = new URLSearchParams(window.location.search).get("mock");
   const torrents = scenario === "empty" ? [] : TORRENTS;
+  // Mutable, so a written setting stays written for the life of the page.
+  let live: Settings = { ...SETTINGS };
 
   const callbacks = new Map<number, (data: unknown) => void>();
   const listeners = new Map<string, number>();
@@ -526,8 +529,15 @@ export function install(): void {
         case "get_core_status":
           return CORE;
         case "get_settings":
+          return live;
         case "update_settings":
-          return SETTINGS;
+          // Echoes the written settings back and keeps them, as the real
+          // command does. Returning a fixed object instead made every control
+          // snap back the moment it was touched — a mock that cannot hold a
+          // value cannot exercise a settings screen at all.
+          live = ((args as { settings?: Settings } | undefined)?.settings ??
+            live) as Settings;
+          return live;
         case "preview_torrent":
           return PREVIEW;
         case "discard_preview":
