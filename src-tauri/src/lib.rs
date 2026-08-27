@@ -21,6 +21,7 @@
 pub mod commands;
 pub mod deeplink;
 pub mod engine;
+mod menu;
 pub mod settings;
 pub mod state;
 pub mod telemetry;
@@ -114,6 +115,13 @@ pub fn run() {
                          on macOS and Windows the installed bundle registers the scheme"
                     );
                 }
+            }
+
+            // Like the tray, the menu is not worth failing a launch over —
+            // though unlike the tray its absence is keenly felt on macOS,
+            // where it takes ⌘C and ⌘V with it.
+            if let Err(err) = menu::install(&handle) {
+                log::warn!("could not install the application menu: {err}");
             }
 
             // A tray is a nicety, not a requirement: some Linux desktops have
