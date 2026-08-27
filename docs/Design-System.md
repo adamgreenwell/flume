@@ -21,15 +21,15 @@ Tailwind utilities are named after the tokens, one for one: `bg-bg-1`,
 aliases — two vocabularies is how `--flume-line` and "gray-800" end up meaning
 the same thing to different people.
 
-| Role                                    | Token                             | Used for                                                 |
-| --------------------------------------- | --------------------------------- | -------------------------------------------------------- |
-| Surfaces                                | `bg-0` … `bg-3`                   | ground, cards, inputs, hover                             |
-| Lines                                   | `line`, `line-2`                  | row hairlines, control borders                           |
-| Ink                                     | `fg-0` … `fg-3`, `fg-dis`         | primary through 10px labels, then disabled               |
-| Accent                                  | `acc`, `acc-dim`, `acc-deep`      | the one interactive colour                               |
-| Accent ink and hover                    | `on-acc`, `acc-hi`                | label on an accent fill; hover step                      |
-| Status                                  | `ok`, `ok-deep`, `warn`, `err`    | verdicts only, never a series colour                     |
-| Chart series                            | `chart-down`, `chart-up`          | throughput plots                                         |
+| Role                 | Token                          | Used for                                   |
+| -------------------- | ------------------------------ | ------------------------------------------ |
+| Surfaces             | `bg-0` … `bg-3`                | ground, cards, inputs, hover               |
+| Lines                | `line`, `line-2`               | row hairlines, control borders             |
+| Ink                  | `fg-0` … `fg-3`, `fg-dis`      | primary through 10px labels, then disabled |
+| Accent               | `acc`, `acc-dim`, `acc-deep`   | the one interactive colour                 |
+| Accent ink and hover | `on-acc`, `acc-hi`             | label on an accent fill; hover step        |
+| Status               | `ok`, `ok-deep`, `warn`, `err` | verdicts only, never a series colour       |
+| Chart series         | `chart-down`, `chart-up`       | throughput plots                           |
 
 **Never introduce a colour that is not a token.** If a step is genuinely
 missing, derive it in OKLCH at fixed chroma and hue — the palette was built that
@@ -70,14 +70,14 @@ the wire format uses.
 
 ## Controls
 
-| Token         | Value | Used for                        |
-| ------------- | ----- | ------------------------------- |
-| `h-chip`      | 28px  | chips, icon buttons             |
-| `h-control`   | 30px  | chrome buttons, inputs          |
-| `h-primary`   | 34px  | a sheet's primary action        |
-| `r-sm`        | 4px   | chips, tags, small controls     |
-| `r-md`        | 6px   | buttons, inputs, nav items      |
-| `r-lg`        | 9px   | cards, panels                   |
+| Token       | Value | Used for                    |
+| ----------- | ----- | --------------------------- |
+| `h-chip`    | 28px  | chips, icon buttons         |
+| `h-control` | 30px  | chrome buttons, inputs      |
+| `h-primary` | 34px  | a sheet's primary action    |
+| `r-sm`      | 4px   | chips, tags, small controls |
+| `r-md`      | 6px   | buttons, inputs, nav items  |
+| `r-lg`      | 9px   | cards, panels               |
 
 Do not round these to a framework scale. The spacing was chosen against the type
 ramp, and snapping it to a 4/8 grid visibly degrades the result.
@@ -105,7 +105,7 @@ enforces them.
 
 - **`fg-3` is the floor for text.** `fg-dis` is for disabled controls only and
   must never carry text the user needs to read — the test asserts it stays
-  *below* 4.5:1 so nobody "fixes" it into looking enabled.
+  _below_ 4.5:1 so nobody "fixes" it into looking enabled.
 - **`line-2` clears 3:1**, so control borders and unchecked checkboxes are
   actually visible. Do not lighten it.
 - **Status is never colour alone.** Every state carries a dot, a word, and a
@@ -125,15 +125,15 @@ Recorded rather than silently corrected, because closing them would mean putting
 a colour in the app that is in no palette. Pinned in `tokens.test.ts` so they
 cannot get worse:
 
-| Theme | Pair              | Measured | Stated floor |
-| ----- | ----------------- | -------- | ------------ |
-| dark  | `fg-3` on `bg-2`  | 4.20:1   | 4.5:1        |
-| dark  | `fg-3` on `bg-3`  | 3.73:1   | 4.5:1        |
-| dark  | `line-2` on `bg-2`| 2.82:1   | 3:1          |
-| dark  | `line-2` on `bg-3`| 2.50:1   | 3:1          |
-| light | `line-2` on `bg-3`| 2.88:1   | 3:1          |
-| light | `warn` as text    | 3.60:1   | 4.5:1        |
-| light | `ok` as text      | 4.34:1   | 4.5:1        |
+| Theme | Pair               | Measured | Stated floor |
+| ----- | ------------------ | -------- | ------------ |
+| dark  | `fg-3` on `bg-2`   | 4.20:1   | 4.5:1        |
+| dark  | `fg-3` on `bg-3`   | 3.73:1   | 4.5:1        |
+| dark  | `line-2` on `bg-2` | 2.82:1   | 3:1          |
+| dark  | `line-2` on `bg-3` | 2.50:1   | 3:1          |
+| light | `line-2` on `bg-3` | 2.88:1   | 3:1          |
+| light | `warn` as text     | 3.60:1   | 4.5:1        |
+| light | `ok` as text       | 4.34:1   | 4.5:1        |
 
 All of these hold on the ground (`bg-0`) and on cards (`bg-1`), which is where
 the design actually places small labels and control borders. They fall short
@@ -160,8 +160,8 @@ build on every run costs more than the config churn it would catch.
 `src/components/` holds the shared primitives. Check whether one already exists,
 with its states defined, before building a new one.
 
-| Component     | Notes                                                             |
-| ------------- | ----------------------------------------------------------------- |
+| Component     | Notes                                                              |
+| ------------- | ------------------------------------------------------------------ |
 | `Button`      | primary / secondary / ghost / danger; `control` and `dialog` sizes |
 | `IconButton`  | 28px, always has an accessible name                                |
 | `Icon`        | 16 grid, stroked, constant optical weight                          |
