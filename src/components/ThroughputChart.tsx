@@ -56,6 +56,14 @@ export interface ThroughputChartProps {
   history: readonly ThroughputSample[];
   /** Configured download limit in bytes/sec, or `null` for unlimited. */
   limitBps: number | null;
+  /**
+   * What the trace is of.
+   *
+   * A prop rather than a constant because the same chart draws the whole
+   * session in the dock and a single torrent in the inspector, and a chart
+   * that mislabels which one it is showing is worse than no chart.
+   */
+  label?: string;
 }
 
 /**
@@ -73,7 +81,11 @@ export interface ThroughputChartProps {
  * @param props - See {@link ThroughputChartProps}.
  * @returns The rendered chart.
  */
-export function ThroughputChart({ history, limitBps }: ThroughputChartProps) {
+export function ThroughputChart({
+  history,
+  limitBps,
+  label = "Session throughput",
+}: ThroughputChartProps) {
   const [hover, setHover] = useState<number | null>(null);
 
   const peak = history.reduce((max, s) => Math.max(max, s.downBps, s.upBps), 0);
@@ -101,7 +113,7 @@ export function ThroughputChart({ history, limitBps }: ThroughputChartProps) {
     <div className="relative flex shrink-0 flex-col gap-1.5 px-5 pt-3 pb-2.5">
       <div className="flex items-center gap-4">
         <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
-          Session throughput · last {WINDOW_SIZE} s
+          {label} · last {WINDOW_SIZE} s
         </span>
         <Legend swatch="bg-chart-down" ink="text-chart-down" icon="arrow-down">
           Download

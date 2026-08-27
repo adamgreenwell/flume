@@ -220,6 +220,43 @@ per-peer counters are cumulative totals with no rate among them, so the column
 shows the total each peer has supplied — arguably the better answer to "who is
 contributing", since it does not swing with the tick.
 
+### The inspector
+
+Header `68px`, a stat strip `88px`, tabs `42px`, then `1fr` content beside a
+`352px` rail. Four tabs: Overview, Files, Peers, Trackers. The overview holds a
+per-torrent throughput trace, the piece map, the note, and the torrent's
+identity.
+
+The torrent is re-read from telemetry on every tick while the inspector is
+open, so its numbers move rather than freezing at whatever the row held when it
+was clicked.
+
+#### What is deliberately absent
+
+The design's centrepiece is a panel that ranks every candidate constraint on a
+download and marks exactly one as binding. **It is not built, and not stubbed.**
+Ranking constraints needs piece availability — the union of the connected peers'
+bitfields — which librqbit 9.0.0 does not expose. The design says plainly that a
+wrong answer there is worse than no panel, and a panel that guessed would be
+exactly that.
+
+Four smaller surfaces lean on the same missing number and are out for the same
+reason, rather than being filled with an approximation that looks like the real
+thing:
+
+| Absent                                                | Needs                       |
+| ----------------------------------------------------- | --------------------------- |
+| Availability column ("4.2×, rarest piece on 4 peers") | peer bitfields              |
+| Availability histogram under the piece map            | per-region peer bitfields   |
+| Seeds/leechers split in the peers column              | peer bitfields              |
+| Trackers tab's plain-English verdict                  | per-tracker announce status |
+
+All five are real features waiting on real data. See
+[issue #79](https://github.com/adamgreenwell/flume/issues/79), which records
+that the data already exists in librqbit's memory (`LivePeerState.bitfield`) and
+is simply not serialized, and that the crate has no reachable extension point
+that would let an embedder observe it.
+
 ### Settings
 
 **The whole screen is generated from `SETTING_DEFS`** in

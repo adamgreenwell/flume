@@ -184,6 +184,10 @@ export default function Home() {
     visible.find((t) => t.infoHash === selectedHash)?.id ?? null;
   const expanded = useTorrentDetail(expandedId);
 
+  // The inspector polls independently of the expanded row: they can be open at
+  // once, on different torrents.
+  const inspected = useTorrentDetail(detailOf?.id ?? null);
+
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
   }, []);
@@ -436,7 +440,18 @@ export default function Home() {
       ) : null}
 
       {detailOf ? (
-        <TorrentDetail torrent={detailOf} onClose={() => setDetailOf(null)} />
+        <TorrentDetail
+          torrent={
+            // Re-read from telemetry each tick so the inspector's numbers move
+            // while it is open, rather than freezing at whatever the row held
+            // when it was clicked.
+            torrents.find((t) => t.infoHash === detailOf.infoHash) ?? detailOf
+          }
+          detail={inspected.detail}
+          tick={status?.uptimeSeconds ?? null}
+          limitBps={downloadLimitBps}
+          onClose={() => setDetailOf(null)}
+        />
       ) : null}
 
       {isConfiguring ? (

@@ -63,9 +63,23 @@ This blocks three things the design specifies:
 - The inspector's `availability` figure.
 - The bottleneck panel's ranking, which needs it to be honest.
 
-Tracked in issue #79. Until it is resolved, do not derive a swarm verdict from
-peer counts and present it as an availability judgement — a confident wrong
-answer here is worse than none, which the design says explicitly.
+librqbit has **no reachable extension point** for this. Four `pub trait`s look
+like plugin seams; only `StorageFactory` is reachable (via
+`SessionOptions.default_storage_factory`) and it sees our disk, not peer
+messages. `PeerConnectionHandler` — whose `on_received_message` sees `Bitfield`
+and `Have` — is `pub` inside a private module. `SessionOptions` has no callback
+field.
+
+The data does exist: `LivePeerState.bitfield` is maintained per peer for piece
+picking and simply is not serialized into `PeerStats`. So the upstream ask is
+small — add `have_pieces: u32` — and a local patch would be similarly small.
+Upstream `TODO.md` has no item for it, so it will not arrive on its own.
+
+Tracked in issue #79, with the full analysis. Until it is resolved, do not
+derive a swarm verdict from peer counts and present it as an availability
+judgement — a confident wrong answer here is worse than none, which the design
+says explicitly. The affected surfaces are listed in `docs/Design-System.md`
+under "What is deliberately absent"; they are omitted, not stubbed.
 
 ## Design tokens
 
