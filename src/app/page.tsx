@@ -2,6 +2,7 @@
 
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -15,6 +16,7 @@ import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
 import { ContextMenu, type ContextMenuItem } from "@/components/ContextMenu";
 import { Dock } from "@/components/Dock";
 import { EmptyState } from "@/components/EmptyState";
+import { ExpandedRow } from "@/components/ExpandedRow";
 import { LibraryToolbar, type SortId } from "@/components/LibraryToolbar";
 import { Rail } from "@/components/Rail";
 import { SettingsDialog } from "@/components/SettingsDialog";
@@ -23,6 +25,7 @@ import { TorrentDetail } from "@/components/TorrentDetail";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { useThroughputHistory } from "@/hooks/useThroughputHistory";
+import { useTorrentDetail } from "@/hooks/useTorrentDetail";
 import {
   useKeyboardShortcuts,
   type Shortcut,
@@ -160,6 +163,12 @@ export default function Home() {
       }
     });
   }, [torrents, view, query, sort]);
+
+  // Only the open row is polled, and only while it is open. `null` stops the
+  // polling entirely rather than fetching detail nobody is looking at.
+  const expandedId =
+    visible.find((t) => t.infoHash === selectedHash)?.id ?? null;
+  const expanded = useTorrentDetail(expandedId);
 
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
@@ -305,18 +314,29 @@ export default function Home() {
             className="flex grow flex-col overflow-y-auto"
           >
             {visible.map((t) => (
-              <TorrentRow
-                key={t.infoHash}
-                torrent={t}
-                selected={t.infoHash === selectedHash}
-                onSelect={(x) =>
-                  setSelectedHash((current) =>
-                    current === x.infoHash ? null : x.infoHash,
-                  )
-                }
-                onOpen={setDetailOf}
-                onContextMenu={(x, at) => setMenu({ torrent: x, at })}
-              />
+              <Fragment key={t.infoHash}>
+                <TorrentRow
+                  torrent={t}
+                  selected={t.infoHash === selectedHash}
+                  onSelect={(x) =>
+                    setSelectedHash((current) =>
+                      current === x.infoHash ? null : x.infoHash,
+                    )
+                  }
+                  onOpen={setDetailOf}
+                  onContextMenu={(x, at) => setMenu({ torrent: x, at })}
+                />
+                {t.infoHash === selectedHash ? (
+                  <ExpandedRow
+                    torrent={t}
+                    detail={expanded.detail}
+                    error={expanded.error}
+                    onToggle={(x) => void toggle(x)}
+                    onReveal={(x) => void reveal(x)}
+                    onOpen={setDetailOf}
+                  />
+                ) : null}
+              </Fragment>
             ))}
           </div>
         )}

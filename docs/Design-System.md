@@ -186,6 +186,40 @@ and `138px` at the **right** on Windows and Linux. That inset is the only thing
 in the entire app that differs between platforms; everything inside the window
 is identical on all three.
 
+### The expanded row
+
+Clicking a row opens a panel beneath it, indented past the status column so it
+reads as belonging to that row rather than floating between two. It holds five
+stats, three actions, the piece strip, the top contributors, and the note.
+
+**The note is the point.** Every other thing in a row is a number; the note says
+what the numbers mean and what to do about them. It is derived in Rust
+(`src-tauri/src/engine/note.rs`) because the engine is the only thing that knows
+why a torrent is in the state it is in — a frontend rebuilding that reasoning
+from summary fields would drift from it. Severity is `ok` / `warn` / `err` /
+`neutral`, and `neutral` is a claim rather than an absence: a paused torrent
+needs to say that nothing is wrong, loudly enough that the user does not think
+something broke.
+
+Detail is **polled** while a row is open, not pushed. It is per-torrent and
+several times the size of a summary; broadcasting it for every torrent every
+second so one expanded row can read it would be the wrong trade. At most one
+row is open, so this is one extra call per second in total, and none at all
+when the list is collapsed.
+
+**The piece strip** answers "which parts do I have", which overall progress
+cannot: 60% with a solid head and an empty tail is a torrent downloading in
+order, and 60% scattered evenly is one pulling rarest-first — they behave
+differently when the swarm thins. The engine downsamples to up to 1600 buckets
+for the inspector's full-width map; the row's 96-cell strip averages those down
+rather than asking for a second resolution.
+
+**Top contributors** are ranked by bytes that passed verification, not by
+connection order. The design shows an instantaneous per-peer rate; librqbit's
+per-peer counters are cumulative totals with no rate among them, so the column
+shows the total each peer has supplied — arguably the better answer to "who is
+contributing", since it does not swing with the tick.
+
 ### The dock chart
 
 Sixty samples at 1 Hz, two series on **one shared scale** — a chart that gave
