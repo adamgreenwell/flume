@@ -1,54 +1,83 @@
 "use client";
 
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getSettings, updateSettings } from "@/lib/ipc/client";
-import { fromKbInput, toKbInput } from "@/lib/rate";
-import { applyTheme } from "@/lib/theme";
-import { isCommandError, type Settings, type Theme } from "@/lib/ipc/types";
+import { isCommandError, type Settings } from "@/lib/ipc/types";
+import {
+  SECTIONS,
+  SETTING_DEFS,
+  searchSettings,
+  type AnySettingDef,
+  type SectionId,
+} from "@/lib/settings/defs";
+import { applyDensity, applyTheme } from "@/lib/theme";
 
-import { Button } from "./Button";
+import { Chip } from "./Chip";
+import { Icon } from "./Icon";
+import { SettingControl } from "./SettingControl";
 import { Skeleton } from "./Skeleton";
+
+/** One applied change, kept so it can be undone individually. */
+interface Change {
+  /** Which setting changed. */
+  id: keyof Settings;
+  /** Its label, for the footer. */
+  label: string;
+  /** What it was before. */
+  from: unknown;
+  /** What it is now. */
+  to: unknown;
+}
+
+/** Renders a value the way the footer's change list shows it. */
+function describeValue(value: unknown): string {
+  if (value === null || value === "") return "not set";
+  if (typeof value === "boolean") return value ? "on" : "off";
+  return String(value);
+}
 
 /** Props for {@link SettingsDialog}. */
 export interface SettingsDialogProps {
-  /** Called when the dialog should close. */
+  /** Called when the screen should close. */
   onClose: () => void;
 }
 
 /**
- * Settings editor.
+ * Settings, generated entirely from `SETTING_DEFS`.
  *
- * Changes are applied on save, not per-field: several settings restart the
- * torrent session, and doing that on every keystroke would be hostile.
+ * There is no OK, Cancel or Apply. Changes take effect as they are made and
+ * stack in the footer, each individually undoable — a settings screen with an
+ * Apply button asks the user to predict what a setting will do; one that
+ * applies immediately lets them see it and change their mind.
+ *
+ * Search covers labels, config keys, section names, synonyms and the
+ * consequence sentences as they currently read, so someone who remembers only
+ * the wording they saw can still find the setting that said it.
  *
  * @param props - See {@link SettingsDialogProps}.
- * @returns The rendered dialog.
+ * @returns The rendered screen.
  */
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
-  const [draft, setDraft] = useState<Settings | null>(null);
-  const [original, setOriginal] = useState<Settings | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [section, setSection] = useState<SectionId>("speed");
+  const [query, setQuery] = useState("");
+  const [changes, setChanges] = useState<Change[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    let active = true;
     void getSettings()
-      .then((loaded) => {
-        if (!active) return;
-        setDraft(loaded);
-        setOriginal(loaded);
-      })
-      .catch((caught: unknown) => {
-        if (!active) return;
+      .then(setSettings)
+      .catch((caught: unknown) =>
         setError(
-          isCommandError(caught) ? caught.message : "Could not load settings.",
-        );
-      });
-    return () => {
-      active = false;
-    };
+          isCommandError(caught)
+            ? caught.message
+            : "Could not read your settings.",
+        ),
+      );
   }, []);
 
   useEffect(() => {
@@ -56,42 +85,88 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
+    dialogRef.current?.focus();
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const patch = (changes: Partial<Settings>) => {
-    setDraft((current) => (current ? { ...current, ...changes } : current));
-  };
+  /**
+   * Writes one field and records it as an undoable change.
+   *
+   * The optimistic update is deliberate: a control that waits for a round trip
+   * before moving feels broken, and every one of these is cheap to put back.
+   */
+  const change = useCallback(
+    async (def: AnySettingDef, next: unknown, record = true) => {
+      if (!settings) return;
 
-  const chooseFolder = async () => {
-    const picked = await open({ directory: true, multiple: false });
-    if (typeof picked === "string") patch({ downloadDir: picked });
-  };
+      const previous = settings[def.id];
+      if (previous === next) return;
 
-  const save = async () => {
-    if (!draft) return;
-    setIsSaving(true);
-    setError(null);
-    try {
-      const saved = await updateSettings(draft);
-      applyTheme(saved.theme);
-      onClose();
-    } catch (caught: unknown) {
-      setError(
-        isCommandError(caught) ? caught.message : "Could not save settings.",
-      );
-      setIsSaving(false);
+      const updated = { ...settings, [def.id]: next } as Settings;
+      setSettings(updated);
+      setError(null);
+
+      // Theme and density are frontend-only, so they take effect here rather
+      // than waiting for the engine to acknowledge a write it does not act on.
+      if (def.id === "theme") applyTheme(updated.theme);
+      if (def.id === "density") applyDensity(updated.density);
+
+      if (record) {
+        setChanges((current) => [
+          ...current,
+          { id: def.id, label: def.label, from: previous, to: next },
+        ]);
+      }
+
+      try {
+        setSettings(await updateSettings(updated));
+      } catch (caught: unknown) {
+        // Put the control back where it was: leaving it showing a value the
+        // engine rejected is the one outcome worse than the failure itself.
+        setSettings(settings);
+        if (def.id === "theme") applyTheme(settings.theme);
+        if (def.id === "density") applyDensity(settings.density);
+        setChanges((current) => current.slice(0, -1));
+        setError(
+          isCommandError(caught)
+            ? caught.message
+            : "Could not save that change.",
+        );
+      }
+    },
+    [settings],
+  );
+
+  const undo = useCallback(
+    (index: number) => {
+      const target = changes[index];
+      const def = SETTING_DEFS.find((d) => d.id === target.id);
+      if (!def) return;
+
+      setChanges((current) => current.filter((_, i) => i !== index));
+      void change(def, target.from, false);
+    },
+    [changes, change],
+  );
+
+  const revertAll = useCallback(() => {
+    // Newest first, so a field changed twice ends on its original value
+    // rather than on whatever the earliest entry happened to record.
+    for (const entry of [...changes].reverse()) {
+      const def = SETTING_DEFS.find((d) => d.id === entry.id);
+      if (def) void change(def, entry.from, false);
     }
-  };
+    setChanges([]);
+  }, [changes, change]);
 
-  const willRestart =
-    draft !== null &&
-    original !== null &&
-    (draft.downloadDir !== original.downloadDir ||
-      draft.listenPort !== original.listenPort ||
-      draft.enableDht !== original.enableDht ||
-      draft.enableUpnp !== original.enableUpnp ||
-      draft.proxyUrl !== original.proxyUrl);
+  const searching = query.trim() !== "";
+  const shown = useMemo(() => {
+    if (!settings) return [];
+    const matched = searchSettings(query, settings);
+    return searching ? matched : matched.filter((d) => d.section === section);
+  }, [settings, query, searching, section]);
+
+  const active = SECTIONS.find((s) => s.id === section);
 
   return (
     <div
@@ -101,258 +176,207 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="border-line bg-bg-1 flex max-h-[85vh] w-full max-w-lg flex-col gap-5 overflow-y-auto rounded-xl border p-5 shadow-2xl"
+        tabIndex={-1}
+        className="border-line bg-bg-0 flex h-[820px] max-h-[90vh] w-full max-w-[1200px] flex-col overflow-hidden rounded-lg border shadow-2xl outline-none"
       >
-        <h2 className="text-fg-0 text-lg font-semibold">Settings</h2>
+        <div className="border-line bg-bg-1 flex shrink-0 items-center gap-3.5 border-b px-6 py-3.5">
+          <h2 className="text-[17px] font-semibold tracking-[-0.02em]">
+            Settings
+          </h2>
+          <div className="relative ml-auto flex items-center">
+            <span className="text-fg-3 pointer-events-none absolute left-[9px]">
+              <Icon name="search" size={14} />
+            </span>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search settings"
+              aria-label="Search settings"
+              className="border-line bg-bg-2 text-fg-0 placeholder:text-fg-3 focus:border-acc-dim h-[var(--flume-h-control)] w-[260px] rounded-md border pr-3 pl-[30px] text-[12.5px] outline-none"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close settings"
+            className="text-fg-2 hover:text-fg-0"
+          >
+            <Icon name="plus" size={16} className="rotate-45" />
+          </button>
+        </div>
 
-        {draft === null ? (
-          <Skeleton rows={4} label="Loading settings" />
-        ) : (
-          <>
-            <section className="flex flex-col gap-2">
-              <label
-                htmlFor="download-dir"
-                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
-              >
-                Download folder
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="download-dir"
-                  value={draft.downloadDir}
-                  onChange={(e) => patch({ downloadDir: e.target.value })}
-                  spellCheck={false}
-                  className="border-line bg-bg-0 text-fg-0 selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-xs"
-                />
-                <Button onClick={() => void chooseFolder()}>Browse…</Button>
-              </div>
-              <p className="text-fg-3 text-xs">
-                Applies to new torrents. Existing ones keep their location.
-              </p>
-            </section>
-
-            <section className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-2">
-                <label
-                  htmlFor="down-limit"
-                  className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
+        <div className="flex min-h-0 grow">
+          <nav
+            className="border-line bg-bg-1 flex w-[222px] shrink-0 flex-col gap-0.5 border-r px-2.5 py-3"
+            aria-label="Settings sections"
+          >
+            {SECTIONS.map((s) => {
+              const on = !searching && s.id === section;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-current={on ? "page" : undefined}
+                  onClick={() => {
+                    setQuery("");
+                    setSection(s.id);
+                  }}
+                  className={`flex h-[34px] items-center gap-2.5 rounded-md px-2.5 text-left text-[12.5px] transition-colors ${
+                    on
+                      ? "bg-bg-3 text-fg-0 font-medium"
+                      : "text-fg-1 hover:bg-bg-2 hover:text-fg-0"
+                  }`}
                 >
-                  Download limit
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="down-limit"
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    placeholder="Unlimited"
-                    value={toKbInput(draft.downloadLimitBps)}
-                    onChange={(e) =>
-                      patch({ downloadLimitBps: fromKbInput(e.target.value) })
-                    }
-                    className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 w-full rounded-md border px-3 py-2 font-mono text-sm"
-                  />
-                  <span className="text-fg-2 shrink-0 text-xs">KB/s</span>
+                  <Icon name={s.icon} size={16} />
+                  {s.name}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="min-w-0 grow overflow-y-auto px-6 pt-1.5 pb-6">
+            {settings === null && error === null ? (
+              <div className="pt-6">
+                <Skeleton label="Loading settings" rows={4} />
+              </div>
+            ) : null}
+
+            {settings !== null && !searching && active ? (
+              <div className="pt-5 pb-1.5">
+                <div className="text-[15px] font-semibold tracking-[-0.015em]">
+                  {active.name}
+                </div>
+                <div className="text-fg-2 mt-0.5 text-xs">
+                  {active.description}
                 </div>
               </div>
+            ) : null}
 
-              <div className="flex flex-col gap-2">
-                <label
-                  htmlFor="up-limit"
-                  className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
-                >
-                  Upload limit
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="up-limit"
-                    type="number"
-                    min={1}
-                    inputMode="numeric"
-                    placeholder="Unlimited"
-                    value={toKbInput(draft.uploadLimitBps)}
-                    onChange={(e) =>
-                      patch({ uploadLimitBps: fromKbInput(e.target.value) })
-                    }
-                    className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 w-full rounded-md border px-3 py-2 font-mono text-sm"
-                  />
-                  <span className="text-fg-2 shrink-0 text-xs">KB/s</span>
-                </div>
+            {settings !== null && searching ? (
+              <div className="text-fg-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.09em] uppercase">
+                {shown.length} {shown.length === 1 ? "result" : "results"}
               </div>
-            </section>
+            ) : null}
 
-            <section className="flex flex-col gap-2">
-              <label
-                htmlFor="listen-port"
-                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
-              >
-                Listen port
-              </label>
-              <input
-                id="listen-port"
-                type="number"
-                min={1}
-                max={65535}
-                inputMode="numeric"
-                value={draft.listenPort}
-                onChange={(e) =>
-                  patch({ listenPort: Number(e.target.value) || 0 })
-                }
-                className="border-line bg-bg-0 text-fg-0 w-40 rounded-md border px-3 py-2 font-mono text-sm"
-              />
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <Toggle
-                label="Enable DHT"
-                hint="Required for magnet links to find peers."
-                checked={draft.enableDht}
-                onChange={(enableDht) => patch({ enableDht })}
-              />
-              <Toggle
-                label="UPnP port forwarding"
-                hint="Asks your router to open the listen port automatically."
-                checked={draft.enableUpnp}
-                onChange={(enableUpnp) => patch({ enableUpnp })}
-              />
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <label
-                htmlFor="proxy-url"
-                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
-              >
-                SOCKS5 proxy
-              </label>
-              <input
-                id="proxy-url"
-                value={draft.proxyUrl ?? ""}
-                onChange={(e) =>
-                  patch({ proxyUrl: e.target.value.trim() || null })
-                }
-                placeholder="Direct connection"
-                spellCheck={false}
-                className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 selectable w-full rounded-md border px-3 py-2 font-mono text-xs"
-              />
-              <p className="text-fg-3 text-xs">
-                Routes outgoing peer connections through a SOCKS5 proxy, for
-                example <code>socks5://127.0.0.1:1080</code>.
-              </p>
-              {draft.proxyUrl ? (
-                <p
-                  className="border-warn/30 bg-warn/10 text-warn rounded-md border px-3 py-2 text-xs"
-                  role="note"
-                >
-                  This covers <strong>outgoing peer connections only</strong>.
-                  Incoming connections still arrive directly on your listen
-                  port, and the DHT uses UDP, which a SOCKS5 proxy does not
-                  carry. It is not a substitute for a VPN.
-                </p>
-              ) : null}
-            </section>
-
-            <section className="flex flex-col gap-2">
-              <span className="text-fg-3 text-[11px] font-medium tracking-wider uppercase">
-                Theme
-              </span>
-              <div
-                className="border-line flex gap-1 rounded-md border p-1"
-                role="radiogroup"
-                aria-label="Theme"
-              >
-                {(["system", "light", "dark"] as Theme[]).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={draft.theme === option}
-                    onClick={() => {
-                      patch({ theme: option });
-                      // Preview immediately; persisted on save.
-                      applyTheme(option);
-                    }}
-                    className={`flex-1 rounded px-3 py-1.5 text-sm capitalize transition-colors ${
-                      draft.theme === option
-                        ? "bg-acc text-bg-0 font-medium"
-                        : "text-fg-2 hover:text-fg-0"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            {willRestart ? (
-              <p
-                className="border-warn/30 bg-warn/10 text-warn rounded-md border px-3 py-2 text-xs"
-                role="status"
-              >
-                Saving will restart the torrent session. Transfers pause for a
-                moment and resume automatically.
+            {settings !== null && searching && shown.length === 0 ? (
+              <p className="text-fg-2 py-6 text-[12.5px]">
+                Nothing matches “{query.trim()}”. Search covers the setting
+                names, their config keys, and the sentence under each one.
               </p>
             ) : null}
-          </>
-        )}
 
-        {error ? (
-          <p
-            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
-            role="alert"
-          >
-            {error}
-          </p>
-        ) : null}
+            {settings !== null
+              ? shown.map((def) => {
+                  const sectionOf = SECTIONS.find((s) => s.id === def.section);
+                  const value = settings[def.id];
+                  const consequence = (
+                    def.consequence as (v: unknown) => string
+                  )(value);
 
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              // Revert a previewed theme the user did not save.
-              if (original) applyTheme(original.theme);
-              onClose();
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void save()}
-            disabled={draft === null || isSaving}
-          >
-            {isSaving ? "Saving…" : "Save"}
-          </Button>
+                  return (
+                    <div
+                      key={def.id}
+                      className="border-line flex items-start gap-6 border-b py-4"
+                    >
+                      <div className="min-w-0 grow">
+                        {searching && sectionOf ? (
+                          <div className="text-acc mb-[3px] text-[10.5px]">
+                            {sectionOf.name}
+                          </div>
+                        ) : null}
+                        <div className="flex items-center gap-2.5">
+                          <b className="text-[13.5px] font-semibold tracking-[-0.008em]">
+                            {def.label}
+                          </b>
+                          <span className="flume-num border-line bg-bg-2 text-fg-3 rounded-[3px] border px-[5px] py-px text-[10px] whitespace-nowrap">
+                            {def.key}
+                          </span>
+                          {def.restartsSession ? (
+                            <span className="text-warn bg-warn/15 rounded-[3px] px-[5px] py-px text-[10px] font-medium">
+                              restarts the engine
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="text-fg-1 mt-1 max-w-[620px] text-xs leading-[1.5]">
+                          {consequence}
+                        </p>
+                      </div>
+
+                      <div className="shrink-0 pt-0.5">
+                        <SettingControl
+                          control={def.control}
+                          value={value}
+                          label={def.label}
+                          onChange={(next) => void change(def, next)}
+                          onBrowse={async () => {
+                            const picked = await open({
+                              directory: true,
+                              multiple: false,
+                            });
+                            if (typeof picked === "string") {
+                              void change(def, picked);
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              : null}
+          </div>
+        </div>
+
+        <div className="border-line bg-bg-1 flex h-[62px] shrink-0 items-center gap-3.5 border-t px-6">
+          <span className={`shrink-0 ${error ? "text-err" : "text-ok"}`}>
+            <Icon name={error ? "alert-circle" : "check-circle"} size={16} />
+          </span>
+          <span className="shrink-0 text-[12.5px]">
+            {error ? (
+              <span className="text-err" role="alert">
+                {error}
+              </span>
+            ) : (
+              <span className="text-fg-1">
+                {changes.length === 0
+                  ? "Changes apply as you make them."
+                  : `${changes.length} ${changes.length === 1 ? "change" : "changes"} applied.`}
+              </span>
+            )}
+          </span>
+
+          <div className="flex min-w-0 flex-wrap gap-1.5 overflow-hidden">
+            {changes.slice(-3).map((entry, index) => (
+              <button
+                key={`${entry.id}-${index}`}
+                type="button"
+                onClick={() =>
+                  undo(changes.length - Math.min(3, changes.length) + index)
+                }
+                title={`Undo: ${entry.label}`}
+                className="border-line text-fg-2 hover:border-line-2 hover:text-fg-0 flex items-center gap-1.5 rounded-sm border px-2 py-1 text-[11px]"
+              >
+                {entry.label}
+                <s className="text-fg-3">{describeValue(entry.from)}</s>
+                <span className="text-fg-0">{describeValue(entry.to)}</span>
+              </button>
+            ))}
+          </div>
+
+          <span className="grow" />
+
+          {changes.length > 0 ? (
+            <>
+              <Chip onClick={() => undo(changes.length - 1)}>Undo last</Chip>
+              <Chip onClick={revertAll}>Revert all</Chip>
+            </>
+          ) : null}
         </div>
       </div>
     </div>
-  );
-}
-
-/** Props for {@link Toggle}. */
-interface ToggleProps {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (next: boolean) => void;
-}
-
-/** A labelled checkbox row with explanatory text. */
-function Toggle({ label, hint, checked, onChange }: ToggleProps) {
-  return (
-    <label className="border-line hover:border-fg-2/50 flex cursor-pointer items-start gap-3 rounded-md border p-3">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="accent-acc mt-0.5 h-4 w-4 shrink-0"
-      />
-      <span className="text-sm">
-        <span className="text-fg-0 block">{label}</span>
-        <span className="text-fg-3 mt-0.5 block text-xs">{hint}</span>
-      </span>
-    </label>
   );
 }

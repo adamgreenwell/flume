@@ -220,6 +220,42 @@ per-peer counters are cumulative totals with no rate among them, so the column
 shows the total each peer has supplied — arguably the better answer to "who is
 contributing", since it does not swing with the tick.
 
+### Settings
+
+**The whole screen is generated from `SETTING_DEFS`** in
+`src/lib/settings/defs.ts`. Hand-written rows kill search within a month: the
+field has to cover every label, key and description, and a screen assembled by
+hand grows rows the search does not know about. One table makes that impossible
+by construction, and a test asserts every field of `Settings` has a definition.
+
+**Every setting carries a consequence** — a sentence computed from the _current_
+value, not static help text. That is the feature:
+
+| Value                        | What the row says                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `speed.download` = 5 MB/s    | "Held to 5.0 MB/s — a 4.70 GB ISO would take about 15 min 40 s."              |
+| `speed.download` = unlimited | "No cap. Downloads take whatever the connection will give them…"              |
+| `net.dht` = off              | "Magnet links will not work at all — they have no file list without the DHT." |
+
+A setting without one does not ship, and a test checks that a consequence
+actually changes with its value rather than being static text in disguise.
+
+**Search** covers labels, config keys, section names, hand-written synonyms, and
+the consequence sentences _as they currently read_. Someone who remembers only
+"magnet links will not work" can find the setting that said it. Results keep
+table order rather than reordering by relevance — a list that reshuffles as you
+type is a list you cannot aim at — and each carries a section crumb so a match
+found by search still says where it lives.
+
+**No OK, Cancel or Apply.** Changes take effect as they are made and stack in
+the footer, each individually undoable. A settings screen with an Apply button
+asks the user to predict what a setting will do; one that applies immediately
+lets them see it and change their mind. A write the engine rejects puts the
+control back — leaving it showing a value that was not saved is the one outcome
+worse than the failure.
+
+Settings that rebuild the librqbit session are marked as such on the row.
+
 ### The add sheet
 
 Adding a torrent is a review you read, not a modal you dismiss. That only works
