@@ -172,6 +172,32 @@ export interface TorrentPreview {
   files: TorrentFile[];
   /** Whether this torrent is already in the session. */
   alreadyAdded: boolean;
+  /** Where these files would be written if added now. */
+  savePath: string;
+  /**
+   * Free space on that volume right now, or `null` if it cannot be read.
+   *
+   * `null` rather than zero — the sheet renders it as "unknown", and zero free
+   * bytes is a specific and alarming claim to make by accident.
+   */
+  freeBytes: number | null;
+  /**
+   * Peers that answered while the metadata was being fetched.
+   *
+   * Not a tracker scrape: there is no seeds/leechers split here, only the
+   * peers librqbit actually heard from. A real measurement rather than an
+   * estimate, which is why it is worth showing.
+   */
+  seenPeers: number;
+  /**
+   * Per file, whether a file of that name and length is already there.
+   *
+   * Parallel to {@link TorrentPreview.files}. Length is checked, not content —
+   * hashing 46 GB to answer a question asked before the download starts would
+   * take longer than the download, and every piece is verified on arrival
+   * anyway.
+   */
+  alreadyOnDisk: boolean[];
 }
 
 /**

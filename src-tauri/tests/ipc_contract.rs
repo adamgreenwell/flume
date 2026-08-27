@@ -206,10 +206,24 @@ fn torrent_preview_matches_the_typescript_mirror() {
             length: 100,
         }],
         already_added: false,
+        save_path: "/tmp/downloads".into(),
+        free_bytes: Some(1_420_000_000_000),
+        seen_peers: 6,
+        already_on_disk: vec![false],
     };
     assert_keys(
         &preview,
-        &["infoHash", "name", "totalBytes", "files", "alreadyAdded"],
+        &[
+            "infoHash",
+            "name",
+            "totalBytes",
+            "files",
+            "alreadyAdded",
+            "savePath",
+            "freeBytes",
+            "seenPeers",
+            "alreadyOnDisk",
+        ],
         "TorrentPreview",
     );
     assert_keys(

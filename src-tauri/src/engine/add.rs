@@ -63,4 +63,23 @@ pub struct TorrentPreview {
     ///
     /// The UI shows "already added" rather than silently doing nothing.
     pub already_added: bool,
+    /// Where these files would be written if added now.
+    pub save_path: String,
+    /// Free space on that volume right now, or `None` if it cannot be read.
+    ///
+    /// `None` rather than zero: the UI renders it as "unknown", and zero free
+    /// bytes is a specific and alarming claim to make by accident.
+    pub free_bytes: Option<u64>,
+    /// Peers that answered while the metadata was being fetched.
+    ///
+    /// Not a tracker scrape — there is no seeds/leechers split here, only the
+    /// peers librqbit actually heard from. It is a real measurement rather
+    /// than an estimate, which is why it is worth showing.
+    pub seen_peers: usize,
+    /// Per file, whether a file of that name and length is already there.
+    ///
+    /// Parallel to [`Self::files`]. The add sheet deselects these by default
+    /// and says why, so a re-add does not silently fetch what you already
+    /// have.
+    pub already_on_disk: Vec<bool>,
 }
