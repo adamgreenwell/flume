@@ -47,11 +47,20 @@ export function TitleBar({ controls, downloadBps, uploadBps }: TitleBarProps) {
       }}
       data-tauri-drag-region
     >
-      <span className="text-fg-2 text-xs font-medium tracking-[0.01em]">
+      {/*
+        Every child is click-through so the drag region actually receives the
+        press. Tauri starts a window drag only when the clicked element itself
+        carries `data-tauri-drag-region`; with the attribute on the container
+        alone, pressing on the wordmark or the rates hit a child and the window
+        would not move. Nothing in this bar is interactive, so making the lot
+        transparent to the pointer is simpler than repeating the attribute and
+        cannot drift as content is added.
+      */}
+      <span className="text-fg-2 pointer-events-none text-xs font-medium tracking-[0.01em]">
         Flume
       </span>
-      <span className="grow" />
-      <span className="text-fg-1 flex items-center gap-1.5 text-[11.5px]">
+      <span className="pointer-events-none grow" />
+      <span className="text-fg-1 pointer-events-none flex items-center gap-1.5 text-[11.5px]">
         {/*
           Both directions are labelled for assistive tech and told apart by
           glyph, not only by colour. The two series converge under tritanopia,

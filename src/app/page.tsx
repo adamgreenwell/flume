@@ -31,6 +31,7 @@ import {
   type Shortcut,
 } from "@/hooks/useKeyboardShortcuts";
 import { useMagnetLinks } from "@/hooks/useMagnetLinks";
+import { useMenuEvents } from "@/hooks/useMenuEvents";
 import { useTorrentFileDrop } from "@/hooks/useTorrentFileDrop";
 import {
   detectWindowControls,
@@ -120,6 +121,15 @@ export default function Home() {
       setIncomingMagnet(uri);
       setDroppedPath(undefined);
       setIsAdding(true);
+    }, []),
+  );
+
+  // The native menu's Settings… and Add Torrent… items. They open the same
+  // surfaces as the in-app controls rather than a second path to them.
+  useMenuEvents(
+    useCallback((action) => {
+      if (action === "open_settings") setIsConfiguring(true);
+      else setIsAdding(true);
     }, []),
   );
 
