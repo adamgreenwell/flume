@@ -267,6 +267,7 @@ pub fn describe(summary: &TorrentSummary, swarm: &SwarmStats) -> Note {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
 

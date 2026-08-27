@@ -220,6 +220,44 @@ per-peer counters are cumulative totals with no rate among them, so the column
 shows the total each peer has supplied — arguably the better answer to "who is
 contributing", since it does not swing with the tick.
 
+### The add sheet
+
+Adding a torrent is a review you read, not a modal you dismiss. That only works
+if the review has something to say, so the sheet answers the questions worth
+asking before tens of gigabytes start arriving.
+
+**Four pre-flight tiles.** Three recalculate as files are toggled — bytes
+selected, the volume afterwards, and the estimated finish. The fourth reports
+how many peers answered while the file list was fetched, and does not change;
+re-measuring it on every checkbox click would be both wrong and pointless.
+
+Every tile states its basis in the line underneath. A number whose derivation
+is invisible is a number the user has to take on trust, which is the thing a
+review sheet exists to avoid.
+
+**Already on disk.** Files present at the right name and length are detected,
+tagged, and deselected by default, with the footer saying why. Re-select one
+and the footer switches to naming the bytes it would fetch again. Length is
+checked, not content — hashing 46 GB to answer a question asked before the
+download starts would take longer than the download, and every piece is
+verified on arrival anyway.
+
+**Tri-state folders.** `partial` is what makes folder checkboxes usable:
+without a third mark, a folder with one file deselected looks identical to one
+with everything deselected. It is exposed as `aria-checked="mixed"`, the real
+ARIA value. Clicking a partly-selected folder _completes_ it rather than
+clearing — the other reading throws away the selection the user just built.
+
+Files sort folders-first then numerically, so "part2" precedes "part10".
+Torrents are full of numbered parts, and lexicographic order gets every one of
+them wrong.
+
+Two things the design specifies that Flume reports differently, because
+librqbit does not expose the underlying data: the swarm tile shows peers seen
+rather than a seeds/leechers scrape, and the finish estimate uses this
+session's average rather than a persisted seven-day one. Both say which they
+are using.
+
 ### The dock chart
 
 Sixty samples at 1 Hz, two series on **one shared scale** — a chart that gave

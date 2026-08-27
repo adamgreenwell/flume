@@ -2,8 +2,9 @@
 
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { selectedBytes as sumSelected } from "@/lib/filetree";
 import { formatBytes } from "@/lib/format";
 import { confirmAdd, discardPreview, previewTorrent } from "@/lib/ipc/client";
 import { isCommandError, type TorrentPreview } from "@/lib/ipc/types";
@@ -11,6 +12,8 @@ import { looksLikeMagnet } from "@/lib/magnet";
 
 import { Button } from "./Button";
 import { FileTree } from "./FileTree";
+import { Icon } from "./Icon";
+import { PreflightTiles } from "./PreflightTiles";
 
 /** Props for {@link AddTorrentDialog}. */
 export interface AddTorrentDialogProps {
@@ -20,6 +23,14 @@ export interface AddTorrentDialogProps {
   initialMagnet?: string;
   /** A `.torrent` path to resolve immediately, from a drag-and-drop. */
   droppedPath?: string;
+  /**
+   * Recent download rate to estimate the finish time against, or `null`.
+   *
+   * The design calls for the user's real rolling average. Flume does not
+   * persist one across sessions yet, so this is the current session's — an
+   * honest measurement of a shorter window, which the tile says out loud.
+   */
+  rateBps?: number | null;
 }
 
 /**
@@ -40,6 +51,7 @@ export function AddTorrentDialog({
   onClose,
   initialMagnet = "",
   droppedPath,
+  rateBps = null,
 }: AddTorrentDialogProps) {
   const [magnet, setMagnet] = useState(initialMagnet);
   const [preview, setPreview] = useState<TorrentPreview | null>(null);
@@ -62,10 +74,18 @@ export function AddTorrentDialog({
   const applyPreview = useCallback((resolved: TorrentPreview) => {
     setPreview(resolved);
     pendingHashRef.current = resolved.infoHash;
-    // Everything selected by default: the common case is wanting the whole
-    // torrent, and starting from nothing selected makes the primary action
-    // dead on arrival.
-    setSelected(new Set(resolved.files.map((f) => f.index)));
+    // Everything selected by default except what is already on disk. The
+    // common case is wanting the whole torrent, and starting from nothing
+    // selected makes the primary action dead on arrival — but re-fetching a
+    // file the user already has is the one thing an add sheet exists to
+    // prevent, so those start off and the footer says why.
+    setSelected(
+      new Set(
+        resolved.files
+          .filter((f) => !resolved.alreadyOnDisk[f.index])
+          .map((f) => f.index),
+      ),
+    );
     setError(null);
     setIsResolving(false);
   }, []);
@@ -170,11 +190,119 @@ export function AddTorrentDialog({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const selectedBytes = preview
+  const chosenBytes = preview ? sumSelected(preview.files, selected) : 0;
+
+  // Indices already present at full length, as a set for the tree to test.
+  const onDisk = useMemo(
+    () =>
+      new Set(
+        (preview?.files ?? [])
+          .filter((f) => preview?.alreadyOnDisk[f.index])
+          .map((f) => f.index),
+      ),
+    [preview],
+  );
+
+  // Files the user has chosen anyway, despite already having them. The footer
+  // says so rather than silently re-downloading: this is the exact mistake the
+  // sheet exists to catch.
+  const reFetching = [...onDisk].filter((index) => selected.has(index));
+  const reFetchBytes = preview
     ? preview.files
-        .filter((f) => selected.has(f.index))
+        .filter((f) => reFetching.includes(f.index))
         .reduce((sum, f) => sum + f.length, 0)
     : 0;
+
+  if (preview === null) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add a torrent"
+          tabIndex={-1}
+          className="border-line bg-bg-1 flex w-full max-w-xl flex-col gap-4 rounded-lg border p-5 shadow-2xl outline-none"
+        >
+          <h2 className="text-fg-0 text-[15px] font-semibold tracking-[-0.015em]">
+            Add a torrent
+          </h2>
+
+          <div className="flex flex-col gap-2">
+            <label
+              htmlFor="magnet-input"
+              className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase"
+            >
+              Magnet link
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="magnet-input"
+                value={magnet}
+                onChange={(e) => setMagnet(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && magnet.trim() && !isResolving) {
+                    void resolve({ kind: "magnet", uri: magnet.trim() });
+                  }
+                }}
+                placeholder="magnet:?xt=urn:btih:…"
+                spellCheck={false}
+                autoFocus
+                className="border-line bg-bg-2 text-fg-0 placeholder:text-fg-3 selectable h-[var(--flume-h-control)] min-w-0 flex-1 rounded-md border px-3 font-mono text-[12.5px]"
+              />
+              <Button
+                variant="primary"
+                disabled={!magnet.trim() || isResolving}
+                onClick={() =>
+                  void resolve({ kind: "magnet", uri: magnet.trim() })
+                }
+              >
+                {isResolving ? "Resolving…" : "Resolve"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="bg-line h-px flex-1" />
+            <span className="text-fg-3 text-xs">or</span>
+            <span className="bg-line h-px flex-1" />
+          </div>
+
+          <Button onClick={() => void pickFile()} disabled={isResolving}>
+            Choose a .torrent file…
+          </Button>
+
+          {isResolving ? (
+            <p className="text-fg-2 text-[12.5px]" role="status">
+              Fetching the file list from peers over the DHT. Nothing is
+              downloaded yet — this is only the list of what the torrent
+              contains.
+            </p>
+          ) : null}
+
+          {error ? (
+            <p
+              className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-[12.5px]"
+              role="alert"
+            >
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex justify-end">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -187,125 +315,127 @@ export function AddTorrentDialog({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Add a torrent"
+        aria-label={`Review ${preview.name} before downloading`}
         tabIndex={-1}
-        className="border-line bg-bg-1 flex max-h-[80vh] w-full max-w-xl flex-col gap-4 rounded-xl border p-5 shadow-2xl outline-none"
+        className="border-line bg-bg-1 flex max-h-[90vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-lg border shadow-2xl outline-none"
       >
-        <h2 className="text-fg-0 text-lg font-semibold">Add a torrent</h2>
-
-        {preview === null ? (
-          <>
-            <div className="flex flex-col gap-2">
-              <label
-                htmlFor="magnet-input"
-                className="text-fg-3 text-[11px] font-medium tracking-wider uppercase"
-              >
-                Magnet link
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="magnet-input"
-                  value={magnet}
-                  onChange={(e) => setMagnet(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && magnet.trim() && !isResolving) {
-                      void resolve({ kind: "magnet", uri: magnet.trim() });
-                    }
-                  }}
-                  placeholder="magnet:?xt=urn:btih:…"
-                  spellCheck={false}
-                  autoFocus
-                  className="border-line bg-bg-0 text-fg-0 placeholder:text-fg-3 selectable min-w-0 flex-1 rounded-md border px-3 py-2 font-mono text-sm"
-                />
-                <Button
-                  variant="primary"
-                  disabled={!magnet.trim() || isResolving}
-                  onClick={() =>
-                    void resolve({ kind: "magnet", uri: magnet.trim() })
-                  }
-                >
-                  {isResolving ? "Resolving…" : "Resolve"}
-                </Button>
-              </div>
+        <div className="border-line flex shrink-0 items-start gap-3.5 border-b px-5 py-4">
+          <span className="bg-acc-deep text-acc flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[7px]">
+            <Icon name="arrow-down" size={19} />
+          </span>
+          <div className="min-w-0 grow">
+            <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
+              {preview.seenPeers > 0
+                ? "Magnet link · file list fetched from peers"
+                : "Torrent file"}
+            </span>
+            <div
+              className="truncate text-[17px] font-semibold tracking-[-0.02em]"
+              title={preview.name}
+            >
+              {preview.name}
             </div>
-
-            <div className="flex items-center gap-3">
-              <span className="bg-line h-px flex-1" />
-              <span className="text-fg-3 text-xs">or</span>
-              <span className="bg-line h-px flex-1" />
+            <div className="text-fg-2 mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+              <span className="flume-num selectable">
+                btih:{preview.infoHash.slice(0, 8)}…{preview.infoHash.slice(-4)}
+              </span>
+              <span className="text-fg-3">·</span>
+              <span className="text-ok bg-ok/15 inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-medium">
+                <Icon name="check" size={11} />
+                {preview.files.length}{" "}
+                {preview.files.length === 1 ? "file" : "files"} verified against
+                the info hash
+              </span>
             </div>
+          </div>
+        </div>
 
-            <Button onClick={() => void pickFile()} disabled={isResolving}>
-              Choose a .torrent file…
+        <PreflightTiles
+          seenPeers={preview.seenPeers}
+          selectedBytes={chosenBytes}
+          totalBytes={preview.totalBytes}
+          selectedCount={selected.size}
+          totalCount={preview.files.length}
+          freeBytes={preview.freeBytes}
+          rateBps={rateBps}
+        />
+
+        <div className="flex min-h-0 grow flex-col">
+          <div className="border-line flex shrink-0 items-center gap-1.5 border-b px-3.5 py-2">
+            <span className="text-fg-3 mr-auto text-[10px] font-semibold tracking-[0.09em] uppercase">
+              Contents
+            </span>
+            <Button
+              onClick={() =>
+                setSelected(new Set(preview.files.map((f) => f.index)))
+              }
+            >
+              Select all
             </Button>
+            <Button onClick={() => setSelected(new Set())}>Clear</Button>
+          </div>
 
-            {isResolving ? (
-              <p className="text-fg-2 text-xs" role="status">
-                Fetching metadata from the DHT. This can take a few seconds for
-                a magnet link.
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <div className="min-w-0">
-              <p
-                className="text-fg-0 truncate text-sm font-medium"
-                title={preview.name}
-              >
-                {preview.name}
-              </p>
-              <p className="text-fg-2 mt-0.5 text-xs">
-                {preview.files.length} file
-                {preview.files.length === 1 ? "" : "s"} ·{" "}
-                <span className="font-mono">
-                  {formatBytes(preview.totalBytes)}
-                </span>
-              </p>
-            </div>
+          <FileTree
+            files={preview.files}
+            selected={selected}
+            onChange={setSelected}
+            onDisk={onDisk}
+          />
+        </div>
 
-            {preview.alreadyAdded ? (
-              <p
-                className="border-warn/30 bg-warn/10 text-warn rounded-md border px-3 py-2 text-xs"
-                role="status"
-              >
-                This torrent is already in your list. Adding it again will
-                update its file selection.
-              </p>
-            ) : null}
-
-            <FileTree
-              files={preview.files}
-              selected={selected}
-              onChange={setSelected}
-            />
-          </>
-        )}
+        {preview.alreadyAdded ? (
+          <p
+            className="border-line bg-warn/10 text-warn shrink-0 border-t px-5 py-2 text-[12.5px]"
+            role="status"
+          >
+            This torrent is already in your list. Adding it again replaces its
+            file selection.
+          </p>
+        ) : null}
 
         {error ? (
           <p
-            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
+            className="border-line bg-err/10 text-err shrink-0 border-t px-5 py-2 text-[12.5px]"
             role="alert"
           >
             {error}
           </p>
         ) : null}
 
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+        <div className="border-line flex h-[70px] shrink-0 items-center gap-2.5 border-t px-5">
+          <span
+            className={`shrink-0 ${reFetching.length > 0 ? "text-warn" : "text-ok"}`}
+          >
+            <Icon
+              name={reFetching.length > 0 ? "alert-triangle" : "check-circle"}
+              size={16}
+            />
+          </span>
+          <span className="text-fg-1 text-xs">
+            {onDisk.size === 0
+              ? "Nothing here is on disk yet. Nothing has been downloaded — only the file list was fetched."
+              : reFetching.length > 0
+                ? `${reFetching.length} of these ${reFetching.length === 1 ? "file is" : "files are"} already on disk. Leaving ${reFetching.length === 1 ? "it" : "them"} selected re-downloads ${formatBytes(reFetchBytes)} you already have.`
+                : `${onDisk.size} ${onDisk.size === 1 ? "file is" : "files are"} already on disk — deselected so ${onDisk.size === 1 ? "it is" : "they are"} not fetched twice.`}
+          </span>
+
+          <span className="grow" />
+
+          <Button variant="ghost" size="dialog" onClick={onClose}>
             Cancel
           </Button>
-          {preview ? (
-            <Button
-              variant="primary"
-              onClick={() => void confirm()}
-              disabled={selected.size === 0 || isAdding}
-            >
-              {isAdding
-                ? "Starting…"
-                : `Download ${formatBytes(selectedBytes)}`}
-            </Button>
-          ) : null}
+          <Button
+            variant="primary"
+            size="dialog"
+            onClick={() => void confirm()}
+            disabled={selected.size === 0 || isAdding}
+          >
+            {isAdding
+              ? "Starting…"
+              : selected.size === 0
+                ? "Nothing selected"
+                : `Add ${selected.size} ${selected.size === 1 ? "file" : "files"} · ${formatBytes(chosenBytes)}`}
+          </Button>
         </div>
       </div>
     </div>

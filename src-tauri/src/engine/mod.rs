@@ -17,6 +17,7 @@ mod add;
 mod config;
 mod detail;
 mod note;
+mod preflight;
 mod status;
 mod torrent;
 
@@ -354,6 +355,12 @@ impl Engine {
             .await
             .insert(info_hash.clone(), listed.torrent_bytes.to_vec());
 
+        // librqbit resolves the output folder for a list-only add without
+        // creating it, so this is where the files would land.
+        let save_path = listed.output_folder.clone();
+        let free = preflight::free_bytes(&save_path);
+        let on_disk = preflight::already_on_disk(&save_path, &files);
+
         Ok(TorrentPreview {
             name: listed
                 .info
@@ -364,6 +371,10 @@ impl Engine {
             files,
             info_hash,
             already_added,
+            save_path: save_path.display().to_string(),
+            free_bytes: free,
+            seen_peers: listed.seen_peers.len(),
+            already_on_disk: on_disk,
         })
     }
 
