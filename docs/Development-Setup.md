@@ -57,6 +57,7 @@ compiles librqbit and takes several minutes; subsequent builds are seconds.
 | `npm run dev`         | Frontend only, in a browser (IPC calls will fail — expected) |
 | `npm run check`       | Typecheck + lint + format-check + test                       |
 | `npm run test:watch`  | Vitest in watch mode                                         |
+| `npm run storybook`   | Component harness on :6006, both themes, axe                 |
 
 Backend, from `src-tauri/`:
 
