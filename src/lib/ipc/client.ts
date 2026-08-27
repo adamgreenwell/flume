@@ -10,6 +10,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   CoreStatus,
+  DetectedClient,
+  ImportOutcome,
   Settings,
   TorrentDetail,
   TorrentFileState,
@@ -171,4 +173,39 @@ export async function getTorrentFiles(id: number): Promise<TorrentFileState[]> {
  */
 export async function getTorrentDetail(id: number): Promise<TorrentDetail> {
   return invoke<TorrentDetail>("get_torrent_detail", { id });
+}
+
+/**
+ * Whether this launch found no settings file.
+ *
+ * @returns True on a genuinely first run.
+ */
+export async function isFirstRun(): Promise<boolean> {
+  return invoke<boolean>("is_first_run");
+}
+
+/**
+ * Lists other BitTorrent clients installed for the current user.
+ *
+ * @returns Every client with at least one torrent in its store.
+ */
+export async function detectClients(): Promise<DetectedClient[]> {
+  return invoke<DetectedClient[]>("detect_clients");
+}
+
+/**
+ * Takes over every torrent in another client's store.
+ *
+ * Nothing is downloaded again — each torrent is added over its existing files
+ * and verified in place.
+ *
+ * @param torrentsDir - The client's torrent store.
+ * @param outputFolder - Where to save, or `null` for Flume's own default.
+ * @returns How many were added, skipped and failed.
+ */
+export async function importClient(
+  torrentsDir: string,
+  outputFolder: string | null,
+): Promise<ImportOutcome> {
+  return invoke<ImportOutcome>("import_client", { torrentsDir, outputFolder });
 }

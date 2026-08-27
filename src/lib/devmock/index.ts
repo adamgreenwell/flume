@@ -20,6 +20,7 @@
 
 import type {
   CoreStatus,
+  DetectedClient,
   Settings,
   TorrentDetail,
   TorrentFileState,
@@ -422,6 +423,30 @@ const PREVIEW: TorrentPreview = {
   ],
 };
 
+/**
+ * Two other clients, one of them with an unreadable config.
+ *
+ * The unreadable one is the case worth designing against: the import still has
+ * to be offered, and the screen has to say the files will land in Flume's own
+ * folder rather than silently doing something else.
+ */
+const CLIENTS: DetectedClient[] = [
+  {
+    kind: "transmission",
+    name: "Transmission",
+    torrentCount: 47,
+    downloadDir: "/Volumes/Media/Linux",
+    torrentsDir: "/Users/you/Library/Application Support/Transmission/Torrents",
+  },
+  {
+    kind: "qBittorrent",
+    name: "qBittorrent",
+    torrentCount: 12,
+    downloadDir: null,
+    torrentsDir: "/Users/you/Library/Application Support/qBittorrent/BT_backup",
+  },
+];
+
 const DETAIL: TorrentDetail = {
   peers: [
     {
@@ -528,6 +553,14 @@ export function install(): void {
           return { core: CORE, torrents };
         case "get_core_status":
           return CORE;
+        case "is_first_run":
+          // `?mock=first-run` in the URL exercises the onboarding screen,
+          // which is otherwise unreachable once settings have been written.
+          return scenario === "first-run";
+        case "detect_clients":
+          return scenario === "first-run" ? CLIENTS : [];
+        case "import_client":
+          return { added: 47, skipped: 2, failed: 1 };
         case "get_settings":
           return live;
         case "update_settings":

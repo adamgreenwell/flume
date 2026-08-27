@@ -16,6 +16,7 @@ import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
 import { ContextMenu, type ContextMenuItem } from "@/components/ContextMenu";
 import { Dock } from "@/components/Dock";
 import { EmptyState } from "@/components/EmptyState";
+import { FirstRun } from "@/components/FirstRun";
 import { ExpandedRow } from "@/components/ExpandedRow";
 import { LibraryToolbar, type SortId } from "@/components/LibraryToolbar";
 import { Rail } from "@/components/Rail";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/views";
 import {
   getSettings,
+  isFirstRun,
   pauseTorrent,
   removeTorrent,
   resumeTorrent,
@@ -101,6 +103,10 @@ export default function Home() {
   // between the static export and the client, and this is the one pattern that
   // handles that without a hydration mismatch or a cascading render.
   const [downloadLimitBps, setDownloadLimitBps] = useState<number | null>(null);
+  // `null` until the engine answers. The library is not rendered in the
+  // meantime: flashing the empty state and then replacing it with a first-run
+  // screen would be a worse first impression than a beat of nothing.
+  const [firstRun, setFirstRun] = useState<boolean | null>(null);
   const controls = useSyncExternalStore(
     subscribeToWindowControls,
     detectWindowControls,
@@ -144,6 +150,12 @@ export default function Home() {
   // Apply the persisted theme once the engine can answer. Until then the
   // stylesheet's own `prefers-color-scheme` default is in force, so there is
   // no flash of the wrong palette.
+  useEffect(() => {
+    void isFirstRun()
+      .then(setFirstRun)
+      .catch(() => setFirstRun(false));
+  }, []);
+
   useEffect(() => {
     void getSettings()
       .then((s) => {
@@ -267,6 +279,33 @@ export default function Home() {
     ),
     !anyDialogOpen,
   );
+
+  if (firstRun === null) {
+    // One beat of the window's own background, rather than a flash of a
+    // library that may be about to be replaced.
+    return <div className="bg-bg-0 h-full" />;
+  }
+
+  if (firstRun) {
+    return (
+      <FirstRun
+        onDone={() => {
+          setFirstRun(false);
+          // The screen has been writing settings as it went, so by this point
+          // the file exists and the next launch will not show it again.
+          void getSettings()
+            .then((s) => {
+              applyTheme(s.theme);
+              setCompact(s.density === "compact");
+              setDownloadLimitBps(s.downloadLimitBps);
+            })
+            .catch(() => {
+              // The library renders from telemetry regardless.
+            });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="grid h-full grid-cols-[248px_1fr] grid-rows-[44px_1fr] overflow-hidden">
