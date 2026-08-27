@@ -15,13 +15,20 @@ const STATE_LABEL: Record<TorrentState, string> = {
   error: "Error",
 };
 
-/** Indicator colour per lifecycle state. */
+/**
+ * Indicator colour per lifecycle state.
+ *
+ * Deliberately the same mapping {@link ProgressBar} uses. A row where the dot
+ * says one thing and the bar beside it says another is worse than either
+ * signal alone, so checking is `warn` in both places rather than a neutral
+ * grey here and amber there.
+ */
 const STATE_DOT: Record<TorrentState, string> = {
-  checking: "bg-muted",
-  downloading: "bg-accent",
+  checking: "bg-warn",
+  downloading: "bg-acc",
   seeding: "bg-ok",
-  paused: "bg-faint",
-  error: "bg-error",
+  paused: "bg-fg-3",
+  error: "bg-err",
 };
 
 /**
@@ -43,8 +50,8 @@ export function progressFraction(t: TorrentSummary): number {
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex items-baseline gap-1.5">
-      <dt className="text-faint">{label}</dt>
-      <dd className="text-muted font-mono tabular-nums">{value}</dd>
+      <dt className="text-fg-3">{label}</dt>
+      <dd className="text-fg-2 font-mono tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -81,7 +88,6 @@ export function TorrentRow({
 }: TorrentRowProps) {
   const fraction = progressFraction(torrent);
   const isPaused = torrent.state === "paused";
-  const percent = Math.round(fraction * 100);
   const ratio =
     torrent.progressBytes > 0
       ? (torrent.uploadedBytes / torrent.progressBytes).toFixed(2)
@@ -89,7 +95,7 @@ export function TorrentRow({
 
   return (
     <li
-      className="group border-border-subtle bg-surface hover:border-muted/40 rounded-lg border px-4 py-3.5 transition-colors"
+      className="group border-line bg-bg-1 hover:border-fg-2/40 rounded-lg border px-4 py-3.5 transition-colors"
       onContextMenu={(event) => {
         event.preventDefault();
         onContextMenu(torrent, { x: event.clientX, y: event.clientY });
@@ -98,24 +104,22 @@ export function TorrentRow({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <p
-            className="text-text truncate text-[0.9375rem] leading-snug font-medium"
+            className="text-fg-0 truncate text-[0.9375rem] leading-snug font-medium"
             title={torrent.name}
           >
             {torrent.name}
           </p>
-          <div className="text-muted mt-1 flex items-center gap-1.5 text-xs">
+          <div className="text-fg-2 mt-1 flex items-center gap-1.5 text-xs">
             <span
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATE_DOT[torrent.state]}`}
               aria-hidden="true"
             />
             <span>{STATE_LABEL[torrent.state]}</span>
-            <span className="text-faint">·</span>
+            <span className="text-fg-3">·</span>
             <span className="font-mono tabular-nums">
               {formatBytes(torrent.progressBytes)} of{" "}
               {formatBytes(torrent.totalBytes)}
             </span>
-            <span className="text-faint">·</span>
-            <span className="font-mono tabular-nums">{percent}%</span>
           </div>
         </div>
 
@@ -164,7 +168,7 @@ export function TorrentRow({
 
       {torrent.error ? (
         <p
-          className="border-error/30 bg-error/10 text-error mt-2.5 rounded-md border px-2.5 py-1.5 text-xs"
+          className="border-err/30 bg-err/10 text-err mt-2.5 rounded-md border px-2.5 py-1.5 text-xs"
           role="alert"
         >
           {torrent.error}

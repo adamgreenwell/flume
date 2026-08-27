@@ -20,13 +20,16 @@ export interface IconButtonProps extends Omit<
 }
 
 /**
- * A compact icon-only control.
+ * A compact icon-only control, drawn at the design's 28px chip height.
  *
- * Sits at reduced opacity until its row is hovered or it takes focus, so a
- * list of torrents reads as content rather than as a wall of buttons. Opacity
- * only — the control stays present, hit-testable, and keyboard reachable at
- * all times, unlike the common pattern of hiding actions until hover, which
+ * Sits at `fg-2` until its row is hovered or it takes focus, so a list of
+ * torrents reads as content rather than as a wall of buttons. Colour only —
+ * the control stays present, hit-testable, and keyboard reachable at all
+ * times, unlike the common pattern of hiding actions until hover, which
  * strands keyboard and touch users.
+ *
+ * 28px is a pointer target, not a touch target. A remote web UI would have to
+ * re-scale this to a 44px minimum rather than ship the desktop size to a phone.
  *
  * @param props - See {@link IconButtonProps}.
  * @returns The rendered button.
@@ -44,12 +47,12 @@ export function IconButton({
       type={type}
       title={label}
       aria-label={label}
-      className={`text-muted hover:bg-surface-raised inline-flex h-7 w-7 items-center justify-center rounded-md opacity-70 transition-[opacity,color,background-color] group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-30 ${
-        destructive ? "hover:text-error" : "hover:text-text"
+      className={`text-fg-2 hover:bg-bg-2 disabled:text-fg-dis inline-flex h-[var(--flume-h-chip)] w-[var(--flume-h-chip)] items-center justify-center rounded-md transition-colors disabled:pointer-events-none ${
+        destructive ? "hover:text-err" : "hover:text-fg-0"
       } ${className}`}
       {...rest}
     >
-      <Icon name={icon} />
+      <Icon name={icon} size={15} />
     </button>
   );
 }
