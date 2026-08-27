@@ -30,9 +30,9 @@
 use flume_lib::{
     commands::CommandError,
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, PeerInfo, PieceMap, SwarmStats, TelemetrySnapshot,
-        TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview, TorrentSource, TorrentState,
-        TorrentSummary,
+        CoreStatus, DhtStatus, EngineHealth, PeerInfo, PieceMap, SwarmHealth, SwarmStats,
+        TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview,
+        TorrentSource, TorrentState, TorrentSummary,
     },
     settings::{Settings, Theme},
 };
@@ -101,6 +101,9 @@ fn sample_summary() -> TorrentSummary {
         download_bps: 2048,
         upload_bps: 256,
         live_peers: 5,
+        known_peers: 42,
+        health: SwarmHealth::Unknown,
+        detail: "2 min 30 s left".into(),
         eta_seconds: Some(30),
         finished: false,
         error: None,
@@ -152,6 +155,9 @@ fn torrent_summary_matches_the_typescript_mirror() {
             "downloadBps",
             "uploadBps",
             "livePeers",
+            "knownPeers",
+            "health",
+            "detail",
             "etaSeconds",
             "finished",
             "error",

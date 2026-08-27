@@ -156,6 +156,25 @@
   /* Row heights. */
   --flume-row-comfortable: 58px;
   --flume-row-compact: 40px;
+
+  /*
+   * Density, resolved. A row reads these rather than branching on a class, so
+   * one attribute on <html> re-lays the whole list.
+   *
+   * Compact does not shrink the meta line, it removes it: at 40px there is no
+   * room for a second line, and a squeezed one would be the first thing to
+   * become unreadable. Height and opacity go together so the row collapses
+   * rather than leaving a gap where the sentence was.
+   */
+  --flume-row-h: var(--flume-row-comfortable);
+  --flume-meta-h: 16px;
+  --flume-meta-op: 1;
+}
+
+:root[data-density="compact"] {
+  --flume-row-h: var(--flume-row-compact);
+  --flume-meta-h: 0px;
+  --flume-meta-op: 0;
 }
 
 /*

@@ -46,6 +46,26 @@ flume.dev (a React node editor). Both verified unrelated.
 6. Rust `serde` structs and their TypeScript mirrors (`src/lib/ipc/types.ts`) change together.
 7. Minimal Tauri permissions. No shell plugin.
 8. The UI vocabulary is the token set in `src/app/globals.css`. See below.
+9. Verdicts the data cannot support are not invented. `SwarmHealth` reports
+   `unknown` rather than guessing `thin` vs `healthy` — see below.
+
+## What Flume cannot answer yet
+
+**Piece availability.** librqbit 9.0.0 exposes our own bitfield
+(`api_dump_haves`) but no per-peer one, so the union of peer bitfields — and
+therefore the rarest-piece copy count — is not computable from the public API.
+
+This blocks three things the design specifies:
+
+- `SwarmHealth::Thin` vs `Healthy` ("every piece on ≥3 peers" vs "availability
+  under 1.5×"). `classify_health` returns `Unknown` for any connected download
+  instead, and the UI says "Connected" rather than claiming a verdict.
+- The inspector's `availability` figure.
+- The bottleneck panel's ranking, which needs it to be honest.
+
+Tracked in issue #79. Until it is resolved, do not derive a swarm verdict from
+peer counts and present it as an availability judgement — a confident wrong
+answer here is worse than none, which the design says explicitly.
 
 ## Design tokens
 
@@ -59,8 +79,15 @@ the frontend:
   people. A step that is genuinely missing is derived in OKLCH at fixed chroma
   and hue, never eyeballed between two existing values.
 - **Sizes and rates are decimal** (GB, MB/s) because that is what disks and ISPs
-  quote. Piece length is the only binary figure, rendered MiB, because that is
-  what the wire format uses.
+  quote — `formatBytes` is 1000-based, three significant figures; `formatSpeed`
+  is one decimal and holds MB/s down to 0.1 so a rate column reads as one unit.
+  Piece length is the only binary figure, rendered MiB, because that is what
+  the wire format uses.
+- **`formatDuration` exists twice** — `src/lib/format.ts` and
+  `src-tauri/src/engine/torrent.rs`. The engine decides what a torrent's
+  `detail` line says, so it has to format the duration inside that sentence.
+  Both render `1 h 07 min` / `2 min 30 s` / `45 s` and both sides assert the
+  same four examples. Change one, change the other.
 - **Every number is `flume-num`** (mono, tabular figures). Without it, columns
   jitter on every 1 Hz tick.
 - `fg-3` is the floor for text and `line-2` the floor for control borders.

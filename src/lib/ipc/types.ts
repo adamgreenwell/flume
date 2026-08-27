@@ -62,6 +62,19 @@ export interface CoreStatus {
 export type TorrentState =
   "checking" | "downloading" | "seeding" | "paused" | "error";
 
+/**
+ * A verdict on whether a torrent will actually finish. Mirrors Rust
+ * `SwarmHealth`.
+ *
+ * A different question from {@link TorrentState}, which only says whether work
+ * is happening — a torrent can be `downloading` and never finish.
+ *
+ * `"unknown"` is not a gap in the plumbing. Telling a thin swarm from a healthy
+ * one needs piece availability, which librqbit 9.0.0 does not expose, so
+ * anything that would need it says so rather than guessing. See issue #79.
+ */
+export type SwarmHealth = "seeding" | "none" | "idle" | "unknown";
+
 /** A snapshot of one torrent. Mirrors Rust `TorrentSummary`. */
 export interface TorrentSummary {
   /** Session-local id. Stable while the app runs, not across restarts. */
@@ -84,6 +97,24 @@ export interface TorrentSummary {
   uploadBps: number;
   /** Peers currently connected to this torrent. */
   livePeers: number;
+  /**
+   * Peers this torrent has ever seen, connected or not.
+   *
+   * The denominator in the list's "24 / 118". A large gap between this and
+   * {@link TorrentSummary.livePeers} separates "the swarm is small" from "the
+   * swarm is big but nobody will talk to us" — different problems, different
+   * fixes.
+   */
+  knownPeers: number;
+  /** Whether this torrent will actually finish. */
+  health: SwarmHealth;
+  /**
+   * The one-line explanation shown under the name. Derived in Rust.
+   *
+   * Never a bare state word: the row already draws the state as an icon, so
+   * this line is the only one that can say why.
+   */
+  detail: string;
   /** Estimated seconds to completion, or `null` when not estimable. */
   etaSeconds: number | null;
   /** Whether all selected files are complete. */

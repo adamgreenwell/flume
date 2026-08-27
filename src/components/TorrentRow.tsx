@@ -1,34 +1,51 @@
 "use client";
 
-import { formatBytes, formatDuration, formatSpeed } from "@/lib/format";
+import { formatBytes, formatSpeed } from "@/lib/format";
 import type { TorrentState, TorrentSummary } from "@/lib/ipc/types";
 
-import { IconButton } from "./IconButton";
-import { ProgressBar } from "./ProgressBar";
-
-/** Short label per lifecycle state. */
-const STATE_LABEL: Record<TorrentState, string> = {
-  checking: "Checking",
-  downloading: "Downloading",
-  seeding: "Seeding",
-  paused: "Paused",
-  error: "Error",
-};
+import { HealthChip } from "./HealthChip";
+import { Icon, type IconName } from "./Icon";
 
 /**
- * Indicator colour per lifecycle state.
+ * Glyph per lifecycle state, drawn inside the status ring.
  *
- * Deliberately the same mapping {@link ProgressBar} uses. A row where the dot
- * says one thing and the bar beside it says another is worse than either
- * signal alone, so checking is `warn` in both places rather than a neutral
- * grey here and amber there.
+ * The icon is the state. The row's meta line never repeats it in words — that
+ * line is the only place a row can say something the user does not already
+ * know, so spending it on "Downloading" wastes it.
  */
-const STATE_DOT: Record<TorrentState, string> = {
+const STATE_ICON: Record<TorrentState, IconName> = {
+  downloading: "arrow-down",
+  seeding: "arrow-up",
+  paused: "pause",
+  checking: "check",
+  error: "alert-circle",
+};
+
+/** Ring and glyph colour per state. */
+const STATE_TONE: Record<TorrentState, string> = {
+  downloading: "text-acc",
+  seeding: "text-ok",
+  paused: "text-fg-3",
+  checking: "text-warn",
+  error: "text-err",
+};
+
+/** Progress fill per state. */
+const FILL_BY_STATE: Record<TorrentState, string> = {
   checking: "bg-warn",
   downloading: "bg-acc",
   seeding: "bg-ok",
   paused: "bg-fg-3",
   error: "bg-err",
+};
+
+/** Accessible wording for each state, since the glyph itself is hidden. */
+const STATE_LABEL: Record<TorrentState, string> = {
+  downloading: "Downloading",
+  seeding: "Seeding",
+  paused: "Paused",
+  checking: "Checking",
+  error: "Error",
 };
 
 /**
@@ -46,13 +63,23 @@ export function progressFraction(t: TorrentSummary): number {
   return Math.min(Math.max(t.progressBytes / t.totalBytes, 0), 1);
 }
 
-/** One statistic in the row's footer. */
-function Stat({ label, value }: { label: string; value: string | number }) {
+/**
+ * A rate cell.
+ *
+ * A zero rate drops to `fg-3` rather than being blanked. An empty cell reads
+ * as "no data"; a dimmed zero reads as "measured, and it is zero", which is a
+ * different and more useful fact when a torrent has stalled.
+ */
+function Rate({ bps, tone }: { bps: number; tone: string }) {
   return (
-    <div className="flex items-baseline gap-1.5">
-      <dt className="text-fg-3">{label}</dt>
-      <dd className="text-fg-2 font-mono tabular-nums">{value}</dd>
-    </div>
+    <span
+      role="gridcell"
+      className={`flume-num w-[86px] shrink-0 text-right text-xs ${
+        bps === 0 ? "text-fg-3" : tone
+      }`}
+    >
+      {formatSpeed(bps)}
+    </span>
   );
 }
 
@@ -60,120 +87,142 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 export interface TorrentRowProps {
   /** The torrent to render. */
   torrent: TorrentSummary;
-  /** Pause or resume, depending on current state. */
-  onToggle: (t: TorrentSummary) => void;
-  /** Begin removal; the caller confirms. */
-  onRemove: (t: TorrentSummary) => void;
-  /** Reveal the download in the OS file manager. */
-  onReveal: (t: TorrentSummary) => void;
-  /** Open the per-torrent detail panel. */
-  onOpenDetail: (t: TorrentSummary) => void;
+  /** Whether this row is the selected one. */
+  selected: boolean;
+  /** Select or deselect this row. */
+  onSelect: (t: TorrentSummary) => void;
+  /**
+   * Open the inspector for this torrent.
+   *
+   * Bound to double-click and to Enter-with-modifier. The design puts a row's
+   * actions in the region that opens when it is clicked, which does not exist
+   * yet — until it does, this and the context menu are how a torrent is
+   * reached, and a list you can only act on by right-clicking is a list half
+   * the users cannot act on at all.
+   */
+  onOpen: (t: TorrentSummary) => void;
   /** Right-clicked, with the pointer position in viewport coordinates. */
   onContextMenu: (t: TorrentSummary, at: { x: number; y: number }) => void;
 }
 
 /**
- * One torrent in the list.
+ * One torrent in the library list.
+ *
+ * Seven columns at fixed widths so the numbers line up down the list rather
+ * than wandering with content — the reason every figure here is tabular mono.
+ *
+ * Rendered as a `row` in a real grid rather than a list item: the columns carry
+ * meaning, and a screen reader user should be able to move across them and hear
+ * the header for each rather than one run-on sentence.
  *
  * @param props - See {@link TorrentRowProps}.
  * @returns The rendered row.
  */
 export function TorrentRow({
   torrent,
-  onToggle,
-  onRemove,
-  onReveal,
-  onOpenDetail,
+  selected,
+  onSelect,
+  onOpen,
   onContextMenu,
 }: TorrentRowProps) {
   const fraction = progressFraction(torrent);
-  const isPaused = torrent.state === "paused";
-  const ratio =
-    torrent.progressBytes > 0
-      ? (torrent.uploadedBytes / torrent.progressBytes).toFixed(2)
-      : "0.00";
+  const percent = Math.round(fraction * 100);
 
   return (
-    <li
-      className="group border-line bg-bg-1 hover:border-fg-2/40 rounded-lg border px-4 py-3.5 transition-colors"
+    <div
+      role="row"
+      aria-selected={selected}
+      tabIndex={0}
+      onClick={() => onSelect(torrent)}
+      onDoubleClick={() => onOpen(torrent)}
+      onKeyDown={(event) => {
+        // A row is an interactive control, so it answers to the keys a control
+        // answers to. The static mockups only imply this.
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (event.metaKey || event.ctrlKey) onOpen(torrent);
+          else onSelect(torrent);
+        } else if (event.key === " ") {
+          event.preventDefault();
+          onSelect(torrent);
+        }
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         onContextMenu(torrent, { x: event.clientX, y: event.clientY });
       }}
+      className={`border-line flex h-[var(--flume-row-h)] shrink-0 cursor-pointer items-center gap-4 border-b px-[18px] transition-colors ${
+        selected
+          ? "bg-bg-2 shadow-[inset_2px_0_0_var(--flume-acc)]"
+          : "hover:bg-bg-1"
+      }`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <p
-            className="text-fg-0 truncate text-[0.9375rem] leading-snug font-medium"
-            title={torrent.name}
-          >
-            {torrent.name}
-          </p>
-          <div className="text-fg-2 mt-1 flex items-center gap-1.5 text-xs">
-            <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATE_DOT[torrent.state]}`}
-              aria-hidden="true"
-            />
-            <span>{STATE_LABEL[torrent.state]}</span>
-            <span className="text-fg-3">·</span>
-            <span className="font-mono tabular-nums">
-              {formatBytes(torrent.progressBytes)} of{" "}
-              {formatBytes(torrent.totalBytes)}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-0.5">
-          <IconButton
-            icon={isPaused ? "play" : "pause"}
-            label={isPaused ? "Resume" : "Pause"}
-            onClick={() => onToggle(torrent)}
-          />
-          <IconButton
-            icon="files"
-            label="Files and details"
-            onClick={() => onOpenDetail(torrent)}
-          />
-          <IconButton
-            icon="folder"
-            label="Open containing folder"
-            onClick={() => onReveal(torrent)}
-          />
-          <IconButton
-            icon="trash"
-            label="Remove"
-            destructive
-            onClick={() => onRemove(torrent)}
-          />
-        </div>
-      </div>
-
-      <div className="mt-2.5">
-        <ProgressBar
-          value={fraction}
-          state={torrent.state}
-          label={`${torrent.name} download progress`}
+      <span
+        role="gridcell"
+        className={`relative flex h-[18px] w-[18px] shrink-0 items-center justify-center ${STATE_TONE[torrent.state]}`}
+      >
+        <span
+          className="absolute inset-0 rounded-full border border-current opacity-[0.36]"
+          aria-hidden="true"
         />
-      </div>
+        <Icon name={STATE_ICON[torrent.state]} size={11} />
+        <span className="sr-only">{STATE_LABEL[torrent.state]}</span>
+      </span>
 
-      <dl className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-        <Stat label="Down" value={formatSpeed(torrent.downloadBps)} />
-        <Stat label="Up" value={formatSpeed(torrent.uploadBps)} />
-        <Stat label="Peers" value={torrent.livePeers} />
-        {torrent.etaSeconds !== null ? (
-          <Stat label="ETA" value={formatDuration(torrent.etaSeconds)} />
-        ) : null}
-        <Stat label="Ratio" value={ratio} />
-      </dl>
-
-      {torrent.error ? (
-        <p
-          className="border-err/30 bg-err/10 text-err mt-2.5 rounded-md border px-2.5 py-1.5 text-xs"
-          role="alert"
+      <span role="gridcell" className="flex min-w-0 grow flex-col gap-0.5">
+        <span
+          className="truncate text-[13px] font-medium tracking-[-0.005em]"
+          title={torrent.name}
         >
-          {torrent.error}
-        </p>
-      ) : null}
-    </li>
+          {torrent.name}
+        </span>
+        <span className="text-fg-2 flex h-[var(--flume-meta-h)] items-center gap-[7px] overflow-hidden text-[11px] opacity-[var(--flume-meta-op)]">
+          <span className="flume-num">{formatBytes(torrent.totalBytes)}</span>
+          <span className="text-fg-3">·</span>
+          <span className="truncate">{torrent.detail}</span>
+        </span>
+      </span>
+
+      <span
+        role="gridcell"
+        className="flex w-[180px] shrink-0 items-center gap-[9px]"
+      >
+        <span
+          className="bg-bg-3 flex h-[5px] grow overflow-hidden rounded-[3px]"
+          role="progressbar"
+          aria-label={`${torrent.name} progress`}
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <span
+            className={`block h-full rounded-[3px] ${FILL_BY_STATE[torrent.state]}`}
+            style={{ width: `${percent}%` }}
+          />
+        </span>
+        <span
+          className="flume-num text-fg-1 w-[34px] text-right text-[11px]"
+          aria-hidden="true"
+        >
+          {percent}%
+        </span>
+      </span>
+
+      <Rate bps={torrent.downloadBps} tone="text-fg-0" />
+      <Rate bps={torrent.uploadBps} tone="text-fg-1" />
+
+      <span
+        role="gridcell"
+        className="flume-num text-fg-2 w-[78px] shrink-0 text-right text-[11.5px]"
+      >
+        {torrent.knownPeers === 0
+          ? "—"
+          : `${torrent.livePeers} / ${torrent.knownPeers}`}
+      </span>
+
+      <span role="gridcell" className="w-[124px] shrink-0 pl-[14px]">
+        <HealthChip health={torrent.health} detail={torrent.detail} />
+      </span>
+    </div>
   );
 }
