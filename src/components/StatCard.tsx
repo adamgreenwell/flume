@@ -48,7 +48,12 @@ export interface StatCardProps {
 export function StatCard({ label, value, hint, size = "dock" }: StatCardProps) {
   return (
     <div className={`flex flex-col ${SIZE_CLASSES[size]}`}>
-      <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
+      {/*
+        Both lines refuse to wrap. A stat that wraps does not merely look
+        untidy — it grows the row, and in a fixed-height dock that pushes the
+        bottom row out of the container entirely.
+      */}
+      <span className="text-fg-3 truncate text-[10px] font-semibold tracking-[0.09em] uppercase">
         {label}
       </span>
       <span
