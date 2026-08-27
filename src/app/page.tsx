@@ -1,16 +1,25 @@
 "use client";
 
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { AddTorrentDialog } from "@/components/AddTorrentDialog";
-import { Button } from "@/components/Button";
+import { ColumnHeader } from "@/components/ColumnHeader";
 import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
 import { ContextMenu, type ContextMenuItem } from "@/components/ContextMenu";
+import { Dock } from "@/components/Dock";
 import { EmptyState } from "@/components/EmptyState";
+import { LibraryToolbar, type SortId } from "@/components/LibraryToolbar";
+import { Rail } from "@/components/Rail";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
-import { StatusPill } from "@/components/StatusPill";
 import { TorrentRow } from "@/components/TorrentRow";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import {
@@ -19,7 +28,18 @@ import {
 } from "@/hooks/useKeyboardShortcuts";
 import { useMagnetLinks } from "@/hooks/useMagnetLinks";
 import { useTorrentFileDrop } from "@/hooks/useTorrentFileDrop";
-import { formatSpeed } from "@/lib/format";
+import {
+  detectWindowControls,
+  serverWindowControls,
+  subscribeToWindowControls,
+} from "@/lib/platform";
+import {
+  VIEWS,
+  matchesQuery,
+  matchesView,
+  viewCounts,
+  type ViewId,
+} from "@/lib/views";
 import {
   getSettings,
   pauseTorrent,
@@ -51,6 +71,27 @@ export default function Home() {
     torrent: TorrentSummary;
     at: { x: number; y: number };
   } | null>(null);
+  const [view, setView] = useState<ViewId>("all");
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortId>("activity");
+  const [compact, setCompact] = useState(false);
+  const [selectedHash, setSelectedHash] = useState<string | null>(null);
+  // Read through useSyncExternalStore rather than an effect: the value differs
+  // between the static export and the client, and this is the one pattern that
+  // handles that without a hydration mismatch or a cascading render.
+  const controls = useSyncExternalStore(
+    subscribeToWindowControls,
+    detectWindowControls,
+    serverWindowControls,
+  );
+
+  // Density lives on <html> so a row can read it as a CSS variable rather than
+  // every row branching on a prop.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (compact) root.setAttribute("data-density", "compact");
+    else root.removeAttribute("data-density");
+  }, [compact]);
 
   // A magnet clicked in a browser, or passed on the command line, opens the
   // add dialog prefilled rather than adding silently -- the file-selection
@@ -83,7 +124,34 @@ export default function Home() {
   }, []);
 
   const status = telemetry?.core ?? null;
-  const torrents = telemetry?.torrents ?? [];
+  const torrents = useMemo(() => telemetry?.torrents ?? [], [telemetry]);
+
+  const counts = useMemo(() => viewCounts(torrents), [torrents]);
+
+  const visible = useMemo(() => {
+    const filtered = torrents.filter(
+      (t) => matchesView(t, view) && matchesQuery(t, query),
+    );
+
+    // Sorted into a copy: `torrents` is telemetry state, and sorting it in
+    // place would mutate what the next tick diffs against.
+    return [...filtered].sort((a, b) => {
+      switch (sort) {
+        case "size":
+          return b.totalBytes - a.totalBytes;
+        // Ids increase as torrents are added, so they are the arrival order.
+        case "added":
+          return b.id - a.id;
+        // Busiest first, then by name so the order is stable when idle rather
+        // than reshuffling on every tick.
+        case "activity": {
+          const byRate =
+            b.downloadBps + b.uploadBps - (a.downloadBps + a.uploadBps);
+          return byRate !== 0 ? byRate : a.name.localeCompare(b.name);
+        }
+      }
+    });
+  }, [torrents, view, query, sort]);
 
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
@@ -156,94 +224,97 @@ export default function Home() {
   );
 
   return (
-    <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-6 px-8 py-10">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-fg-0 text-2xl font-semibold tracking-tight">
-            Flume
-          </h1>
-          <p className="text-fg-2 mt-0.5 text-sm">
-            {status ? (
-              <>
-                <span className="font-mono tabular-nums">
-                  {formatSpeed(status.downloadBps)}
-                </span>{" "}
-                down ·{" "}
-                <span className="font-mono tabular-nums">
-                  {formatSpeed(status.uploadBps)}
-                </span>{" "}
-                up · {status.livePeers} peers
-              </>
-            ) : (
-              "A beautiful, cross-platform BitTorrent client."
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <StatusPill
-            health={status?.health ?? "starting"}
-            pulse={isLoading || status?.health === "connecting"}
-          />
-          <Button
-            variant="ghost"
-            onClick={() => setIsConfiguring(true)}
-            title="Settings (⌘,)"
-          >
-            Settings
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => setIsAdding(true)}
-            title="Add a torrent (⌘N)"
-          >
-            Add torrent
-          </Button>
-        </div>
-      </header>
+    <div className="grid h-full grid-cols-[248px_1fr] grid-rows-[44px_1fr] overflow-hidden">
+      <TitleBar
+        controls={controls}
+        downloadBps={status?.downloadBps ?? 0}
+        uploadBps={status?.uploadBps ?? 0}
+      />
 
-      {error ? (
-        <div
-          className="border-warn/30 bg-warn/10 text-warn rounded-lg border px-4 py-3 text-sm"
-          role="alert"
-        >
-          {error}
-        </div>
-      ) : null}
+      <Rail
+        view={view}
+        onViewChange={setView}
+        counts={counts}
+        query={query}
+        onQueryChange={setQuery}
+        status={status}
+        loading={isLoading}
+        searchDisabled={anyDialogOpen}
+      />
 
-      {actionError ? (
-        <div
-          className="border-err/30 bg-err/10 text-err flex items-start justify-between gap-3 rounded-lg border px-4 py-3 text-sm"
-          role="alert"
-        >
-          <span>{actionError}</span>
-          <button
-            type="button"
-            onClick={() => setActionError(null)}
-            className="text-err/70 hover:text-err shrink-0"
-            aria-label="Dismiss error"
+      <div className="row-start-2 flex min-h-0 min-w-0 flex-col">
+        <LibraryToolbar
+          title={VIEWS.find((v) => v.id === view)?.name ?? "All torrents"}
+          count={visible.length}
+          sort={sort}
+          onSortChange={setSort}
+          compact={compact}
+          onDensityToggle={() => setCompact((c) => !c)}
+          onAdd={() => setIsAdding(true)}
+        />
+
+        {error ? (
+          <div
+            className="border-line bg-warn/10 text-warn border-b px-[18px] py-2.5 text-xs"
+            role="alert"
           >
-            ✕
-          </button>
-        </div>
-      ) : null}
+            {error}
+          </div>
+        ) : null}
 
-      {torrents.length === 0 ? (
-        <EmptyState status={status} onAdd={() => setIsAdding(true)} />
-      ) : (
-        <ul className="flex flex-col gap-2.5">
-          {torrents.map((t) => (
-            <TorrentRow
-              key={t.infoHash}
-              torrent={t}
-              onToggle={(x) => void toggle(x)}
-              onRemove={setPendingRemoval}
-              onReveal={(x) => void reveal(x)}
-              onOpenDetail={setDetailOf}
-              onContextMenu={(t, at) => setMenu({ torrent: t, at })}
+        {actionError ? (
+          <div
+            className="border-line bg-err/10 text-err flex items-start justify-between gap-3 border-b px-[18px] py-2.5 text-xs"
+            role="alert"
+          >
+            <span>{actionError}</span>
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              className="text-err/70 hover:text-err shrink-0"
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+
+        <ColumnHeader />
+
+        {visible.length === 0 ? (
+          <div className="flex grow items-center justify-center">
+            <EmptyState
+              status={status}
+              onAdd={() => setIsAdding(true)}
+              filtered={torrents.length > 0}
             />
-          ))}
-        </ul>
-      )}
+          </div>
+        ) : (
+          <div
+            role="grid"
+            aria-label="Torrents"
+            aria-rowcount={visible.length}
+            className="flex grow flex-col overflow-y-auto"
+          >
+            {visible.map((t) => (
+              <TorrentRow
+                key={t.infoHash}
+                torrent={t}
+                selected={t.infoHash === selectedHash}
+                onSelect={(x) =>
+                  setSelectedHash((current) =>
+                    current === x.infoHash ? null : x.infoHash,
+                  )
+                }
+                onOpen={setDetailOf}
+                onContextMenu={(x, at) => setMenu({ torrent: x, at })}
+              />
+            ))}
+          </div>
+        )}
+
+        <Dock status={status} torrents={torrents} />
+      </div>
 
       {isAdding ? (
         <AddTorrentDialog
@@ -315,6 +386,6 @@ export default function Home() {
           onCancel={() => setPendingRemoval(null)}
         />
       ) : null}
-    </main>
+    </div>
   );
 }

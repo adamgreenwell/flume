@@ -10,6 +10,15 @@ export interface EmptyStateProps {
   status: CoreStatus | null;
   /** Opens the add-torrent dialog. */
   onAdd: () => void;
+  /**
+   * Whether the library has torrents that the current view or search hid.
+   *
+   * An empty list means two entirely different things — "you have not added
+   * anything" and "nothing here matches what you asked for" — and the onboarding
+   * copy is actively wrong for the second. Telling a user with 12 torrents that
+   * they have none reads as data loss.
+   */
+  filtered?: boolean;
 }
 
 /**
@@ -26,8 +35,24 @@ export interface EmptyStateProps {
  * @param props - See {@link EmptyStateProps}.
  * @returns The rendered empty state.
  */
-export function EmptyState({ status, onAdd }: EmptyStateProps) {
+export function EmptyState({
+  status,
+  onAdd,
+  filtered = false,
+}: EmptyStateProps) {
   const dhtReady = status?.health === "ready";
+
+  if (filtered) {
+    return (
+      <div className="flex flex-col items-center gap-1.5 px-6 py-16 text-center">
+        <h2 className="text-fg-0 text-sm font-medium">Nothing matches</h2>
+        <p className="text-fg-2 max-w-sm text-xs leading-relaxed">
+          No torrent in this view matches your search. Everything you have added
+          is still here — clear the search or pick another view to see it.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="border-line flex flex-1 flex-col items-center justify-center gap-4 rounded-xl border border-dashed px-6 py-16 text-center">
