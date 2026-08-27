@@ -23,6 +23,7 @@ import type {
   Settings,
   TorrentDetail,
   TorrentFileState,
+  TorrentPreview,
   TorrentSummary,
 } from "@/lib/ipc/types";
 
@@ -349,6 +350,77 @@ function detailFor(id: number): TorrentDetail {
   };
 }
 
+/**
+ * The design's own add-sheet fixture.
+ *
+ * Chosen because it exercises the states a single-ISO torrent never reaches:
+ * nested folders, a mix of file types, a 41.8 GB file beside a 24 MB one, and
+ * one file already on disk so the deselect-and-explain path is visible.
+ */
+const PREVIEW: TorrentPreview = {
+  infoHash: "9f2c4a1d3b5e7f9a0c2e4b6d8f0a1c3e5b7d9e17",
+  name: "Sprite Fright — Blender Open Movie (4K ProRes master)",
+  // Exactly the sum of the file lengths below. The engine computes this the
+  // same way, so a mock that disagreed would only ever mislead.
+  totalBytes: 62_304_022_200,
+  alreadyAdded: false,
+  savePath: "/Volumes/Media/Film",
+  freeBytes: 1_420_000_000_000,
+  seenPeers: 6,
+  files: [
+    {
+      index: 0,
+      path: "01 Final Renders/sprite-fright-4k-prores.mov",
+      length: 41_800_000_000,
+    },
+    {
+      index: 1,
+      path: "01 Final Renders/sprite-fright-1080p-h264.mp4",
+      length: 6_400_000_000,
+    },
+    {
+      index: 2,
+      path: "01 Final Renders/sprite-fright-4k-hdr.mkv",
+      length: 3_900_000_000,
+    },
+    {
+      index: 3,
+      path: "02 Production Files/scenes.blend",
+      length: 4_200_000_000,
+    },
+    {
+      index: 4,
+      path: "02 Production Files/textures.zip",
+      length: 3_100_000_000,
+    },
+    { index: 5, path: "02 Production Files/rigs.blend", length: 1_900_000_000 },
+    {
+      index: 6,
+      path: "02 Production Files/linked-assets.blend",
+      length: 600_000_000,
+    },
+    { index: 7, path: "03 Extras/making-of-1080p.mp4", length: 380_000_000 },
+    { index: 8, path: "03 Extras/poster-artwork.png", length: 24_000_000 },
+    { index: 9, path: "03 Extras/credits.txt", length: 18_000 },
+    { index: 10, path: "README.md", length: 4_200 },
+  ],
+  // The 1080p cut, matching the design's fixture: it is the one the sheet
+  // deselects and explains in the footer.
+  alreadyOnDisk: [
+    false,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ],
+};
+
 const DETAIL: TorrentDetail = {
   peers: [
     {
@@ -456,6 +528,12 @@ export function install(): void {
         case "get_settings":
         case "update_settings":
           return SETTINGS;
+        case "preview_torrent":
+          return PREVIEW;
+        case "discard_preview":
+          return null;
+        case "confirm_add":
+          return null;
         case "get_torrent_files":
           return FILES;
         case "get_torrent_detail":

@@ -61,6 +61,18 @@ import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
 export default function Home() {
   const { telemetry, error, isLoading } = useTelemetry();
   const history = useThroughputHistory(telemetry);
+
+  // Mean download rate over the samples collected so far. The add sheet
+  // estimates a finish time against it, and says which window it is using —
+  // the design asks for a 7-day rolling average, which Flume does not persist
+  // across sessions yet.
+  const averageDownBps = useMemo(
+    () =>
+      history.length === 0
+        ? null
+        : history.reduce((sum, s) => sum + s.downBps, 0) / history.length,
+    [history],
+  );
   const [isAdding, setIsAdding] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<TorrentSummary | null>(
     null,
@@ -353,6 +365,7 @@ export default function Home() {
         <AddTorrentDialog
           droppedPath={droppedPath}
           initialMagnet={incomingMagnet}
+          rateBps={averageDownBps}
           onClose={() => {
             setIsAdding(false);
             setDroppedPath(undefined);
