@@ -189,6 +189,7 @@ fn settings_match_the_typescript_mirror() {
             "uploadLimitBps",
             "proxyUrl",
             "theme",
+            "density",
         ],
         "Settings",
     );
