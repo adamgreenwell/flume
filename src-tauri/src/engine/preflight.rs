@@ -89,7 +89,20 @@ mod tests {
             .join("flume-not-created-yet")
             .join("nor-this");
 
-        assert_eq!(free_bytes(&missing), free_bytes(&std::env::temp_dir()));
+        let walked = free_bytes(&missing).expect("walked up to the temp volume");
+        let direct = free_bytes(&std::env::temp_dir()).expect("temp volume");
+
+        // Compared with a tolerance, not for equality. These are two separate
+        // readings of a live filesystem, and anything else on the machine can
+        // allocate a block between them — which it did, and turned this into a
+        // flake. What the test is actually asserting is that the walk landed on
+        // the *same volume*, and a wrong volume would be off by far more than a
+        // rounding of the total.
+        let drift = walked.abs_diff(direct);
+        assert!(
+            drift < direct / 100,
+            "expected the same volume: walked {walked}, direct {direct}"
+        );
     }
 
     #[test]
