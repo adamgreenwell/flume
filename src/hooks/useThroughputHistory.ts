@@ -6,19 +6,54 @@ import { WINDOW_SIZE, type ThroughputSample } from "@/lib/chart";
 import type { TelemetrySnapshot } from "@/lib/ipc/types";
 
 /**
- * Keeps the last minute of session throughput.
+ * Keeps the last minute of a rate pair.
  *
- * Held here rather than in the engine because it is presentation state: the
- * chart is the only thing that wants it, it is cheap to accumulate, and
- * pushing sixty samples across IPC every tick to redraw a chart that already
- * has fifty-nine of them would be per-tick waste for no gain.
+ * Held in the frontend rather than the engine because it is presentation
+ * state: a chart is the only thing that wants it, it is cheap to accumulate,
+ * and pushing sixty samples across IPC every tick to redraw a chart that
+ * already has fifty-nine of them would be per-tick waste for no gain.
  *
- * Samples are keyed on the session's uptime rather than on object identity.
- * React can re-run an effect with the same snapshot — Strict Mode does it
- * deliberately — and two consecutive ticks can carry byte-identical rates, so
- * comparing values cannot tell a repeat from a genuine second of steady
- * transfer. Uptime increments once per tick and is the only field that
- * reliably does.
+ * `tick` is what makes a sample a sample. React can re-run an effect with the
+ * same values — Strict Mode does it deliberately — and two consecutive seconds
+ * of steady transfer carry byte-identical rates, so comparing values cannot
+ * tell a repeat from a genuine second. The caller passes something that
+ * increments once per real tick instead; the session's uptime is the only
+ * field that reliably does.
+ *
+ * @param downBps - Download rate for this tick.
+ * @param upBps - Upload rate for this tick.
+ * @param tick - Monotonic per-tick key, or `null` before the first tick.
+ * @returns Up to {@link WINDOW_SIZE} samples, oldest first.
+ */
+export function useRateHistory(
+  downBps: number,
+  upBps: number,
+  tick: number | null,
+): ThroughputSample[] {
+  const [history, setHistory] = useState<ThroughputSample[]>([]);
+  const lastTick = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (tick === null || lastTick.current === tick) return;
+
+    // A backwards jump means the engine restarted under us, or the caller
+    // switched to a different subject. Either way the old samples describe
+    // something that is no longer on screen, so the window starts again rather
+    // than splicing two series into one misleading line.
+    const restarted = lastTick.current !== null && tick < lastTick.current;
+    lastTick.current = tick;
+
+    const sample = { downBps, upBps };
+    setHistory((current) =>
+      restarted ? [sample] : [...current, sample].slice(-WINDOW_SIZE),
+    );
+  }, [downBps, upBps, tick]);
+
+  return history;
+}
+
+/**
+ * The last minute of session-wide throughput.
  *
  * @param telemetry - The latest snapshot, or `null` before the first arrives.
  * @returns Up to {@link WINDOW_SIZE} samples, oldest first.
@@ -26,27 +61,9 @@ import type { TelemetrySnapshot } from "@/lib/ipc/types";
 export function useThroughputHistory(
   telemetry: TelemetrySnapshot | null,
 ): ThroughputSample[] {
-  const [history, setHistory] = useState<ThroughputSample[]>([]);
-  const lastUptime = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!telemetry) return;
-
-    const { uptimeSeconds, downloadBps, uploadBps } = telemetry.core;
-    if (lastUptime.current === uptimeSeconds) return;
-
-    // A backwards jump means the engine restarted under us. The old samples
-    // describe a session that no longer exists, so the window starts again
-    // rather than splicing two sessions into one misleading line.
-    const restarted =
-      lastUptime.current !== null && uptimeSeconds < lastUptime.current;
-    lastUptime.current = uptimeSeconds;
-
-    const sample = { downBps: downloadBps, upBps: uploadBps };
-    setHistory((current) =>
-      restarted ? [sample] : [...current, sample].slice(-WINDOW_SIZE),
-    );
-  }, [telemetry]);
-
-  return history;
+  return useRateHistory(
+    telemetry?.core.downloadBps ?? 0,
+    telemetry?.core.uploadBps ?? 0,
+    telemetry?.core.uptimeSeconds ?? null,
+  );
 }

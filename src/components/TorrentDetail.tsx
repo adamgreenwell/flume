@@ -1,13 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { formatBytes } from "@/lib/format";
-import {
-  getTorrentDetail,
-  getTorrentFiles,
-  setOnlyFiles,
-} from "@/lib/ipc/client";
+import { useRateHistory } from "@/hooks/useThroughputHistory";
+import { formatBytes, formatDuration, formatSpeed } from "@/lib/format";
+import { getTorrentFiles, setOnlyFiles } from "@/lib/ipc/client";
 import {
   isCommandError,
   type TorrentDetail as TorrentDetailData,
@@ -16,102 +13,98 @@ import {
 } from "@/lib/ipc/types";
 
 import { Button } from "./Button";
+import { Chip } from "./Chip";
 import { FragmentStrip } from "./FragmentStrip";
+import { NoteCard } from "./NoteCard";
 import { PeerList } from "./PeerList";
+import { PieceStrip } from "./PieceStrip";
 import { Skeleton } from "./Skeleton";
-import { SwarmSummary } from "./SwarmSummary";
-import { PieceHeatmap } from "./PieceHeatmap";
-import { ProgressBar } from "./ProgressBar";
+import { StatCard } from "./StatCard";
+import { ThroughputChart } from "./ThroughputChart";
 import { TrackerList } from "./TrackerList";
 
-/** Tabs available in the detail panel. */
-const TABS = ["files", "peers", "trackers", "pieces"] as const;
+/** The inspector's tabs, in order. */
+const TABS = ["overview", "files", "peers", "trackers"] as const;
 
-/** One of {@link TABS}. */
+/** Which tab is showing. */
 export type DetailTab = (typeof TABS)[number];
-
-/** How often peers and piece data refresh while the panel is open. */
-const DETAIL_REFRESH_MS = 2000;
 
 /** Props for {@link TorrentDetail}. */
 export interface TorrentDetailProps {
   /** The torrent being inspected. */
   torrent: TorrentSummary;
-  /** Called when the panel should close. */
+  /** Its detail, or `null` while the first response is outstanding. */
+  detail: TorrentDetailData | null;
+  /** Session uptime, used as the per-tick key for the throughput chart. */
+  tick: number | null;
+  /** Configured download limit, for the chart's ceiling. */
+  limitBps: number | null;
+  /** Close the inspector. */
   onClose: () => void;
 }
 
 /**
- * Per-torrent detail: files, peers, trackers, and a piece map.
+ * The torrent inspector.
  *
- * All of this is fetched on demand rather than streamed in telemetry. It is
- * per-torrent and only interesting while the panel is open, so pushing it to
- * every client every second would grow the telemetry payload with the torrent
- * count for no benefit.
+ * ## What is deliberately not here
  *
- * Peers and pieces refresh on their own slower interval while open, since they
- * change continuously; the file list only refreshes after an edit.
+ * The design's centrepiece is a panel ranking every candidate constraint on a
+ * download and marking exactly one as binding. It is not built, and not
+ * stubbed. Ranking constraints needs piece availability — the union of the
+ * connected peers' bitfields — which librqbit 9.0.0 does not expose (see issue
+ * #79). The design says plainly that a wrong answer there is worse than no
+ * panel, and a panel that guessed would be exactly that.
+ *
+ * The surfaces that lean on the same missing number are out for the same
+ * reason, rather than being filled with an approximation that looks like the
+ * real thing:
+ *
+ * - the availability column of the stat strip ("4.2×, rarest piece on 4 peers")
+ * - the availability histogram under the piece map
+ * - the seeds/leechers split in the peers column
+ * - the trackers tab's plain-English verdict, which needs per-tracker announce
+ *   status librqbit also does not expose
+ *
+ * Everything above is a real feature waiting on real data, not an omission.
  *
  * @param props - See {@link TorrentDetailProps}.
- * @returns The rendered panel.
+ * @returns The rendered inspector.
  */
-export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
-  const [tab, setTab] = useState<DetailTab>("files");
+export function TorrentDetail({
+  torrent,
+  detail,
+  tick,
+  limitBps,
+  onClose,
+}: TorrentDetailProps) {
+  const [tab, setTab] = useState<DetailTab>("overview");
   const [files, setFiles] = useState<TorrentFileState[] | null>(null);
-  const [detail, setDetail] = useState<TorrentDetailData | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const describe = (caught: unknown, fallback: string) =>
-    isCommandError(caught) ? caught.message : fallback;
+  const history = useRateHistory(torrent.downloadBps, torrent.uploadBps, tick);
 
-  const applyLoaded = useCallback((loaded: TorrentFileState[]) => {
-    setFiles(loaded);
-    setSelected(new Set(loaded.filter((f) => f.selected).map((f) => f.index)));
-    setError(null);
-  }, []);
-
-  // Files load once per torrent; they only change when the user edits them.
   useEffect(() => {
     let active = true;
     getTorrentFiles(torrent.id)
-      .then((loaded) => {
-        if (active) applyLoaded(loaded);
+      .then((next) => {
+        if (!active) return;
+        setFiles(next);
+        setSelected(
+          new Set(next.filter((f) => f.selected).map((f) => f.index)),
+        );
       })
       .catch((caught: unknown) => {
-        if (active) {
-          setError(describe(caught, "Could not read this torrent's files."));
-        }
+        if (!active) return;
+        setError(
+          isCommandError(caught)
+            ? caught.message
+            : "Could not read this torrent's files.",
+        );
       });
     return () => {
       active = false;
-    };
-  }, [torrent.id, applyLoaded]);
-
-  // Peers and pieces move constantly, so poll them while the panel is open.
-  // Chained timeouts rather than an interval, so a slow call cannot stack.
-  useEffect(() => {
-    let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-
-    const tick = () => {
-      getTorrentDetail(torrent.id)
-        .then((next) => {
-          if (active) setDetail(next);
-        })
-        .catch(() => {
-          // Transient while a torrent restarts; the next tick recovers.
-        })
-        .finally(() => {
-          if (active) timer = setTimeout(tick, DETAIL_REFRESH_MS);
-        });
-    };
-    tick();
-
-    return () => {
-      active = false;
-      clearTimeout(timer);
     };
   }, [torrent.id]);
 
@@ -123,45 +116,45 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const originalSelection = new Set(
-    (files ?? []).filter((f) => f.selected).map((f) => f.index),
+  const saveSelection = useCallback(
+    async (next: ReadonlySet<number>) => {
+      setSelected(next);
+      setIsSaving(true);
+      setError(null);
+      try {
+        await setOnlyFiles(torrent.id, [...next]);
+      } catch (caught: unknown) {
+        setError(
+          isCommandError(caught)
+            ? caught.message
+            : "Could not change the file selection.",
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [torrent.id],
   );
-  const isDirty =
-    files !== null &&
-    (selected.size !== originalSelection.size ||
-      [...selected].some((i) => !originalSelection.has(i)));
-
-  const save = async () => {
-    setIsSaving(true);
-    setError(null);
-    try {
-      await setOnlyFiles(
-        torrent.id,
-        [...selected].sort((a, b) => a - b),
-      );
-      // Re-read rather than assuming the write took: the engine may normalise
-      // the selection, and progress has moved on since the panel opened.
-      applyLoaded(await getTorrentFiles(torrent.id));
-    } catch (caught: unknown) {
-      setError(describe(caught, "Could not change the file selection."));
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const toggle = (index: number) => {
-    const next = new Set(selected);
-    if (next.has(index)) next.delete(index);
-    else next.add(index);
-    setSelected(next);
-  };
 
   const counts: Record<DetailTab, number | null> = {
+    overview: null,
     files: files?.length ?? null,
     peers: detail?.peers.length ?? null,
     trackers: detail?.trackers.length ?? null,
-    pieces: null,
   };
+
+  const ratio =
+    torrent.progressBytes === 0
+      ? 0
+      : torrent.uploadedBytes / torrent.progressBytes;
+
+  const pieceLabel = useMemo(() => {
+    if (!detail?.pieces) return "Pieces";
+    const { totalPieces, piecesPerBucket } = detail.pieces;
+    return `Pieces · ${totalPieces.toLocaleString()}${
+      piecesPerBucket > 1 ? ` · ${piecesPerBucket} per column` : ""
+    }`;
+  }, [detail]);
 
   return (
     <div
@@ -174,25 +167,78 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
         role="dialog"
         aria-modal="true"
         aria-label={`Details for ${torrent.name}`}
-        className="border-line bg-bg-1 flex max-h-[82vh] w-full max-w-2xl flex-col gap-4 rounded-xl border p-5 shadow-2xl"
+        className="border-line bg-bg-0 flex h-[900px] max-h-[92vh] w-full max-w-[1440px] flex-col overflow-hidden rounded-lg border shadow-2xl"
       >
-        <div className="min-w-0">
-          <h2
-            className="text-fg-0 truncate text-base font-semibold"
-            title={torrent.name}
-          >
-            {torrent.name}
-          </h2>
-          <p className="text-fg-2 mt-0.5 text-xs">
-            <span className="font-mono tabular-nums">
-              {formatBytes(torrent.progressBytes)} /{" "}
-              {formatBytes(torrent.totalBytes)}
-            </span>
-          </p>
+        <div className="border-line bg-bg-1 flex h-[68px] shrink-0 items-center gap-3.5 border-b px-6">
+          <div className="min-w-0 grow">
+            <h2
+              className="truncate text-[17px] font-semibold tracking-[-0.02em]"
+              title={torrent.name}
+            >
+              {torrent.name}
+            </h2>
+            <p className="text-fg-2 mt-0.5 truncate text-[11.5px]">
+              {torrent.detail}
+            </p>
+          </div>
+          <Chip onClick={onClose} aria-label="Close details">
+            Close
+          </Chip>
+        </div>
+
+        <div className="border-line bg-bg-1 flex h-[88px] shrink-0 border-b">
+          <StatCard
+            size="strip"
+            label="Progress"
+            value={`${Math.round((torrent.progressBytes / Math.max(torrent.totalBytes, 1)) * 100)}%`}
+            hint={`${formatBytes(torrent.progressBytes)} of ${formatBytes(torrent.totalBytes)}`}
+          />
+          <StatCard
+            size="strip"
+            label="Down"
+            value={formatSpeed(torrent.downloadBps)}
+            hint={
+              torrent.etaSeconds === null
+                ? "no estimate at this rate"
+                : `${formatDuration(torrent.etaSeconds)} left`
+            }
+          />
+          <StatCard
+            size="strip"
+            label="Up"
+            value={formatSpeed(torrent.uploadBps)}
+            hint={`${formatBytes(torrent.uploadedBytes)} uploaded`}
+          />
+          <StatCard
+            size="strip"
+            label="Peers"
+            value={
+              torrent.knownPeers === 0
+                ? "—"
+                : `${torrent.livePeers} / ${torrent.knownPeers}`
+            }
+            hint="connected of known"
+          />
+          <StatCard
+            size="strip"
+            label="Ratio"
+            value={ratio.toFixed(2)}
+            hint={`${formatBytes(torrent.uploadedBytes)} up, ${formatBytes(torrent.progressBytes)} down`}
+          />
+          <StatCard
+            size="strip"
+            label="Pieces"
+            value={
+              detail?.pieces
+                ? `${detail.pieces.piecesComplete.toLocaleString()} / ${detail.pieces.totalPieces.toLocaleString()}`
+                : "—"
+            }
+            hint={detail?.pieces ? "verified of total" : "not running"}
+          />
         </div>
 
         <div
-          className="border-line flex gap-1 border-b"
+          className="border-line flex h-[42px] shrink-0 items-end gap-1 border-b px-6"
           role="tablist"
           aria-label="Torrent details"
         >
@@ -203,15 +249,15 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
               role="tab"
               aria-selected={tab === name}
               onClick={() => setTab(name)}
-              className={`-mb-px border-b-2 px-3 py-2 text-sm capitalize transition-colors ${
+              className={`-mb-px border-b-2 px-3 pb-2.5 text-[12.5px] capitalize transition-colors ${
                 tab === name
-                  ? "border-acc text-fg-0"
+                  ? "border-acc text-fg-0 font-medium"
                   : "text-fg-2 hover:text-fg-0 border-transparent"
               }`}
             >
               {name}
               {counts[name] !== null ? (
-                <span className="text-fg-3 ml-1.5 font-mono text-xs">
+                <span className="flume-num text-fg-3 ml-1.5 text-[11px]">
                   {counts[name]}
                 </span>
               ) : null}
@@ -219,116 +265,166 @@ export function TorrentDetail({ torrent, onClose }: TorrentDetailProps) {
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel">
-          {tab === "files" ? (
-            files === null ? (
-              <Skeleton rows={3} label="Loading files" />
-            ) : (
-              <ul className="border-line bg-bg-0 rounded-md border">
-                {files.map((file) => (
-                  <li
-                    key={file.index}
-                    className="border-line border-b px-3 py-2.5 last:border-b-0"
-                  >
-                    <label className="flex cursor-pointer items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(file.index)}
-                        onChange={() => toggle(file.index)}
-                        className="accent-acc h-4 w-4 shrink-0"
-                      />
-                      <span
-                        className={`min-w-0 flex-1 truncate text-sm ${selected.has(file.index) ? "text-fg-0" : "text-fg-3"}`}
-                        title={file.path}
-                      >
-                        {file.path}
-                      </span>
-                      <span className="text-fg-2 shrink-0 font-mono text-xs tabular-nums">
-                        {formatBytes(file.progressBytes)} /{" "}
-                        {formatBytes(file.length)}
-                      </span>
-                    </label>
-                    <div className="mt-1.5 flex flex-col gap-1 pl-7">
-                      <ProgressBar
-                        value={
-                          file.length === 0
-                            ? 1
-                            : file.progressBytes / file.length
-                        }
-                        state={torrent.state}
-                        label={`${file.path} progress`}
-                      />
-                      {/* Overall progress says how much; the fragment strip
-                          says which parts, which is what matters when a
-                          download stalls against a partial swarm. */}
-                      <FragmentStrip
-                        buckets={file.pieceBuckets}
-                        label={file.path}
-                      />
-                      {file.pieceBuckets.length > 0 ? (
-                        <p className="text-fg-3 text-[10px]">
-                          pieces {file.firstPiece.toLocaleString()}–
-                          {(file.lastPiece - 1).toLocaleString()}
-                        </p>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )
-          ) : null}
-
-          {tab === "peers" ? (
-            <div className="flex flex-col gap-3">
-              {detail ? <SwarmSummary swarm={detail.swarm} /> : null}
-              <PeerList peers={detail?.peers ?? []} />
-            </div>
-          ) : null}
-
-          {tab === "trackers" ? (
-            <TrackerList trackers={detail?.trackers ?? []} />
-          ) : null}
-
-          {tab === "pieces" ? (
-            detail?.pieces ? (
-              <PieceHeatmap pieces={detail.pieces} />
-            ) : (
-              <p className="text-fg-3 py-6 text-center text-xs">
-                Piece information appears once the torrent is running or paused.
-              </p>
-            )
-          ) : null}
-        </div>
-
         {error ? (
           <p
-            className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-xs"
+            className="border-line bg-err/10 text-err shrink-0 border-b px-6 py-2 text-[12.5px]"
             role="alert"
           >
             {error}
           </p>
         ) : null}
 
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-fg-3 text-xs">
-            {tab === "files" && isDirty
-              ? "Deselected files stop downloading. Existing data is kept."
-              : ""}
-          </p>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              Close
-            </Button>
-            {tab === "files" ? (
-              <Button
-                variant="primary"
-                onClick={() => void save()}
-                disabled={!isDirty || selected.size === 0 || isSaving}
-              >
-                {isSaving ? "Saving…" : "Save selection"}
-              </Button>
-            ) : null}
-          </div>
+        <div
+          className="flex min-h-0 grow gap-[22px] overflow-y-auto px-6 py-[22px]"
+          role="tabpanel"
+        >
+          {tab === "overview" ? (
+            <>
+              <div className="flex min-w-0 grow flex-col gap-[22px]">
+                <section className="border-line bg-bg-1 rounded-lg border">
+                  <ThroughputChart
+                    history={history}
+                    limitBps={limitBps}
+                    label="This torrent"
+                  />
+                </section>
+
+                <section className="border-line bg-bg-1 flex flex-col gap-3 rounded-lg border p-5">
+                  <div className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
+                    {pieceLabel}
+                  </div>
+                  {detail?.pieces ? (
+                    <PieceStrip pieces={detail.pieces} />
+                  ) : detail === null ? (
+                    <Skeleton rows={1} label="Loading pieces" />
+                  ) : (
+                    <p className="text-fg-2 text-[11.5px]">
+                      Piece detail appears once this torrent is running. A
+                      torrent that is still starting up or has errored has no
+                      piece state to read.
+                    </p>
+                  )}
+                </section>
+              </div>
+
+              <aside className="flex w-[352px] shrink-0 flex-col gap-[22px]">
+                {detail ? <NoteCard note={detail.note} /> : null}
+
+                <section className="border-line bg-bg-1 flex flex-col gap-3 rounded-lg border p-5">
+                  <div className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
+                    Torrent
+                  </div>
+                  <dl className="flex flex-col gap-2.5 text-[11.5px]">
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-fg-3">Info hash</dt>
+                      <dd className="flume-num text-fg-1 selectable break-all">
+                        {torrent.infoHash}
+                      </dd>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-fg-3">Saving to</dt>
+                      <dd
+                        className="text-fg-1 selectable break-all"
+                        title={torrent.outputFolder}
+                      >
+                        {torrent.outputFolder}
+                      </dd>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <dt className="text-fg-3">Total size</dt>
+                      <dd className="flume-num text-fg-1">
+                        {formatBytes(torrent.totalBytes)}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+              </aside>
+            </>
+          ) : null}
+
+          {tab === "files" ? (
+            <div className="min-w-0 grow">
+              {files === null ? (
+                <Skeleton rows={4} label="Loading files" />
+              ) : (
+                <ul className="border-line bg-bg-1 overflow-hidden rounded-lg border">
+                  {files.map((file) => {
+                    const on = selected.has(file.index);
+                    return (
+                      <li
+                        key={file.index}
+                        className="border-line flex items-center gap-3 border-b px-4 py-2.5 last:border-b-0"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={isSaving}
+                          aria-label={file.path}
+                          onChange={() => {
+                            const next = new Set(selected);
+                            if (on) next.delete(file.index);
+                            else next.add(file.index);
+                            void saveSelection(next);
+                          }}
+                          className="accent-acc shrink-0"
+                        />
+                        <span className="min-w-0 grow">
+                          <span
+                            className="block truncate text-[12.5px]"
+                            title={file.path}
+                          >
+                            {file.path}
+                          </span>
+                          <span className="mt-1 block">
+                            <FragmentStrip
+                              buckets={file.pieceBuckets}
+                              label={`Downloaded parts of ${file.path}`}
+                            />
+                          </span>
+                        </span>
+                        <span className="flume-num text-fg-2 shrink-0 text-[11.5px]">
+                          {formatBytes(file.progressBytes)} /{" "}
+                          {formatBytes(file.length)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ) : null}
+
+          {tab === "peers" ? (
+            <div className="min-w-0 grow">
+              {detail === null ? (
+                <Skeleton rows={4} label="Loading peers" />
+              ) : (
+                <PeerList peers={detail.peers} />
+              )}
+            </div>
+          ) : null}
+
+          {tab === "trackers" ? (
+            <div className="min-w-0 grow">
+              {detail === null ? (
+                <Skeleton rows={3} label="Loading trackers" />
+              ) : (
+                <TrackerList trackers={detail.trackers} />
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="border-line bg-bg-1 flex h-[62px] shrink-0 items-center gap-3 border-t px-6">
+          <span className="text-fg-2 text-[11.5px]">
+            {isSaving
+              ? "Saving the file selection…"
+              : "File selection applies immediately."}
+          </span>
+          <span className="grow" />
+          <Button size="dialog" onClick={onClose}>
+            Done
+          </Button>
         </div>
       </div>
     </div>
