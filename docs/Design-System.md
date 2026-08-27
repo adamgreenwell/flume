@@ -155,6 +155,53 @@ real mechanism rather than a Storybook-only wrapper.
 of `npm run check` — stories are already typechecked by `tsc`, and a full static
 build on every run costs more than the config churn it would catch.
 
+## The library window
+
+The main screen is a two-column, two-row grid: a `248px` rail beside `1fr`,
+under a `44px` title bar. The main column stacks a `56px` toolbar, a `28px`
+column header, the scrolling list, and a `116px` dock.
+
+Row columns, in order and at these exact widths:
+
+| Column       | Width |
+| ------------ | ----- |
+| State        | `18`  |
+| Name         | `1fr` |
+| Progress     | `180` |
+| Down         | `86`  |
+| Up           | `86`  |
+| Peers        | `78`  |
+| Swarm health | `124` |
+
+Rows are `58px` comfortable, `40px` compact, `0 18px` padding, `16px` gap.
+Density is a `data-density` attribute on `<html>`, so one attribute re-lays the
+whole list rather than every row branching on a prop. Compact removes the meta
+line rather than shrinking it — at 40px there is no room, and a squeezed
+sentence is the first thing to become unreadable.
+
+### The one per-platform difference
+
+The title bar reserves `88px` at the **left** on macOS for the traffic lights,
+and `138px` at the **right** on Windows and Linux. That inset is the only thing
+in the entire app that differs between platforms; everything inside the window
+is identical on all three.
+
+### Swarm health
+
+The column reports a verdict, not a peer count. What it can say today:
+
+| Verdict   | Means                                    | Shown as  |
+| --------- | ---------------------------------------- | --------- |
+| `seeding` | Complete and serving                     | Seeding   |
+| `none`    | No reachable peer holds the remainder    | No seeds  |
+| `idle`    | Paused, checking or errored — not trying | Idle      |
+| `unknown` | Connected, but coverage is unknowable    | Connected |
+
+`unknown` is not a plumbing gap. Telling a thin swarm from a healthy one needs
+piece availability, which librqbit 9.0.0 does not expose — see
+[issue #79](https://github.com/adamgreenwell/flume/issues/79). Do not derive a
+swarm verdict from peer counts and present it as an availability judgement.
+
 ## Components
 
 `src/components/` holds the shared primitives. Check whether one already exists,
