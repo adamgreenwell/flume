@@ -10,8 +10,8 @@ use tauri::State;
 
 use crate::{
     engine::{
-        CoreStatus, EngineError, TelemetrySnapshot, TorrentDetail, TorrentFileState,
-        TorrentPreview, TorrentSource,
+        CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
+        TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
     },
     settings::{Settings, SettingsError},
     state::AppState,
@@ -103,6 +103,60 @@ impl From<SettingsError> for CommandError {
             message: err.to_string(),
         }
     }
+}
+
+/// Whether this launch found no settings file.
+///
+/// The first-run screen shows on the strength of this. It is decided once at
+/// startup and does not change while the app runs: the screen writes settings
+/// as the user answers it, so a freshly-read value would flip halfway through
+/// and take the screen away mid-question.
+///
+/// # Errors
+///
+/// Never fails; the `Result` keeps the signature uniform with the others.
+#[tauri::command]
+pub async fn is_first_run(state: State<'_, AppState>) -> Result<bool, CommandError> {
+    Ok(state.is_first_run())
+}
+
+/// Lists other BitTorrent clients found on this machine.
+///
+/// Reads only their torrent stores and download directories. Categories and
+/// seeding rules are deliberately not read: Flume has no model for either, so
+/// there is nowhere to put them and claiming otherwise would be a lie the
+/// first-run screen tells.
+///
+/// # Errors
+///
+/// Never fails; a machine with no other clients returns an empty list, as does
+/// one whose home directory cannot be determined.
+#[tauri::command]
+pub async fn detect_clients() -> Result<Vec<DetectedClient>, CommandError> {
+    Ok(Engine::detect_clients())
+}
+
+/// Takes over every torrent in another client's store.
+///
+/// Nothing is downloaded again: each torrent is added over its existing files
+/// and librqbit verifies them in place, so anything the other client had
+/// finished arrives complete.
+///
+/// # Errors
+///
+/// Returns [`CommandError`] only if the engine is unavailable. Individual
+/// torrents that cannot be read are counted in the outcome rather than
+/// aborting the import.
+#[tauri::command]
+pub async fn import_client(
+    state: State<'_, AppState>,
+    torrents_dir: String,
+    output_folder: Option<String>,
+) -> Result<ImportOutcome, CommandError> {
+    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    Ok(engine
+        .import_from(std::path::Path::new(&torrents_dir), output_folder)
+        .await?)
 }
 
 /// Returns the current user settings.

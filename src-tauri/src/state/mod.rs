@@ -20,16 +20,28 @@ pub struct AppState {
     settings: RwLock<Settings>,
     /// Directory holding settings and session state. Not user-configurable.
     session_dir: PathBuf,
+    /// Whether no settings file existed when the app started.
+    ///
+    /// Decided once, at startup, and never revised. The first-run screen
+    /// writes settings as the user answers it, so a value re-read later would
+    /// flip to false halfway through and take the screen with it.
+    first_run: bool,
 }
 
 impl AppState {
     /// Creates state with the given settings and session directory.
-    pub fn new(settings: Settings, session_dir: PathBuf) -> Self {
+    pub fn new(settings: Settings, session_dir: PathBuf, first_run: bool) -> Self {
         Self {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
             session_dir,
+            first_run,
         }
+    }
+
+    /// Whether this launch found no settings file.
+    pub fn is_first_run(&self) -> bool {
+        self.first_run
     }
 
     /// The directory holding settings and session state.

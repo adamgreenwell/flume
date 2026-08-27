@@ -151,6 +151,16 @@ impl Settings {
         })
     }
 
+    /// Whether a settings file exists in `dir`.
+    ///
+    /// Its absence is what "first run" means. Checked rather than inferred
+    /// from the loaded values, because defaults and a file that happens to
+    /// hold the defaults are indistinguishable once loaded.
+    #[must_use]
+    pub fn exists(dir: &Path) -> bool {
+        dir.join(SETTINGS_FILE).exists()
+    }
+
     /// Loads settings from `dir`, falling back to defaults.
     ///
     /// A missing file is normal on first run. A *corrupt* file also falls back

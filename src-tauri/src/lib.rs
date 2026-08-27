@@ -45,6 +45,7 @@ use tauri::Manager;
 #[allow(clippy::expect_used)]
 pub fn run() {
     let session_dir = settings::session_directory();
+    let first_run = !Settings::exists(&session_dir);
     let (settings, problem) = Settings::load(&session_dir);
     if let Some(problem) = &problem {
         // Logged rather than fatal: a user who cannot launch the app cannot
@@ -73,7 +74,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new(settings, session_dir))
+        .manage(AppState::new(settings, session_dir, first_run))
         .invoke_handler(tauri::generate_handler![
             commands::get_core_status,
             commands::get_telemetry,
@@ -87,7 +88,10 @@ pub fn run() {
             commands::get_torrent_files,
             commands::get_torrent_detail,
             commands::get_settings,
-            commands::update_settings
+            commands::update_settings,
+            commands::is_first_run,
+            commands::detect_clients,
+            commands::import_client
         ])
         .setup(|app| {
             let handle = app.handle().clone();
