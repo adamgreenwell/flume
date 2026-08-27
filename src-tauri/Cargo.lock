@@ -2649,9 +2649,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10003b9b157ef1d8352b4ff2e2025fa1544453d40539741779ee918028aba75b"
+checksum = "4349c0f35ede576a87cc2881dc6eb286ff7a1c8fc4d1f7fef95b5c5a530a7174"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2713,9 +2713,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-bencode"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff5c836d4b7913716440645c1745a7550336b40c37a25ec4a190f435d1762767"
+checksum = "be6410a7434e6c2b148931b6d109b57939cfed04cefa86451197c5f5198edf91"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -2730,9 +2730,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-buffers"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37de5100d446a7b34ec0a0172cb48173166eaa551f3c24ef50f77feaab49ca98"
+checksum = "b00e4b6780a30d3c204f778ad64b3c917b842f5c54df38455c361761e7d12ce2"
 dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
@@ -2742,18 +2742,18 @@ dependencies = [
 
 [[package]]
 name = "librqbit-clone-to-owned"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "218f258f5c8eb65e4824a443f7f32fe7ebfe41794dbd52f826dfc7fc1a8c60ad"
+checksum = "929ff2b22b1596c3f3689a79c0b84ee8a01a650a2dd0b6eb7322d6a3b9be0e0e"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "librqbit-core"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86797e72306ef669bddd876f0818c76280635b88850b9d1d6eb436955c8b3823"
+checksum = "f1c33158d5c47ac68771dcf7cca13eb2fa2ee2980efbb6bb5645273e2f08c69b"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2781,9 +2781,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-dht"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f968073bcbc6543bd7510af1c7b84d5d2a876cb284a2a4008b315e17028af96"
+checksum = "575f94f543c16de3088f8aa84175203d65437c8886dc24d383941f408dc26488"
 dependencies = [
  "anyhow",
  "backon",
@@ -2829,9 +2829,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-lsd"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcd5c0645b514ca0042ce16a11722bf5c5f8ef4ab2586c264b91995a1aa61a63"
+checksum = "6d1d2699a46a9dc83693c5fbbf288a17b77a24b9924815a69bfc97853a47af42"
 dependencies = [
  "anyhow",
  "atoi",
@@ -2849,9 +2849,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-peer-protocol"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6eefb0695ac21556dec7810f4225906d44233392a4ff71f5bd172dfd1bf3e62c"
+checksum = "43e4b11349070274a1f77fb432d5e764ed38b310e7cdae8d2c37e0568ceb950e"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -2870,9 +2870,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-sha1-wrapper"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "867d9a29342a0163cab26f9d4fe532b121c51eb40278c83fa3367f24067f3452"
+checksum = "abf23eeda5a8999809c0be52e36b711d062f1d52e2f3cae42d71b7b012a466c7"
 dependencies = [
  "assert_cfg",
  "aws-lc-rs",
@@ -2880,9 +2880,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-tracker-comms"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2959a278745484c763810be667096e2263764cb8cab08b45b3f928146666d2c5"
+checksum = "b561cb29abec85eee031c998f9e0c987f82d3e193b087f4d2bdc8f00d825796c"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2909,9 +2909,9 @@ dependencies = [
 
 [[package]]
 name = "librqbit-upnp"
-version = "9.0.0"
+version = "9.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6147aa52dc13c6e55385de06e942c37602dbec4f490e449315625748655adcc9"
+checksum = "5b950b4dfe2102d3047f3fac70763c494b63a50f04a00d3dd36102d740e9bf33"
 dependencies = [
  "anyhow",
  "bstr",
