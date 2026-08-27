@@ -186,6 +186,32 @@ and `138px` at the **right** on Windows and Linux. That inset is the only thing
 in the entire app that differs between platforms; everything inside the window
 is identical on all three.
 
+### The dock chart
+
+Sixty samples at 1 Hz, two series on **one shared scale** — a chart that gave
+upload its own axis would draw a trickle and a torrent at the same height.
+
+The history lives in `useThroughputHistory`, not in the engine. It is
+presentation state: the chart is the only thing that wants it, and pushing
+sixty samples across IPC every tick to redraw a chart that already holds
+fifty-nine of them is per-tick waste for nothing. Samples are keyed on the
+session's uptime, because two consecutive ticks can carry byte-identical rates
+and React can legitimately re-run an effect with the same snapshot.
+
+The ceiling is the configured rate limit when there is one — the useful
+question then is how close you are to it, which a rescaling axis cannot answer.
+Otherwise it is 1, 2 or 5 times a power of ten above the busiest sample, with a
+floor of 1 MB/s so an idle session does not magnify background chatter into
+dramatic peaks.
+
+Segments are smooth-stepped, flat out of one sample and flat into the next. A
+straight line between two readings claims the rate moved evenly between them,
+which is a measurement nobody took.
+
+A partial window is right-aligned: ten seconds of history draws ten seconds of
+line at the right edge rather than stretching across the full width and
+implying a minute it does not have.
+
 ### Swarm health
 
 The column reports a verdict, not a peer count. What it can say today:

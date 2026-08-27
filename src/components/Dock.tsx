@@ -1,9 +1,11 @@
 "use client";
 
+import type { ThroughputSample } from "@/lib/chart";
 import { formatBytes, formatDuration } from "@/lib/format";
 import type { CoreStatus, TorrentSummary } from "@/lib/ipc/types";
 
 import { StatCard } from "./StatCard";
+import { ThroughputChart } from "./ThroughputChart";
 
 /** Props for {@link Dock}. */
 export interface DockProps {
@@ -11,6 +13,10 @@ export interface DockProps {
   status: CoreStatus | null;
   /** Every torrent in the session, not just the filtered view. */
   torrents: readonly TorrentSummary[];
+  /** The last minute of session throughput, oldest first. */
+  history: readonly ThroughputSample[];
+  /** Configured download limit in bytes/sec, or `null` for unlimited. */
+  limitBps: number | null;
 }
 
 /**
@@ -20,13 +26,14 @@ export interface DockProps {
  * answer "what is this machine doing right now", which does not change because
  * the user typed in the search box.
  *
- * The throughput chart that belongs on the left of this dock is not here yet;
- * it needs a rolling history the telemetry hook does not keep.
+ * The chart takes the left; the aggregate readout takes the rest. The chart is
+ * what makes "it dropped about forty seconds ago" answerable, which is a
+ * question the numbers beside it cannot answer at any size.
  *
  * @param props - See {@link DockProps}.
  * @returns The rendered dock.
  */
-export function Dock({ status, torrents }: DockProps) {
+export function Dock({ status, torrents, history, limitBps }: DockProps) {
   const active = torrents.filter(
     (t) => t.state === "downloading" || t.state === "seeding",
   ).length;
@@ -42,7 +49,9 @@ export function Dock({ status, torrents }: DockProps) {
 
   return (
     <div className="bg-bg-1 border-line flex h-[116px] shrink-0 items-stretch border-t">
-      <div className="grid grow grid-cols-4 content-center gap-x-[18px] gap-y-2.5 px-[22px] py-3.5">
+      <ThroughputChart history={history} limitBps={limitBps} />
+
+      <div className="border-line grid grow grid-cols-4 content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5">
         <StatCard label="Active" value={`${active} of ${torrents.length}`} />
         <StatCard label="Session down" value={formatBytes(downloaded)} />
         <StatCard label="Session up" value={formatBytes(uploaded)} />
