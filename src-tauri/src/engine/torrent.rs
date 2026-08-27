@@ -209,7 +209,7 @@ pub(super) fn eta_seconds(progress_bytes: u64, total_bytes: u64, download_bps: u
 /// same row. The frontend one exists because most durations are formatted
 /// there; this one exists because [`describe`] decides what the sentence says,
 /// and that decision belongs in the engine.
-pub(super) fn format_duration(total_seconds: u64) -> String {
+pub(crate) fn format_duration(total_seconds: u64) -> String {
     let hours = total_seconds / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;

@@ -78,6 +78,12 @@ pub struct PeerInfo {
 pub struct PieceMap {
     /// Total pieces in the torrent.
     pub total_pieces: u32,
+    /// How many of them are downloaded and verified.
+    ///
+    /// Counted from the bitfield rather than inferred from the buckets: a
+    /// bucket holds an averaged level, so summing them back up would give an
+    /// estimate where an exact number is free.
+    pub pieces_complete: u32,
     /// How many pieces each bucket represents.
     pub pieces_per_bucket: u32,
     /// Completion level per bucket, `0..=255`.
@@ -101,6 +107,13 @@ pub struct TorrentDetail {
     pub pieces: Option<PieceMap>,
     /// Peer pool health.
     pub swarm: SwarmStats,
+    /// What this torrent is actually doing, in words.
+    ///
+    /// The panel's reason for existing. Carried on the detail payload rather
+    /// than the 1 Hz summary because only an expanded row shows it, and a
+    /// three-sentence string per torrent per second is a lot of IPC for
+    /// something nobody is reading.
+    pub note: super::note::Note,
 }
 
 /// Downsamples a per-piece present/absent iterator into a compact heatmap.
@@ -114,6 +127,7 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
     if total == 0 {
         return PieceMap {
             total_pieces: 0,
+            pieces_complete: 0,
             pieces_per_bucket: 0,
             buckets: Vec::new(),
         };
@@ -127,10 +141,12 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
     let mut buckets = Vec::with_capacity(bucket_count);
     let mut present_in_bucket = 0usize;
     let mut seen_in_bucket = 0usize;
+    let mut complete = 0u32;
 
     for present in have.take(total) {
         if present {
             present_in_bucket += 1;
+            complete += 1;
         }
         seen_in_bucket += 1;
 
@@ -148,6 +164,7 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
 
     PieceMap {
         total_pieces,
+        pieces_complete: complete,
         pieces_per_bucket: u32::try_from(pieces_per_bucket).unwrap_or(u32::MAX),
         buckets,
     }
