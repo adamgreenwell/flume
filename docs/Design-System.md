@@ -155,6 +155,60 @@ real mechanism rather than a Storybook-only wrapper.
 of `npm run check` — stories are already typechecked by `tsc`, and a full static
 build on every run costs more than the config churn it would catch.
 
+## First run
+
+Shown when no settings file exists — the absence of the file _is_ the signal,
+decided once at startup and never re-read. The screen writes settings as the
+user answers it, so a freshly-read value would flip to false halfway through and
+take the screen away mid-question.
+
+Three questions: where downloads go, how much of the connection Flume may use,
+and light or dark. Everything on it is also in Settings; it exists for the
+handful of choices that are irritating to discover later, not as a second
+settings screen.
+
+### The import card
+
+Flume detects Transmission, qBittorrent and Deluge by looking for their torrent
+stores under the user's home directory, and reads each one's download folder out
+of its config. A client is only offered if its store holds at least one
+`.torrent` — an installed but empty client has nothing to give, and listing it
+would advertise work that does not exist.
+
+Importing adds every `.torrent` with librqbit's `overwrite`, which is what makes
+"nothing is downloaded again" true rather than aspirational: the engine hashes
+what is already at that path and keeps every piece that verifies, so a torrent
+the other client had finished arrives complete and starts seeding.
+
+Reading another client's config is best-effort throughout. It is not an API —
+the file may be missing, half-written, or from a version that spelled the key
+differently — so every read degrades to "could not tell" rather than failing the
+scan. A client whose config is unreadable is still offered; its torrents just
+land in Flume's own folder, and the card says so.
+
+| Client       | Format | Wrinkle                                                        |
+| ------------ | ------ | -------------------------------------------------------------- |
+| Transmission | JSON   | none                                                           |
+| qBittorrent  | INI    | the key moved between versions; both spellings accepted        |
+| Deluge       | JSON   | two objects back to back — a version header, then the settings |
+
+Deluge's defeats both `from_str` (trailing data) and "parse from the first
+brace" (that is the header), so its config is read as a stream of values —
+which also survives the header gaining fields.
+
+### What is not imported
+
+**Categories and seeding rules.** The design asks for them, but Flume has no
+category model and no per-torrent rules, so there is nowhere to put them. They
+are not read at all, rather than read and dropped, and the card does not claim
+to bring them across.
+
+Two of the design's three questions also changed, for the same kind of reason:
+the measured-bandwidth caption would need a speed test, which is a surprising
+network call to make on first launch, and "which connection should torrent
+traffic use" needs interface binding, which is not a setting Flume has. The
+third question is light-or-dark instead.
+
 ## The library window
 
 The main screen is a two-column, two-row grid: a `248px` rail beside `1fr`,
