@@ -244,7 +244,7 @@ jobs:
       # package into the container, the upload happens here, on a normal runner
       # where gh is preinstalled. It also handles both architectures in one
       # place instead of duplicating the step per matrix leg.
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: flume-rpm-*
           merge-multiple: true
