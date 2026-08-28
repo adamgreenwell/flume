@@ -17,6 +17,7 @@ import { Chip } from "./Chip";
 import { FragmentStrip } from "./FragmentStrip";
 import { NoteCard } from "./NoteCard";
 import { PeerList } from "./PeerList";
+import { BottleneckPanel } from "./BottleneckPanel";
 import { PieceStrip } from "./PieceStrip";
 import { Skeleton } from "./Skeleton";
 import { StatCard } from "./StatCard";
@@ -46,26 +47,22 @@ export interface TorrentDetailProps {
 /**
  * The torrent inspector.
  *
- * ## What is deliberately not here
+ ## What is deliberately not here
  *
- * The design's centrepiece is a panel ranking every candidate constraint on a
- * download and marking exactly one as binding. It is not built, and not
- * stubbed. Ranking constraints needs piece availability — the union of the
- * connected peers' bitfields — which librqbit 9.0.0 does not expose (see issue
- * #79). The design says plainly that a wrong answer there is worse than no
- * panel, and a panel that guessed would be exactly that.
+ * The bottleneck panel ranks only the constraints Flume can measure. Three of
+ * the five factors the design names have no data behind them and are left out
+ * rather than drawn with a plausible number — connection slots (librqbit's
+ * `peer_limit` is unset, so there is no ceiling), disk writes (no write-queue
+ * depth) and hash checking (no CPU accounting). See `engine/bottleneck.rs`.
  *
- * The surfaces that lean on the same missing number are out for the same
- * reason, rather than being filled with an approximation that looks like the
- * real thing:
+ * Still absent for the same reason:
  *
- * - the availability column of the stat strip ("4.2×, rarest piece on 4 peers")
- * - the availability histogram under the piece map
- * - the seeds/leechers split in the peers column
+ * - the availability histogram under the piece map, which needs per-region
+ *   bitfields rather than the whole-torrent figure
  * - the trackers tab's plain-English verdict, which needs per-tracker announce
- *   status librqbit also does not expose
+ *   status librqbit does not expose
  *
- * Everything above is a real feature waiting on real data, not an omission.
+ * Both are real features waiting on real data, not oversights.
  *
  * @param props - See {@link TorrentDetailProps}.
  * @returns The rendered inspector.
@@ -305,6 +302,10 @@ export function TorrentDetail({
                     </p>
                   )}
                 </section>
+
+                {detail ? (
+                  <BottleneckPanel bottleneck={detail.bottleneck} />
+                ) : null}
               </div>
 
               <aside className="flex w-[352px] shrink-0 flex-col gap-[22px]">
