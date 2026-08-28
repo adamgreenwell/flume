@@ -503,6 +503,11 @@ const DETAIL: TorrentDetail = {
     dead: 19,
     liveTcp: 26,
     liveUtp: 2,
+    // Consistent with the 28 live peers above: a subset are seeds, and the
+    // rarest piece cannot be held by more peers than are connected.
+    seeds: 6,
+    availability: 4.31,
+    rarest: 5,
   },
   // What the Rust derivation produces for a healthy download with these
   // numbers. Kept in step with `describe` in `src-tauri/src/engine/note.rs`.

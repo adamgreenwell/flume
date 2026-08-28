@@ -631,6 +631,10 @@ impl Engine {
         // every time the panel is opened.
         trackers.sort();
 
+        // Computed once: the health verdict and the swarm figures must agree,
+        // and it walks every peer's bitfield.
+        let avail = self.availability_of(id, &handle);
+
         // `api_dump_haves` is the only public route to the piece bitfield --
         // `ManagedTorrent::with_chunk_tracker` is crate-private. It errors when
         // the torrent is neither live nor paused, which is not a failure worth
@@ -656,6 +660,9 @@ impl Engine {
                     dead: p.dead as usize,
                     live_tcp: p.live_tcp as usize,
                     live_utp: p.live_utp as usize,
+                    seeds: avail.map(|a| a.seeds as usize),
+                    availability: avail.map(|a| a.average),
+                    rarest: avail.map(|a| a.rarest),
                 }
             })
             .unwrap_or(detail::SwarmStats {
@@ -666,18 +673,25 @@ impl Engine {
                 dead: 0,
                 live_tcp: 0,
                 live_utp: 0,
+                // Not live, so there is nothing to judge availability from.
+                // None rather than zero: no seeds seen is not the same claim
+                // as no seeds exist.
+                seeds: None,
+                availability: None,
+                rarest: None,
             });
 
         // Built from the same summary the list row shows, so the panel's
         // sentence and the row's line above it cannot disagree about what is
         // happening.
+
         let summary = torrent::summarize(
             id,
             handle.info_hash().as_string(),
             handle.name(),
             handle.output_folder().display().to_string(),
             &handle.stats(),
-            self.availability_of(id, &handle),
+            avail,
         );
         let note = note::describe(&summary, &swarm);
 

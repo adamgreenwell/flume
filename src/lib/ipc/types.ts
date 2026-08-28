@@ -259,6 +259,28 @@ export interface SwarmStats {
   liveTcp: number;
   /** Live peers connected over uTP. */
   liveUtp: number;
+  /**
+   * Connected peers holding every piece.
+   *
+   * `null` when there were no bitfields to judge from — not the same claim as
+   * zero seeds, and must not be rendered as it.
+   */
+  seeds: number | null;
+  /**
+   * Mean copies of each piece across the connected peers.
+   *
+   * The figure other clients label "availability". A sense of depth only: it
+   * cannot stand in for {@link SwarmStats.rarest}, since a swarm averaging
+   * four copies can still be missing a piece outright.
+   */
+  availability: number | null;
+  /**
+   * Copies of the least-held piece.
+   *
+   * Zero means the torrent cannot finish from this swarm however deep the
+   * average is. This is the number the health verdict is built on.
+   */
+  rarest: number | null;
 }
 
 /** One connected peer. Mirrors Rust `PeerInfo`. */
