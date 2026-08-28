@@ -56,6 +56,12 @@ flume.dev (a React node editor). Both verified unrelated.
 `[patch.crates-io]` entry pointing at `adamgreenwell/rqbit`, pinned to a rev.
 Delete it the moment the change lands upstream in a crates.io release.
 
+**Do not delete the fork's `peer-have-pieces` branch.** `Cargo.lock` pins the
+full commit SHA, so a force-push cannot silently change what is built — but the
+commit still has to remain reachable. Deleting the branch, or the fork, leaves
+it eligible for garbage collection and every build and CI run breaks with a
+fetch error. The fork must also stay public: CI clones it anonymously.
+
 The patch adds three things, all in `PeerStats`:
 
 - `have_pieces` — how many pieces a peer holds, clamped to `total_pieces`.
