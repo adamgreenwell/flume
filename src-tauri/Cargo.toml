@@ -84,4 +84,4 @@ tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
 # Pinned to a rev rather than a branch so a build is reproducible. Drop this
 # whole section once the change is in a crates.io release.
 [patch.crates-io]
-librqbit = { git = "https://github.com/adamgreenwell/rqbit.git", rev = "2aed99d4" }
+librqbit = { git = "https://github.com/adamgreenwell/rqbit.git", rev = "149f08cd" }

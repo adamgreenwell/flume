@@ -14,6 +14,7 @@
 //! data never crosses the IPC boundary.
 
 mod add;
+mod availability;
 mod config;
 mod detail;
 mod import;
@@ -26,8 +27,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use librqbit::{
     AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, ConnectionOptions, DhtSessionConfig,
-    ListenerMode, ListenerOptions, Magnet, ManagedTorrent, Session, SessionOptions,
-    SessionPersistenceConfig, api::TorrentIdOrHash, dht::DhtPersistenceConfig,
+    ListenerMode, ListenerOptions, Magnet, ManagedTorrent, PeerStatsFilter, Session,
+    SessionOptions, SessionPersistenceConfig, api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
@@ -246,24 +247,65 @@ impl Engine {
     /// Snapshots every torrent currently known to the session.
     ///
     /// Ordered by id so the UI list does not reshuffle between ticks; the
+    /// Piece availability for one torrent, or `None` if there is nothing to
+    /// judge from.
+    ///
+    /// Needs every connected peer's bitfield, because *which* pieces a peer
+    /// holds is the whole question — a count cannot tell a swarm that holds
+    /// every piece from one whose peers all stopped in the same place.
+    ///
+    /// `api_dump_haves` is used only for its piece count; our own bitfield is
+    /// not part of the verdict, since the question is what the *swarm* has.
+    fn availability_of(
+        &self,
+        id: usize,
+        handle: &ManagedTorrent,
+    ) -> Option<availability::Availability> {
+        let (_, total_pieces) = Api::new(Arc::clone(&self.session), None)
+            .api_dump_haves(TorrentIdOrHash::Id(id))
+            .ok()?;
+
+        let bitfields: Vec<Vec<u8>> = handle
+            .live()?
+            .per_peer_stats_snapshot(PeerStatsFilter {
+                include_bitfield: true,
+                ..Default::default()
+            })
+            .peers
+            .into_values()
+            .filter_map(|peer| peer.have_bitfield)
+            .collect();
+
+        availability::compute(&bitfields, total_pieces)
+    }
+
     /// session's internal ordering is not guaranteed.
     pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
-        let mut summaries = self.session.with_torrents(|torrents| {
+        // Handles are collected before anything is computed from them:
+        // `availability_of` goes back through the session, and doing that while
+        // `with_torrents` holds its lock would re-enter it.
+        let handles = self.session.with_torrents(|torrents| {
             torrents
-                .map(|(id, handle)| {
-                    torrent::summarize(
-                        id,
-                        // `as_string` is hex encoding. `Id20`'s Debug impl
-                        // happens to produce the same thing, but relying on a
-                        // Debug format for a wire value is a trap.
-                        handle.info_hash().as_string(),
-                        handle.name(),
-                        handle.output_folder().display().to_string(),
-                        &handle.stats(),
-                    )
-                })
+                .map(|(id, handle)| (id, Arc::clone(handle)))
                 .collect::<Vec<_>>()
         });
+
+        let mut summaries = handles
+            .into_iter()
+            .map(|(id, handle)| {
+                torrent::summarize(
+                    id,
+                    // `as_string` is hex encoding. `Id20`'s Debug impl
+                    // happens to produce the same thing, but relying on a
+                    // Debug format for a wire value is a trap.
+                    handle.info_hash().as_string(),
+                    handle.name(),
+                    handle.output_folder().display().to_string(),
+                    &handle.stats(),
+                    self.availability_of(id, &handle),
+                )
+            })
+            .collect::<Vec<_>>();
         summaries.sort_by_key(|s| s.id);
         summaries
     }
@@ -635,6 +677,7 @@ impl Engine {
             handle.name(),
             handle.output_folder().display().to_string(),
             &handle.stats(),
+            self.availability_of(id, &handle),
         );
         let note = note::describe(&summary, &swarm);
 

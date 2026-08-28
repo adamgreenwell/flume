@@ -69,11 +69,17 @@ export type TorrentState =
  * A different question from {@link TorrentState}, which only says whether work
  * is happening — a torrent can be `downloading` and never finish.
  *
- * `"unknown"` is not a gap in the plumbing. Telling a thin swarm from a healthy
- * one needs piece availability, which librqbit 9.0.0 does not expose, so
- * anything that would need it says so rather than guessing. See issue #79.
+ * `"unknown"` is not a gap in the plumbing. It means there were no peer
+ * bitfields to judge from — no live peers yet, or metadata that has not
+ * resolved far enough to know the piece count — so the verdict is withheld
+ * rather than guessed.
+ *
+ * Telling `"thin"` from `"healthy"` needs piece availability, which upstream
+ * librqbit does not expose; Flume carries a patched build for it. See issue
+ * #79 and `ikatson/rqbit#643`.
  */
-export type SwarmHealth = "seeding" | "none" | "idle" | "unknown";
+export type SwarmHealth =
+  "seeding" | "none" | "idle" | "unknown" | "healthy" | "thin";
 
 /** A snapshot of one torrent. Mirrors Rust `TorrentSummary`. */
 export interface TorrentSummary {

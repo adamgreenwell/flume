@@ -5,6 +5,8 @@
 //! the IPC contract. Mirrored in `src/lib/ipc/types.ts`.
 
 use librqbit::{TorrentStats, TorrentStatsState};
+
+use super::availability::Availability;
 use serde::{Deserialize, Serialize};
 
 /// User-facing lifecycle state of a torrent.
@@ -50,7 +52,14 @@ pub enum SwarmHealth {
     /// Paused, checking, queued or errored — not trying, so not at risk.
     Idle,
     /// Connected to peers, but whether they hold the remainder is unknowable.
+    ///
+    /// Reached when there are no bitfields to judge from — no live peers yet,
+    /// or metadata that has not resolved far enough to know the piece count.
     Unknown,
+    /// The swarm holds every piece, comfortably.
+    Healthy,
+    /// The swarm holds every piece, but barely — losing a peer could strand it.
+    Thin,
 }
 
 /// A snapshot of one torrent, safe to send over IPC.
@@ -228,13 +237,31 @@ pub(crate) fn format_duration(total_seconds: u64) -> String {
 /// Only returns a verdict it can defend. See [`SwarmHealth`] for why `Thin` and
 /// `Healthy` are absent: separating them needs piece availability, which
 /// librqbit 9.0.0 does not expose.
-pub(super) fn classify_health(state: TorrentState, live_peers: u32) -> SwarmHealth {
+pub(super) fn classify_health(
+    state: TorrentState,
+    live_peers: u32,
+    availability: Option<Availability>,
+) -> SwarmHealth {
     match state {
         TorrentState::Seeding => SwarmHealth::Seeding,
         TorrentState::Paused | TorrentState::Checking | TorrentState::Error => SwarmHealth::Idle,
         // Nobody to ask is the one negative verdict that needs no bitfield.
         TorrentState::Downloading if live_peers == 0 => SwarmHealth::None,
-        TorrentState::Downloading => SwarmHealth::Unknown,
+        TorrentState::Downloading => match availability {
+            // No bitfields to judge from. Not a verdict, and must not be
+            // rendered as one.
+            None => SwarmHealth::Unknown,
+            // No connected peer holds some piece, so this cannot finish from
+            // the swarm as it stands however fast the rest arrives.
+            Some(a) if a.rarest == 0 => SwarmHealth::None,
+            // TODO(adam): decide the Thin/Healthy threshold. The design says
+            // Healthy is "every piece on >= 3 peers" and Thin is "availability
+            // under 1.5x", which leaves a gap between them — a swarm whose
+            // rarest piece has 2 copies and whose average is 4.0 is neither by
+            // those words. Returning Unknown until that is settled, because a
+            // confident wrong verdict here is worse than none.
+            Some(_) => SwarmHealth::Unknown,
+        },
     }
 }
 
@@ -297,6 +324,7 @@ pub(super) fn summarize(
     name: Option<String>,
     output_folder: String,
     stats: &TorrentStats,
+    availability: Option<Availability>,
 ) -> TorrentSummary {
     let (download_bps, upload_bps, live_peers, known_peers) = match stats.live.as_ref() {
         Some(live) => (
@@ -318,7 +346,7 @@ pub(super) fn summarize(
     TorrentSummary {
         state,
         eta_seconds: eta,
-        health: classify_health(state, live_peers),
+        health: classify_health(state, live_peers, availability),
         detail: describe(
             state,
             eta,
@@ -363,7 +391,7 @@ mod tests {
     #[test]
     fn a_download_with_no_peers_is_the_one_negative_verdict_we_can_defend() {
         assert_eq!(
-            classify_health(TorrentState::Downloading, 0),
+            classify_health(TorrentState::Downloading, 0, None),
             SwarmHealth::None
         );
     }
@@ -374,7 +402,7 @@ mod tests {
         // librqbit does not expose. Claiming either would be a confident wrong
         // answer, which the design is explicit is worse than none.
         assert_eq!(
-            classify_health(TorrentState::Downloading, 24),
+            classify_health(TorrentState::Downloading, 24, None),
             SwarmHealth::Unknown
         );
     }
@@ -386,14 +414,14 @@ mod tests {
             TorrentState::Checking,
             TorrentState::Error,
         ] {
-            assert_eq!(classify_health(state, 0), SwarmHealth::Idle);
+            assert_eq!(classify_health(state, 0, None), SwarmHealth::Idle);
         }
     }
 
     #[test]
     fn a_complete_torrent_is_seeding_regardless_of_peer_count() {
         assert_eq!(
-            classify_health(TorrentState::Seeding, 0),
+            classify_health(TorrentState::Seeding, 0, None),
             SwarmHealth::Seeding
         );
     }

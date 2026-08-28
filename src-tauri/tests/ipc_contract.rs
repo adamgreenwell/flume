@@ -371,6 +371,17 @@ fn enums_serialize_as_camel_case_strings() {
         assert_eq!(json(&health).as_str(), Some(expected), "EngineHealth");
     }
 
+    for (health, expected) in [
+        (SwarmHealth::Seeding, "seeding"),
+        (SwarmHealth::None, "none"),
+        (SwarmHealth::Idle, "idle"),
+        (SwarmHealth::Unknown, "unknown"),
+        (SwarmHealth::Healthy, "healthy"),
+        (SwarmHealth::Thin, "thin"),
+    ] {
+        assert_eq!(json(&health).as_str(), Some(expected), "SwarmHealth");
+    }
+
     for (state, expected) in [
         (TorrentState::Checking, "checking"),
         (TorrentState::Downloading, "downloading"),
