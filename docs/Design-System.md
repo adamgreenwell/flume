@@ -288,28 +288,31 @@ was clicked.
 #### What is deliberately absent
 
 The design's centrepiece is a panel that ranks every candidate constraint on a
-download and marks exactly one as binding. **It is not built, and not stubbed.**
-Ranking constraints needs piece availability — the union of the connected peers'
-bitfields — which librqbit 9.0.0 does not expose. The design says plainly that a
-wrong answer there is worse than no panel, and a panel that guessed would be
-exactly that.
+download and marks exactly one as binding. **It is not built.** It is no longer
+blocked, though: Flume now runs a patched librqbit that exposes the peers'
+bitfields, so piece availability is computable and the panel is buildable work
+rather than a data problem. See `CLAUDE.md` under "Piece availability, and the
+librqbit fork".
 
-Four smaller surfaces lean on the same missing number and are out for the same
-reason, rather than being filled with an approximation that looks like the real
-thing:
+Of the four smaller surfaces that leaned on the same number, two shipped with
+that patch and one is now merely unbuilt:
 
-| Absent                                                | Needs                       |
-| ----------------------------------------------------- | --------------------------- |
-| Availability column ("4.2×, rarest piece on 4 peers") | peer bitfields              |
-| Availability histogram under the piece map            | per-region peer bitfields   |
-| Seeds/leechers split in the peers column              | peer bitfields              |
-| Trackers tab's plain-English verdict                  | per-tracker announce status |
+| Surface                                    | Status                                             |
+| ------------------------------------------ | -------------------------------------------------- |
+| Seeds count in the swarm summary           | **Built.** Peers holding every piece.              |
+| Availability figure ("4.31×")              | **Built**, always beside the rarest-piece count.   |
+| Availability histogram under the piece map | Possible now; not built.                           |
+| Trackers tab's plain-English verdict       | Still blocked — needs per-tracker announce status. |
 
-All five are real features waiting on real data. See
-[issue #79](https://github.com/adamgreenwell/flume/issues/79), which records
-that the data already exists in librqbit's memory (`LivePeerState.bitfield`) and
-is simply not serialized, and that the crate has no reachable extension point
-that would let an embedder observe it.
+Availability is never shown on its own. A mean of 4.0 reads reassuring and can
+still hide a piece nobody holds, so the rarest-piece count sits beside it and
+says so outright when it is zero.
+
+The verdict is still withheld where the data runs out: no peer bitfields yet
+means `unknown`, rendered as "Connected", not as a guess between thin and
+healthy. [Issue #79](https://github.com/adamgreenwell/flume/issues/79) records
+the history and `ikatson/rqbit#643` is the upstream ask that would let the fork
+be dropped.
 
 ### Settings
 
@@ -415,17 +418,23 @@ implying a minute it does not have.
 
 The column reports a verdict, not a peer count. What it can say today:
 
-| Verdict   | Means                                    | Shown as  |
-| --------- | ---------------------------------------- | --------- |
-| `seeding` | Complete and serving                     | Seeding   |
-| `none`    | No reachable peer holds the remainder    | No seeds  |
-| `idle`    | Paused, checking or errored — not trying | Idle      |
-| `unknown` | Connected, but coverage is unknowable    | Connected |
+| Verdict   | Means                                         | Shown as   |
+| --------- | --------------------------------------------- | ---------- |
+| `seeding` | Complete and serving                          | Seeding    |
+| `none`    | No reachable peer holds the remainder         | No seeds   |
+| `idle`    | Paused, checking or errored — not trying      | Idle       |
+| `unknown` | No peer bitfields yet, so coverage is unknown | Connected  |
+| `healthy` | The swarm holds every piece, comfortably      | Healthy    |
+| `thin`    | Every piece is held, but only just            | Thin swarm |
 
-`unknown` is not a plumbing gap. Telling a thin swarm from a healthy one needs
-piece availability, which librqbit 9.0.0 does not expose — see
-[issue #79](https://github.com/adamgreenwell/flume/issues/79). Do not derive a
-swarm verdict from peer counts and present it as an availability judgement.
+`thin` is the only one of the two that carries a tint: the download is viable
+but losing a peer could strand it. `healthy` says the same structural thing
+with room to spare and stays quiet.
+
+`unknown` is not a plumbing gap — it means there was nothing to judge from, and
+the verdict is withheld rather than guessed. Never derive a swarm verdict from
+peer counts alone: counts give the mean copies per piece, and the verdict needs
+the minimum. See [issue #79](https://github.com/adamgreenwell/flume/issues/79).
 
 ## Components
 

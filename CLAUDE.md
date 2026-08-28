@@ -47,39 +47,47 @@ flume.dev (a React node editor). Both verified unrelated.
 7. Minimal Tauri permissions. No shell plugin.
 8. The UI vocabulary is the token set in `src/app/globals.css`. See below.
 9. Verdicts the data cannot support are not invented. `SwarmHealth` reports
-   `unknown` rather than guessing `thin` vs `healthy` — see below.
+   `unknown` only when there are no peer bitfields to judge from, never as a
+   guess between `thin` and `healthy` — see below.
 
-## What Flume cannot answer yet
+## Piece availability, and the librqbit fork
 
-**Piece availability.** librqbit 9.0.0 exposes our own bitfield
-(`api_dump_haves`) but no per-peer one, so the union of peer bitfields — and
-therefore the rarest-piece copy count — is not computable from the public API.
+**Flume runs a patched librqbit.** `src-tauri/Cargo.toml` carries a
+`[patch.crates-io]` entry pointing at `adamgreenwell/rqbit`, pinned to a rev.
+Delete it the moment the change lands upstream in a crates.io release.
 
-This blocks three things the design specifies:
+The patch adds three things, all in `PeerStats`:
 
-- `SwarmHealth::Thin` vs `Healthy` ("every piece on ≥3 peers" vs "availability
-  under 1.5×"). `classify_health` returns `Unknown` for any connected download
-  instead, and the UI says "Connected" rather than claiming a verdict.
-- The inspector's `availability` figure.
-- The bottleneck panel's ranking, which needs it to be honest.
+- `have_pieces` — how many pieces a peer holds, clamped to `total_pieces`.
+- `have_bitfield` — the bitfield itself, opt-in via
+  `PeerStatsFilter::include_bitfield`, off by default.
+- public re-exports of `PeerStats` and `PeerStatsFilter`, which were a return
+  type and a parameter of a public method while living in a private module.
 
-librqbit has **no reachable extension point** for this. Four `pub trait`s look
-like plugin seams; only `StorageFactory` is reachable (via
-`SessionOptions.default_storage_factory`) and it sees our disk, not peer
-messages. `PeerConnectionHandler` — whose `on_received_message` sees `Bitfield`
-and `Have` — is `pub` inside a private module. `SessionOptions` has no callback
-field.
+**A per-peer count is not enough,** which is worth remembering before anyone
+tries to shrink the patch back to it. A count gives the _mean_ copies per
+piece; the verdict needs the _minimum_. Two peers holding 500 pieces each may
+overlap completely or not at all — identical averages, and only one of those
+torrents can finish. `availability::compute` therefore works from bitfields,
+and `overlapping_peers_are_not_the_same_as_complementary_ones` pins the case.
 
-The data does exist: `LivePeerState.bitfield` is maintained per peer for piece
-picking and simply is not serialized into `PeerStats`. So the upstream ask is
-small — add `have_pieces: u32` — and a local patch would be similarly small.
-Upstream `TODO.md` has no item for it, so it will not arrive on its own.
+**Bitfields are byte-padded and the padding is not trustworthy.** librqbit's
+`on_bitfield` validates the byte length and stores the peer's bytes verbatim,
+so a peer that sets the spare trailing bits would inflate any count taken over
+the whole bitfield. Both the patch and `availability::compute` slice to
+`total_pieces` first. librqbit does the same thing itself two lines below the
+length check.
 
-Tracked in issue #79, with the full analysis. Until it is resolved, do not
-derive a swarm verdict from peer counts and present it as an availability
-judgement — a confident wrong answer here is worse than none, which the design
-says explicitly. The affected surfaces are listed in `docs/Design-System.md`
-under "What is deliberately absent"; they are omitted, not stubbed.
+**The Thin/Healthy threshold scales with the peer count.** Healthy is
+`rarest >= min(3, live_peers)`. The design says "every piece on ≥3 peers", but
+taken literally that is unreachable below three peers — two peers that are both
+seeds hold every piece twice over and would read Thin forever. Below three
+peers the swarm is judged on coverage rather than punished for its size.
+
+Rule 9 still holds where the data runs out: `rarest == 0` resolves to `None`
+and no bitfields at all resolves to `Unknown`, which the UI renders as
+"Connected" rather than as a verdict. Issue #79 tracks the history;
+`ikatson/rqbit#643` is the upstream ask.
 
 ## Design tokens
 

@@ -7,9 +7,13 @@ import type { SwarmHealth } from "@/lib/ipc/types";
  * chip a fill would turn the column into stripes and cost the tint the one job
  * it has, which is to be noticed.
  *
- * `unknown` is deliberately quiet. It is not a warning — it means Flume cannot
- * tell a thin swarm from a healthy one yet, and dressing that up as either
- * would be a confident wrong answer.
+ * `unknown` is deliberately quiet. It is not a warning — it means there were no
+ * peer bitfields to judge from, and dressing that up as either verdict would be
+ * a confident wrong answer.
+ *
+ * `thin` is the one that earns a tint: the swarm holds every piece, but losing
+ * a peer could strand the download. `healthy` says the same structural thing
+ * with room to spare, so it stays quiet.
  */
 const PRESENTATION: Record<
   SwarmHealth,
@@ -19,6 +23,8 @@ const PRESENTATION: Record<
   none: { label: "No seeds", tone: "text-err", tint: "bg-err/15" },
   idle: { label: "Idle", tone: "text-fg-3", tint: "" },
   unknown: { label: "Connected", tone: "text-fg-2", tint: "" },
+  healthy: { label: "Healthy", tone: "text-ok", tint: "" },
+  thin: { label: "Thin swarm", tone: "text-warn", tint: "bg-warn/15" },
 };
 
 /** Props for {@link HealthChip}. */

@@ -262,6 +262,9 @@ fn torrent_detail_matches_the_typescript_mirror() {
             dead: 2,
             live_tcp: 2,
             live_utp: 1,
+            seeds: Some(1),
+            availability: Some(2.5),
+            rarest: Some(2),
         },
         note: Note {
             severity: NoteSeverity::Ok,
@@ -282,6 +285,9 @@ fn torrent_detail_matches_the_typescript_mirror() {
             "queued",
             "seen",
             "dead",
+            "seeds",
+            "availability",
+            "rarest",
             "liveTcp",
             "liveUtp",
         ],
@@ -369,6 +375,17 @@ fn enums_serialize_as_camel_case_strings() {
         (EngineHealth::Degraded, "degraded"),
     ] {
         assert_eq!(json(&health).as_str(), Some(expected), "EngineHealth");
+    }
+
+    for (health, expected) in [
+        (SwarmHealth::Seeding, "seeding"),
+        (SwarmHealth::None, "none"),
+        (SwarmHealth::Idle, "idle"),
+        (SwarmHealth::Unknown, "unknown"),
+        (SwarmHealth::Healthy, "healthy"),
+        (SwarmHealth::Thin, "thin"),
+    ] {
+        assert_eq!(json(&health).as_str(), Some(expected), "SwarmHealth");
     }
 
     for (state, expected) in [

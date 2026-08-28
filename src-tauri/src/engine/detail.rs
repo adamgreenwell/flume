@@ -21,10 +21,11 @@ pub const MAX_PIECE_BUCKETS: usize = 1600;
 ///
 /// These are *pool* counts, not seeds versus leechers. librqbit v9 tracks
 /// whether a peer holds the whole torrent (`LivePeerState::has_full_torrent`),
-/// but `PeerStates` is private on the live state and the public per-peer
-/// snapshot does not carry it — so a seeds/leechers split is not available
-/// without an upstream change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// but `PeerStates` is private on the live state, so the seed count is derived
+/// from the peers' bitfields instead — see [`crate::engine::availability`].
+///
+/// `Eq` is not derived: [`Self::availability`] is a mean and so a float.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SwarmStats {
     /// Peers with an established connection right now.
@@ -41,6 +42,22 @@ pub struct SwarmStats {
     pub live_tcp: usize,
     /// Live peers connected over uTP.
     pub live_utp: usize,
+    /// Connected peers holding every piece.
+    ///
+    /// `None` when there were no bitfields to judge from, which is not the
+    /// same as zero seeds and must not be rendered as it.
+    pub seeds: Option<usize>,
+    /// Mean copies of each piece across the connected peers.
+    ///
+    /// The figure other clients label "availability". A sense of depth only —
+    /// it cannot stand in for [`Self::rarest`], since a swarm averaging four
+    /// copies can still be missing a piece outright.
+    pub availability: Option<f64>,
+    /// Copies of the least-held piece.
+    ///
+    /// Zero means the torrent cannot finish from this swarm, however deep the
+    /// average is.
+    pub rarest: Option<u32>,
 }
 
 /// One connected peer.
@@ -91,7 +108,9 @@ pub struct PieceMap {
 }
 
 /// Everything the detail view shows beyond the file list.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq` is not derived: it carries [`SwarmStats`], which holds a mean.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TorrentDetail {
     /// Connected peers. Empty when the torrent is not live.

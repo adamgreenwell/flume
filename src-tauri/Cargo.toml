@@ -75,3 +75,13 @@ tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
+
+# librqbit does not expose per-peer piece availability, so a swarm cannot be
+# told "everyone stalled at 6%" from "these six hold every piece between them".
+# The data is tracked for piece picking but not serialised; asked upstream in
+# ikatson/rqbit#643 and carried here until that lands.
+#
+# Pinned to a rev rather than a branch so a build is reproducible. Drop this
+# whole section once the change is in a crates.io release.
+[patch.crates-io]
+librqbit = { git = "https://github.com/adamgreenwell/rqbit.git", rev = "149f08cd" }

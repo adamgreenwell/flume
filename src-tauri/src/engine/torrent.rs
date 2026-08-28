@@ -5,6 +5,8 @@
 //! the IPC contract. Mirrored in `src/lib/ipc/types.ts`.
 
 use librqbit::{TorrentStats, TorrentStatsState};
+
+use super::availability::Availability;
 use serde::{Deserialize, Serialize};
 
 /// User-facing lifecycle state of a torrent.
@@ -50,7 +52,14 @@ pub enum SwarmHealth {
     /// Paused, checking, queued or errored — not trying, so not at risk.
     Idle,
     /// Connected to peers, but whether they hold the remainder is unknowable.
+    ///
+    /// Reached when there are no bitfields to judge from — no live peers yet,
+    /// or metadata that has not resolved far enough to know the piece count.
     Unknown,
+    /// The swarm holds every piece, comfortably.
+    Healthy,
+    /// The swarm holds every piece, but barely — losing a peer could strand it.
+    Thin,
 }
 
 /// A snapshot of one torrent, safe to send over IPC.
@@ -228,13 +237,31 @@ pub(crate) fn format_duration(total_seconds: u64) -> String {
 /// Only returns a verdict it can defend. See [`SwarmHealth`] for why `Thin` and
 /// `Healthy` are absent: separating them needs piece availability, which
 /// librqbit 9.0.0 does not expose.
-pub(super) fn classify_health(state: TorrentState, live_peers: u32) -> SwarmHealth {
+pub(super) fn classify_health(
+    state: TorrentState,
+    live_peers: u32,
+    availability: Option<Availability>,
+) -> SwarmHealth {
     match state {
         TorrentState::Seeding => SwarmHealth::Seeding,
         TorrentState::Paused | TorrentState::Checking | TorrentState::Error => SwarmHealth::Idle,
         // Nobody to ask is the one negative verdict that needs no bitfield.
         TorrentState::Downloading if live_peers == 0 => SwarmHealth::None,
-        TorrentState::Downloading => SwarmHealth::Unknown,
+        TorrentState::Downloading => match availability {
+            // No bitfields to judge from. Not a verdict, and must not be
+            // rendered as one.
+            None => SwarmHealth::Unknown,
+            // No connected peer holds some piece, so this cannot finish from
+            // the swarm as it stands however fast the rest arrives.
+            Some(a) if a.rarest == 0 => SwarmHealth::None,
+            // The design asks for "every piece on >= 3 peers", but taken
+            // literally that is unreachable below three peers: two peers that
+            // are both seeds hold every piece twice over and would still read
+            // Thin forever. The threshold scales down to the peer count so a
+            // small swarm is judged on coverage rather than punished for size.
+            Some(a) if a.rarest >= 3.min(live_peers) => SwarmHealth::Healthy,
+            Some(_) => SwarmHealth::Thin,
+        },
     }
 }
 
@@ -297,6 +324,7 @@ pub(super) fn summarize(
     name: Option<String>,
     output_folder: String,
     stats: &TorrentStats,
+    availability: Option<Availability>,
 ) -> TorrentSummary {
     let (download_bps, upload_bps, live_peers, known_peers) = match stats.live.as_ref() {
         Some(live) => (
@@ -318,7 +346,7 @@ pub(super) fn summarize(
     TorrentSummary {
         state,
         eta_seconds: eta,
-        health: classify_health(state, live_peers),
+        health: classify_health(state, live_peers, availability),
         detail: describe(
             state,
             eta,
@@ -349,6 +377,7 @@ pub(super) fn summarize(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::availability::Availability;
 
     #[test]
     fn durations_match_the_frontend_convention() {
@@ -363,7 +392,7 @@ mod tests {
     #[test]
     fn a_download_with_no_peers_is_the_one_negative_verdict_we_can_defend() {
         assert_eq!(
-            classify_health(TorrentState::Downloading, 0),
+            classify_health(TorrentState::Downloading, 0, None),
             SwarmHealth::None
         );
     }
@@ -374,7 +403,7 @@ mod tests {
         // librqbit does not expose. Claiming either would be a confident wrong
         // answer, which the design is explicit is worse than none.
         assert_eq!(
-            classify_health(TorrentState::Downloading, 24),
+            classify_health(TorrentState::Downloading, 24, None),
             SwarmHealth::Unknown
         );
     }
@@ -386,14 +415,14 @@ mod tests {
             TorrentState::Checking,
             TorrentState::Error,
         ] {
-            assert_eq!(classify_health(state, 0), SwarmHealth::Idle);
+            assert_eq!(classify_health(state, 0, None), SwarmHealth::Idle);
         }
     }
 
     #[test]
     fn a_complete_torrent_is_seeding_regardless_of_peer_count() {
         assert_eq!(
-            classify_health(TorrentState::Seeding, 0),
+            classify_health(TorrentState::Seeding, 0, None),
             SwarmHealth::Seeding
         );
     }
@@ -565,5 +594,93 @@ mod tests {
     #[test]
     fn progress_fraction_never_exceeds_one() {
         assert_eq!(summary(2000, 1000, false).progress_fraction(), 1.0);
+    }
+
+    /// A swarm covering every piece three times over is not at risk.
+    #[test]
+    fn well_covered_swarms_are_healthy() {
+        let a = Availability {
+            rarest: 3,
+            average: 4.0,
+            seeds: 1,
+        };
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 10, Some(a)),
+            SwarmHealth::Healthy
+        );
+    }
+
+    /// Every piece is present, but only just.
+    #[test]
+    fn barely_covered_swarms_are_thin() {
+        let a = Availability {
+            rarest: 1,
+            average: 6.0,
+            seeds: 0,
+        };
+        // A high average does not rescue a piece only one peer holds, which is
+        // the whole reason the verdict is built on `rarest`.
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 10, Some(a)),
+            SwarmHealth::Thin
+        );
+    }
+
+    /// A piece nobody holds means this cannot finish, however many peers there
+    /// are and however fast the rest is arriving.
+    #[test]
+    fn a_missing_piece_is_not_a_thin_swarm_but_no_swarm() {
+        let a = Availability {
+            rarest: 0,
+            average: 12.0,
+            seeds: 0,
+        };
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 40, Some(a)),
+            SwarmHealth::None
+        );
+    }
+
+    /// The threshold scales down rather than punishing a swarm for being small.
+    ///
+    /// Two seeds hold every piece twice; a literal "three peers" rule would
+    /// call that Thin forever. With one peer the threshold is one, so a lone
+    /// seed reads Healthy and Thin is unreachable -- correct, since a single
+    /// peer either has a piece or does not.
+    #[test]
+    fn small_swarms_are_judged_on_coverage_not_size() {
+        let two_seeds = Availability {
+            rarest: 2,
+            average: 2.0,
+            seeds: 2,
+        };
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 2, Some(two_seeds)),
+            SwarmHealth::Healthy
+        );
+        // The same swarm judged against ten peers is thinly covered.
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 10, Some(two_seeds)),
+            SwarmHealth::Thin
+        );
+
+        let lone_seed = Availability {
+            rarest: 1,
+            average: 1.0,
+            seeds: 1,
+        };
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 1, Some(lone_seed)),
+            SwarmHealth::Healthy
+        );
+    }
+
+    /// No bitfields to judge from is not a verdict.
+    #[test]
+    fn absent_availability_stays_unknown() {
+        assert_eq!(
+            classify_health(TorrentState::Downloading, 5, None),
+            SwarmHealth::Unknown
+        );
     }
 }
