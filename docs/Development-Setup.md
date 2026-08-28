@@ -64,7 +64,7 @@ Backend, from `src-tauri/`:
 | Command                                     | What it does                              |
 | ------------------------------------------- | ----------------------------------------- |
 | `cargo test`                                | Unit and integration tests (offline only) |
-| `cargo test -- --ignored`                   | Also run network-dependent DHT tests      |
+| `cargo test -- --ignored`                   | Also run tests needing network or a proxy |
 | `cargo clippy --all-targets -- -D warnings` | Lint, warnings are errors                 |
 | `cargo fmt`                                 | Format                                    |
 
