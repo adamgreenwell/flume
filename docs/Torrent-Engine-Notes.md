@@ -51,13 +51,13 @@ at all — identical counts, and only one of those torrents can finish.
 
 **Two constraints keep builds working:**
 
-- **Do not delete the fork's `peer-have-pieces` branch, or the fork.**
+- **Do not delete the fork's `peer-availability` branch, or the fork.**
   `Cargo.lock` pins the full commit SHA, so a force-push cannot change what is
   built — but the commit still has to remain reachable. Delete the branch and it
   becomes eligible for garbage collection, and every build fails on fetch.
 - **The fork must stay public.** CI clones it anonymously.
 
-Upstream ask is [`ikatson/rqbit#643`](https://github.com/ikatson/rqbit/issues/643).
+Upstream ask is [`ikatson/rqbit#643`](https://github.com/ikatson/rqbit/issues/643), sent as [`#644`](https://github.com/ikatson/rqbit/pull/644).
 Delete the `[patch.crates-io]` section the moment it lands in a crates.io
 release.
 

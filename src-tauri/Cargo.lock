@@ -1106,7 +1106,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1344,7 +1344,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2196,7 +2196,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2650,7 +2650,7 @@ dependencies = [
 [[package]]
 name = "librqbit"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2713,7 +2713,7 @@ dependencies = [
 [[package]]
 name = "librqbit-bencode"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "arrayvec",
@@ -2729,7 +2729,7 @@ dependencies = [
 [[package]]
 name = "librqbit-buffers"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "bytes",
  "librqbit-clone-to-owned",
@@ -2740,7 +2740,7 @@ dependencies = [
 [[package]]
 name = "librqbit-clone-to-owned"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "bytes",
 ]
@@ -2748,7 +2748,7 @@ dependencies = [
 [[package]]
 name = "librqbit-core"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2777,7 +2777,7 @@ dependencies = [
 [[package]]
 name = "librqbit-dht"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "backon",
@@ -2824,7 +2824,7 @@ dependencies = [
 [[package]]
 name = "librqbit-lsd"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "atoi",
@@ -2843,7 +2843,7 @@ dependencies = [
 [[package]]
 name = "librqbit-peer-protocol"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -2863,7 +2863,7 @@ dependencies = [
 [[package]]
 name = "librqbit-sha1-wrapper"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "assert_cfg",
  "aws-lc-rs",
@@ -2872,7 +2872,7 @@ dependencies = [
 [[package]]
 name = "librqbit-tracker-comms"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2900,7 +2900,7 @@ dependencies = [
 [[package]]
 name = "librqbit-upnp"
 version = "9.0.1"
-source = "git+https://github.com/adamgreenwell/rqbit.git?rev=149f08cd#149f08cd2a1fe50dc5af77af560df9ee8fefc124"
+source = "git+https://github.com/adamgreenwell/rqbit.git?rev=14400a2e#14400a2e4bd64c7dd6114ca5cba63c08e0ace418"
 dependencies = [
  "anyhow",
  "bstr",
@@ -3104,7 +3104,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3943,7 +3943,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4254,7 +4254,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4311,7 +4311,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4748,7 +4748,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5396,7 +5396,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5816,7 +5816,7 @@ dependencies = [
  "png 0.18.1",
  "serde",
  "thiserror 2.0.20",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5862,7 +5862,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6338,7 +6338,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

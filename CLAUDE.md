@@ -56,7 +56,7 @@ flume.dev (a React node editor). Both verified unrelated.
 `[patch.crates-io]` entry pointing at `adamgreenwell/rqbit`, pinned to a rev.
 Delete it the moment the change lands upstream in a crates.io release.
 
-**Do not delete the fork's `peer-have-pieces` branch.** `Cargo.lock` pins the
+**Do not delete the fork's `peer-availability` branch.** `Cargo.lock` pins the
 full commit SHA, so a force-push cannot silently change what is built — but the
 commit still has to remain reachable. Deleting the branch, or the fork, leaves
 it eligible for garbage collection and every build and CI run breaks with a
@@ -64,11 +64,15 @@ fetch error. The fork must also stay public: CI clones it anonymously.
 
 The patch adds three things, all in `PeerStats`:
 
-- `have_pieces` — how many pieces a peer holds, clamped to `total_pieces`.
-- `have_bitfield` — the bitfield itself, opt-in via
+- `have_bitfield` — the peer's bitfield, opt-in via
   `PeerStatsFilter::include_bitfield`, off by default.
+- `have_pieces` — the count, behind the same flag. Gated too, so the default
+  path computes nothing and existing librqbit callers pay nothing; that was the
+  maintainer's stated condition.
 - public re-exports of `PeerStats` and `PeerStatsFilter`, which were a return
   type and a parameter of a public method while living in a private module.
+
+Sent upstream as `ikatson/rqbit#644`. Flume reads only `have_bitfield`.
 
 **A per-peer count is not enough,** which is worth remembering before anyone
 tries to shrink the patch back to it. A count gives the _mean_ copies per
