@@ -48,7 +48,7 @@ export function Dock({ status, torrents, history, limitBps }: DockProps) {
   const knownPeers = torrents.reduce((sum, t) => sum + t.knownPeers, 0);
 
   return (
-    <div className="bg-bg-1 border-line flex h-[116px] shrink-0 items-stretch border-t">
+    <div className="bg-bg-1 border-line flex min-h-[116px] shrink-0 items-stretch border-t">
       {/*
         The chart is the first thing to go when the window is narrow. Below
         about 1024px the rail plus a readable stat grid already fills the row,
@@ -61,13 +61,20 @@ export function Dock({ status, torrents, history, limitBps }: DockProps) {
       </div>
 
       {/*
-        `auto-fit` with an 88px floor rather than a fixed four columns. Four
-        columns at a 1100px window left each stat about 47px, which wrapped
-        "0 of 0" onto three lines, collided the two peer labels, and pushed
-        Uptime out of the bottom of the dock. Columns now drop to three or two
-        instead of shrinking past legibility.
+        `auto-fit` with an 88px floor rather than a fixed four columns, so a
+        narrow window drops to three or two rather than shrinking each stat
+        past legibility.
+
+        The basis is 460px because that is what four columns need: 4 × 88 plus
+        three 18px gaps is 406, plus 44px of padding. At 420 only three fitted,
+        which turned eight stats into three rows and pushed the last one out of
+        the bottom — the fixed height had been sized for two.
+
+        `min-h` on the dock rather than `h` is the backstop. Row count depends
+        on width, so any fixed height is a guess that some window size will
+        falsify; growing is always better than clipping.
       */}
-      <div className="border-line grid grow grid-cols-[repeat(auto-fit,minmax(88px,1fr))] content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5 lg:grow-0 lg:basis-[420px]">
+      <div className="border-line grid grow grid-cols-[repeat(auto-fit,minmax(88px,1fr))] content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5 lg:grow-0 lg:basis-[460px]">
         <StatCard label="Active" value={`${active} of ${torrents.length}`} />
         <StatCard label="Session down" value={formatBytes(downloaded)} />
         <StatCard label="Session up" value={formatBytes(uploaded)} />
