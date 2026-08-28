@@ -2,6 +2,9 @@
   "name": "flume",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=26"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -15,12 +18,13 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "check": "npm run check:node && npm run typecheck && npm run lint && npm run format:check && npm run test",
     "typegen": "next typegen",
     "dev:mock": "NEXT_PUBLIC_FLUME_MOCK=1 next dev",
     "preflight": "./scripts/preflight.sh",
     "storybook": "storybook dev -p 6006 --no-open",
-    "storybook:build": "storybook build"
+    "storybook:build": "storybook build",
+    "check:node": "node scripts/check-node.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

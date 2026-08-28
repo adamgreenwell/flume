@@ -30,7 +30,7 @@ flume.dev (a React node editor). Both verified unrelated.
 | TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                                                                     |
 | Fonts              | Instrument Sans + IBM Plex Mono, vendored as woff2     | Still no build-time or runtime fetch; the type ramp is measured against these metrics, and the app must render offline            |
 | MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more                                              |
-| Node (CI + dev)    | 26, matching `@types/node`                             | Build tooling only, never shipped; matching the dev env beats tracking LTS and avoids CI drift                                    |
+| Node (CI + dev)    | 26, pinned in `.nvmrc`                                 | Build tooling only, never shipped; matches `@types/node`. `.nvmrc` is the single source — `engines`, CI and `nvm use` all read it |
 | TypeScript         | Stay on 5.x                                            | TS 7 (native Go compiler) breaks `typescript-eslint`, so `npm run lint` cannot run — Dependabot ignores the major; revisit in #28 |
 | Add flow (Phase 1) | File picker first, then start                          | ISO torrents bundle several images; avoid downloading the wrong 4 GB                                                              |
 | Layout (Phase 1)   | Single list + detail panel                             | Focused; scales fine for a personal workload                                                                                      |
@@ -196,6 +196,15 @@ They are not uniform, and a failure there is not automatically a regression:
   `src/engine/availability.rs`) only mean anything under `--release`.
 
 Each test's `#[ignore]` reason names its own prerequisite.
+
+**`npm run check` refuses to run on the wrong Node**, because below 22 it would
+not fail honestly: jsdom's copy of undici calls
+`require('node:worker_threads').markAsUncloneable`, which does not exist yet,
+and vitest reports that as "no tests" with a worker error rather than as a
+version problem — and it passes on retry if a different `node` happens to come
+first, so it reads as flaky. `scripts/check-node.mjs` turns that into one
+sentence. `engines` plus `engine-strict` only gate `npm install`, which is not
+where this bites.
 
 ## Status
 

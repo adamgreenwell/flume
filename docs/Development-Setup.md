@@ -3,7 +3,10 @@
 ## Prerequisites
 
 - **Rust** stable, 1.88 or newer
-- **Node.js** 22 or newer
+- **Node.js** 26, as pinned in `.nvmrc` — `nvm use` or `fnm use` picks it up.
+  `npm run check` refuses to run on anything older and says why, because below
+  Node 22 the test suite fails as an unreadable vitest worker crash rather than
+  as a version error
 - Platform system dependencies (below)
 
 Install Rust via [rustup](https://rustup.rs).
