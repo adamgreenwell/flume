@@ -683,4 +683,33 @@ mod tests {
             SwarmHealth::Unknown
         );
     }
+
+    /// The property `Engine::torrent_summaries` relies on when it skips the
+    /// availability walk for anything that is not downloading.
+    ///
+    /// If a future verdict starts reading availability for a seeding or paused
+    /// torrent, this fails — and the skip in `torrent_summaries` has to go with
+    /// it, or the UI quietly gets `Unknown` for torrents it could answer for.
+    #[test]
+    fn availability_cannot_change_the_verdict_unless_downloading() {
+        let a = Availability {
+            rarest: 0,
+            average: 0.0,
+            seeds: 0,
+        };
+
+        for state in [
+            TorrentState::Seeding,
+            TorrentState::Paused,
+            TorrentState::Checking,
+            TorrentState::Error,
+        ] {
+            assert_eq!(
+                classify_health(state, 10, Some(a)),
+                classify_health(state, 10, None),
+                "availability changed the verdict for {state:?}, which the \
+                 summaries path assumes it cannot"
+            );
+        }
+    }
 }

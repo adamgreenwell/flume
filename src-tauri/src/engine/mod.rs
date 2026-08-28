@@ -263,10 +263,9 @@ impl Engine {
         id: usize,
         handle: &ManagedTorrent,
     ) -> Option<availability::Analysis> {
-        let (_, total_pieces) = Api::new(Arc::clone(&self.session), None)
-            .api_dump_haves(TorrentIdOrHash::Id(id))
-            .ok()?;
-
+        // Peers first. `api_dump_haves` clones our own bitfield, which is
+        // wasted work on a torrent with nobody connected — and that is the
+        // common case in a library that is mostly seeding or idle.
         let bitfields: Vec<Vec<u8>> = handle
             .live()?
             .per_peer_stats_snapshot(PeerStatsFilter {
@@ -277,6 +276,14 @@ impl Engine {
             .into_values()
             .filter_map(|peer| peer.have_bitfield)
             .collect();
+
+        if bitfields.is_empty() {
+            return None;
+        }
+
+        let (_, total_pieces) = Api::new(Arc::clone(&self.session), None)
+            .api_dump_haves(TorrentIdOrHash::Id(id))
+            .ok()?;
 
         availability::analyse(&bitfields, total_pieces)
     }
@@ -295,6 +302,18 @@ impl Engine {
         let mut summaries = handles
             .into_iter()
             .map(|(id, handle)| {
+                let stats = handle.stats();
+
+                // Availability is O(peers x pieces) and runs per torrent per
+                // tick, so it is only asked for where it changes the answer.
+                // `classify_health` reads it for a downloading torrent and
+                // ignores it for every other state, which is what makes this
+                // a skip rather than a staleness trade.
+                let availability = (torrent::classify_state(&stats.state, stats.finished)
+                    == torrent::TorrentState::Downloading)
+                    .then(|| self.availability_of(id, &handle).map(|a| a.summary))
+                    .flatten();
+
                 torrent::summarize(
                     id,
                     // `as_string` is hex encoding. `Id20`'s Debug impl
@@ -303,8 +322,8 @@ impl Engine {
                     handle.info_hash().as_string(),
                     handle.name(),
                     handle.output_folder().display().to_string(),
-                    &handle.stats(),
-                    self.availability_of(id, &handle).map(|a| a.summary),
+                    &stats,
+                    availability,
                 )
             })
             .collect::<Vec<_>>();
