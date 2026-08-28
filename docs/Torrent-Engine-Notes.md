@@ -28,6 +28,39 @@ librqbit = { version = "9.0.0", default-features = false, features = ["rust-tls"
 lockfile contains no `openssl` or `openssl-sys`. The only match for "openssl"
 is `openssl-probe`, a pure-Rust crate that merely locates CA bundle paths.
 
+## Flume runs a patched librqbit
+
+`src-tauri/Cargo.toml` also carries a `[patch.crates-io]` entry pointing at
+[`adamgreenwell/rqbit`](https://github.com/adamgreenwell/rqbit), pinned to a
+revision. A fresh `cargo build` therefore fetches librqbit from GitHub rather
+than crates.io, which is expected rather than a misconfiguration.
+
+The patch adds three things to `PeerStats`, all needed to answer "will this
+torrent finish?":
+
+| Addition                                 | Why                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `have_pieces`                            | How many pieces a peer holds, clamped to `total_pieces`.                             |
+| `have_bitfield`                          | The bitfield itself, opt-in and off by default.                                      |
+| `PeerStats`/`PeerStatsFilter` re-exports | They were a return type and a parameter of a public method, inside a private module. |
+
+**A count alone is not enough**, which matters if anyone is tempted to shrink
+the patch. A per-peer count gives the _mean_ copies per piece; the verdict needs
+the _minimum_. Two peers holding 500 pieces each may overlap completely or not
+at all — identical counts, and only one of those torrents can finish.
+
+**Two constraints keep builds working:**
+
+- **Do not delete the fork's `peer-have-pieces` branch, or the fork.**
+  `Cargo.lock` pins the full commit SHA, so a force-push cannot change what is
+  built — but the commit still has to remain reachable. Delete the branch and it
+  becomes eligible for garbage collection, and every build fails on fetch.
+- **The fork must stay public.** CI clones it anonymously.
+
+Upstream ask is [`ikatson/rqbit#643`](https://github.com/ikatson/rqbit/issues/643).
+Delete the `[patch.crates-io]` section the moment it lands in a crates.io
+release.
+
 ## v8 → v9 API changes
 
 **Do not copy v8-era examples or gists.** The reorganisation is real.
@@ -99,6 +132,12 @@ Types to know:
    bootstrap and binding regressions that offline tests cannot.
 4. Verify the lockfile still has no OpenSSL: `grep openssl src-tauri/Cargo.lock`
    should only match `openssl-probe`.
+5. Check whether the patched `PeerStats` fields have landed upstream. If they
+   have, drop the `[patch.crates-io]` section and rebase off the fork; if they
+   have not, rebase the fork onto the new tag before bumping, since a patch
+   whose version no longer matches the requirement is silently ignored — cargo
+   warns `patch ... was not used in the crate graph` and the build then fails on
+   the missing fields.
 
 ## Known platform issue: Windows file locking
 
