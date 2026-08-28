@@ -362,6 +362,18 @@ export interface PieceMap {
   piecesPerBucket: number;
   /** Completion level per bucket, `0..=255`. */
   buckets: number[];
+  /**
+   * Copies of the *least-held* piece in each bucket, same bucketing as
+   * {@link PieceMap.buckets} so the two strips line up column for column.
+   *
+   * The minimum rather than the mean: this strip exists to show where a
+   * torrent is about to stall, and a region averaging eight copies while
+   * containing one piece nobody holds is exactly what a mean would hide.
+   *
+   * `null` when there were no peer bitfields to judge from — not the same as a
+   * region nobody holds, and not rendered as one.
+   */
+  availability: number[] | null;
 }
 
 /** Detail-view data beyond the file list. Mirrors Rust `TorrentDetail`. */

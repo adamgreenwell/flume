@@ -253,6 +253,7 @@ fn torrent_detail_matches_the_typescript_mirror() {
             pieces_complete: 42,
             pieces_per_bucket: 1,
             buckets: vec![255, 0],
+            availability: Some(vec![4, 9]),
         }),
         swarm: SwarmStats {
             live: 3,
@@ -323,6 +324,7 @@ fn torrent_detail_matches_the_typescript_mirror() {
             "piecesComplete",
             "piecesPerBucket",
             "buckets",
+            "availability",
         ],
         "PieceMap",
     );

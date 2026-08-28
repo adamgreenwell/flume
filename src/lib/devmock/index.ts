@@ -285,11 +285,18 @@ function pieceMap(): TorrentDetail["pieces"] {
   });
   // 150 full buckets plus a ragged 25, at 73 pieces each.
   const complete = 150 * 73 + Math.round(25 * 73 * 0.5);
+  // Availability tracks the same 320 buckets. Deep where the torrent is
+  // already complete, thinning towards the tail — the shape that says a
+  // download is about to stall, which is the strip's whole reason to exist.
+  const availability = Array.from({ length: 320 }, (_, i) =>
+    i < 150 ? 8 + (i % 3) : i < 260 ? 4 + (i % 3) : 2 + (i % 2),
+  );
   return {
     totalPieces: 23280,
     piecesComplete: complete,
     piecesPerBucket: 73,
     buckets,
+    availability,
   };
 }
 
