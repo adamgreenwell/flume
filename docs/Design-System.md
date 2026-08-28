@@ -316,8 +316,16 @@ fork:
 | ------------------------------------------ | -------------------------------------------------- |
 | Seeds count in the swarm summary           | **Built.** Peers holding every piece.              |
 | Availability figure ("4.31×")              | **Built**, always beside the rarest-piece count.   |
-| Availability histogram under the piece map | Possible now; not built.                           |
+| Availability histogram under the piece map | **Built.** Peers holding each region, by minimum.  |
 | Trackers tab's plain-English verdict       | Still blocked — needs per-tracker announce status. |
+
+The histogram under the piece map shares the completion strip's bucketing, so a
+column in one describes the same pieces as the column above it, and it buckets
+by **minimum** rather than mean — a region averaging eight copies while holding
+one piece nobody has is exactly what a mean would hide. A region no peer holds
+draws the tallest bar, in the error colour, with the caption saying so: without
+the height cap on held regions it would be distinguished by colour alone
+whenever availability is flat.
 
 Availability is never shown on its own. A mean of 4.0 reads reassuring and can
 still hide a piece nobody holds, so the rarest-piece count sits beside it and

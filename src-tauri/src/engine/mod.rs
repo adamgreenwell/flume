@@ -262,7 +262,7 @@ impl Engine {
         &self,
         id: usize,
         handle: &ManagedTorrent,
-    ) -> Option<availability::Availability> {
+    ) -> Option<availability::Analysis> {
         let (_, total_pieces) = Api::new(Arc::clone(&self.session), None)
             .api_dump_haves(TorrentIdOrHash::Id(id))
             .ok()?;
@@ -278,7 +278,7 @@ impl Engine {
             .filter_map(|peer| peer.have_bitfield)
             .collect();
 
-        availability::compute(&bitfields, total_pieces)
+        availability::analyse(&bitfields, total_pieces)
     }
 
     /// session's internal ordering is not guaranteed.
@@ -304,7 +304,7 @@ impl Engine {
                     handle.name(),
                     handle.output_folder().display().to_string(),
                     &handle.stats(),
-                    self.availability_of(id, &handle),
+                    self.availability_of(id, &handle).map(|a| a.summary),
                 )
             })
             .collect::<Vec<_>>();
@@ -645,7 +645,11 @@ impl Engine {
             .api_dump_haves(TorrentIdOrHash::Id(id))
             .ok()
             .map(|(bitfield, total_pieces)| {
-                detail::downsample_pieces(bitfield.iter().by_vals(), total_pieces)
+                detail::downsample_pieces(
+                    bitfield.iter().by_vals(),
+                    total_pieces,
+                    avail.as_ref().map(|a| a.copies.as_slice()),
+                )
             });
 
         // Peer-pool counts come from the live state's aggregate stats. They
@@ -662,9 +666,9 @@ impl Engine {
                     dead: p.dead as usize,
                     live_tcp: p.live_tcp as usize,
                     live_utp: p.live_utp as usize,
-                    seeds: avail.map(|a| a.seeds as usize),
-                    availability: avail.map(|a| a.average),
-                    rarest: avail.map(|a| a.rarest),
+                    seeds: avail.as_ref().map(|a| a.summary.seeds as usize),
+                    availability: avail.as_ref().map(|a| a.summary.average),
+                    rarest: avail.as_ref().map(|a| a.summary.rarest),
                 }
             })
             .unwrap_or(detail::SwarmStats {
@@ -693,7 +697,7 @@ impl Engine {
             handle.name(),
             handle.output_folder().display().to_string(),
             &handle.stats(),
-            avail,
+            avail.as_ref().map(|a| a.summary),
         );
         let note = note::describe(&summary, &swarm);
 
@@ -703,7 +707,7 @@ impl Engine {
             summary.state,
             summary.download_bps,
             self.current_limits().0,
-            avail,
+            avail.as_ref().map(|a| a.summary),
             summary.live_peers,
         );
 

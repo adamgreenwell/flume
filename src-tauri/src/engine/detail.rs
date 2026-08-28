@@ -105,6 +105,18 @@ pub struct PieceMap {
     pub pieces_per_bucket: u32,
     /// Completion level per bucket, `0..=255`.
     pub buckets: Vec<u8>,
+    /// Copies of the *least-held* piece in each bucket, same bucketing as
+    /// [`Self::buckets`] so the two strips line up column for column.
+    ///
+    /// The minimum rather than the mean: this strip exists to show where a
+    /// torrent is about to stall, and a region averaging eight copies while
+    /// containing one piece nobody holds is exactly the case a mean would
+    /// hide.
+    ///
+    /// `None` when there were no peer bitfields to judge from — not the same
+    /// as a region held by nobody, and not rendered as one. Saturates at
+    /// `u16::MAX`, which no real swarm approaches.
+    pub availability: Option<Vec<u16>>,
 }
 
 /// Everything the detail view shows beyond the file list.
@@ -144,7 +156,11 @@ pub struct TorrentDetail {
 /// because the underlying bitfield is byte-padded and so is usually longer
 /// than the real piece count. Counting the padding as missing pieces would
 /// draw a permanently incomplete tail on every finished torrent.
-pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: u32) -> PieceMap {
+pub(super) fn downsample_pieces(
+    have: impl Iterator<Item = bool>,
+    total_pieces: u32,
+    copies: Option<&[u32]>,
+) -> PieceMap {
     let total = total_pieces as usize;
     if total == 0 {
         return PieceMap {
@@ -152,6 +168,7 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
             pieces_complete: 0,
             pieces_per_bucket: 0,
             buckets: Vec::new(),
+            availability: None,
         };
     }
 
@@ -161,27 +178,45 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
     let pieces_per_bucket = total.div_ceil(bucket_count);
 
     let mut buckets = Vec::with_capacity(bucket_count);
+    // Built in the same loop rather than a second pass, so the two strips
+    // cannot fall out of step with each other.
+    let mut rarest_buckets = copies.map(|_| Vec::with_capacity(bucket_count));
     let mut present_in_bucket = 0usize;
     let mut seen_in_bucket = 0usize;
+    let mut rarest_in_bucket = u32::MAX;
     let mut complete = 0u32;
 
-    for present in have.take(total) {
+    for (piece, present) in have.take(total).enumerate() {
         if present {
             present_in_bucket += 1;
             complete += 1;
+        }
+        if let Some(all) = copies {
+            // A short `copies` claims nothing about the pieces it omits, so
+            // those leave the running minimum alone.
+            if let Some(n) = all.get(piece) {
+                rarest_in_bucket = rarest_in_bucket.min(*n);
+            }
         }
         seen_in_bucket += 1;
 
         if seen_in_bucket == pieces_per_bucket {
             buckets.push(level(present_in_bucket, seen_in_bucket));
+            if let Some(out) = rarest_buckets.as_mut() {
+                out.push(saturate(rarest_in_bucket));
+            }
             present_in_bucket = 0;
             seen_in_bucket = 0;
+            rarest_in_bucket = u32::MAX;
         }
     }
 
     // Flush a partial final bucket.
     if seen_in_bucket > 0 {
         buckets.push(level(present_in_bucket, seen_in_bucket));
+        if let Some(out) = rarest_buckets.as_mut() {
+            out.push(saturate(rarest_in_bucket));
+        }
     }
 
     PieceMap {
@@ -189,7 +224,19 @@ pub(super) fn downsample_pieces(have: impl Iterator<Item = bool>, total_pieces: 
         pieces_complete: complete,
         pieces_per_bucket: u32::try_from(pieces_per_bucket).unwrap_or(u32::MAX),
         buckets,
+        availability: rarest_buckets,
     }
+}
+
+/// Narrows a copy count for the wire.
+///
+/// `u32::MAX` is the "nothing seen" sentinel from the running minimum and
+/// means the bucket had no counts at all, which reads as zero copies.
+fn saturate(rarest: u32) -> u16 {
+    if rarest == u32::MAX {
+        return 0;
+    }
+    u16::try_from(rarest).unwrap_or(u16::MAX)
 }
 
 /// Downsamples one file's slice of the piece bitfield.
@@ -238,21 +285,21 @@ mod tests {
 
     #[test]
     fn empty_torrent_produces_no_buckets() {
-        let map = downsample_pieces(std::iter::empty(), 0);
+        let map = downsample_pieces(std::iter::empty(), 0, None);
         assert!(map.buckets.is_empty());
         assert_eq!(map.total_pieces, 0);
     }
 
     #[test]
     fn small_torrents_map_one_piece_per_bucket() {
-        let map = downsample_pieces([true, false, true, true].into_iter(), 4);
+        let map = downsample_pieces([true, false, true, true].into_iter(), 4, None);
         assert_eq!(map.pieces_per_bucket, 1);
         assert_eq!(map.buckets, vec![255, 0, 255, 255]);
     }
 
     #[test]
     fn a_complete_torrent_is_fully_saturated() {
-        let map = downsample_pieces(std::iter::repeat_n(true, 5000), 5000);
+        let map = downsample_pieces(std::iter::repeat_n(true, 5000), 5000, None);
         assert!(
             map.buckets.iter().all(|&b| b == 255),
             "every bucket should be full"
@@ -261,13 +308,13 @@ mod tests {
 
     #[test]
     fn an_empty_download_is_all_zero() {
-        let map = downsample_pieces(std::iter::repeat_n(false, 5000), 5000);
+        let map = downsample_pieces(std::iter::repeat_n(false, 5000), 5000, None);
         assert!(map.buckets.iter().all(|&b| b == 0));
     }
 
     #[test]
     fn large_torrents_are_capped_at_the_bucket_limit() {
-        let map = downsample_pieces(std::iter::repeat_n(true, 500_000), 500_000);
+        let map = downsample_pieces(std::iter::repeat_n(true, 500_000), 500_000, None);
         assert!(
             map.buckets.len() <= MAX_PIECE_BUCKETS,
             "expected at most {MAX_PIECE_BUCKETS} buckets, got {}",
@@ -283,7 +330,7 @@ mod tests {
         let padded = [true, true, true]
             .into_iter()
             .chain(std::iter::repeat_n(false, 5));
-        let map = downsample_pieces(padded, 3);
+        let map = downsample_pieces(padded, 3, None);
         assert_eq!(map.buckets, vec![255, 255, 255]);
     }
 
@@ -291,7 +338,7 @@ mod tests {
     fn buckets_only_group_once_pieces_exceed_the_cap() {
         // At or below the cap, each bucket holds exactly one piece, so an
         // alternating pattern stays fully saturated or fully empty.
-        let small = downsample_pieces([true, false].into_iter().cycle().take(10), 10);
+        let small = downsample_pieces([true, false].into_iter().cycle().take(10), 10, None);
         assert_eq!(small.pieces_per_bucket, 1);
         assert_eq!(small.buckets, vec![255, 0, 255, 0, 255, 0, 255, 0, 255, 0]);
     }
@@ -304,6 +351,7 @@ mod tests {
         let map = downsample_pieces(
             [true, false].into_iter().cycle().take(pieces),
             u32::try_from(pieces).unwrap(),
+            None,
         );
 
         assert_eq!(map.pieces_per_bucket, 2);
@@ -357,7 +405,62 @@ mod tests {
     #[test]
     fn a_partial_final_bucket_is_still_emitted() {
         // 7 pieces with 1600 max buckets → 1 piece per bucket, 7 buckets.
-        let map = downsample_pieces(std::iter::repeat_n(true, 7), 7);
+        let map = downsample_pieces(std::iter::repeat_n(true, 7), 7, None);
         assert_eq!(map.buckets.len(), 7);
+    }
+
+    /// The two strips are drawn stacked, so a column in one must describe the
+    /// same pieces as the column above it.
+    #[test]
+    fn availability_buckets_line_up_with_completion_buckets() {
+        let pieces = 5000;
+        let copies: Vec<u32> = (0..pieces).map(|i| i % 7).collect();
+        let map = downsample_pieces(
+            std::iter::repeat_n(true, pieces as usize),
+            pieces,
+            Some(&copies),
+        );
+
+        let availability = map.availability.expect("availability");
+        assert_eq!(availability.len(), map.buckets.len());
+    }
+
+    /// The minimum, not the mean: a region averaging plenty while containing
+    /// one piece nobody holds is the case this strip exists to show.
+    #[test]
+    fn a_bucket_reports_its_rarest_piece() {
+        // Twice MAX_PIECE_BUCKETS, so each bucket covers exactly two pieces.
+        let pieces = MAX_PIECE_BUCKETS * 2;
+        let mut copies = vec![9u32; pieces];
+        copies[1] = 0; // second piece of the first bucket
+
+        let map = downsample_pieces(
+            std::iter::repeat_n(true, pieces),
+            u32::try_from(pieces).unwrap(),
+            Some(&copies),
+        );
+
+        assert_eq!(map.pieces_per_bucket, 2);
+        let availability = map.availability.expect("availability");
+        // The bucket takes the rarest of its two pieces, not their mean.
+        assert_eq!(availability[0], 0);
+        assert_eq!(availability[1], 9);
+    }
+
+    /// No bitfields to judge from is not a swarm holding nothing.
+    #[test]
+    fn absent_copies_leave_availability_absent() {
+        let map = downsample_pieces([true; 4].into_iter(), 4, None);
+        assert_eq!(map.availability, None);
+    }
+
+    /// A short `copies` must not panic. Below MAX_PIECE_BUCKETS each bucket is
+    /// a single piece, so the uncovered ones read as zero rather than
+    /// borrowing a neighbour's count.
+    #[test]
+    fn a_short_copies_slice_does_not_panic() {
+        let copies = [3, 4];
+        let map = downsample_pieces([true; 4].into_iter(), 4, Some(&copies));
+        assert_eq!(map.availability, Some(vec![3, 4, 0, 0]));
     }
 }

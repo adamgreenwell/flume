@@ -55,14 +55,9 @@ export interface TorrentDetailProps {
  * `peer_limit` is unset, so there is no ceiling), disk writes (no write-queue
  * depth) and hash checking (no CPU accounting). See `engine/bottleneck.rs`.
  *
- * Still absent for the same reason:
- *
- * - the availability histogram under the piece map, which needs per-region
- *   bitfields rather than the whole-torrent figure
- * - the trackers tab's plain-English verdict, which needs per-tracker announce
- *   status librqbit does not expose
- *
- * Both are real features waiting on real data, not oversights.
+ * Still absent for the same reason: the trackers tab's plain-English verdict,
+ * which needs per-tracker announce status librqbit does not expose. That is a
+ * real feature waiting on real data, not an oversight.
  *
  * @param props - See {@link TorrentDetailProps}.
  * @returns The rendered inspector.

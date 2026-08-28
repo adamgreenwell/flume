@@ -28,6 +28,19 @@ pub struct Availability {
     pub seeds: u32,
 }
 
+/// The full analysis: the summary plus the per-piece copy counts it came from.
+///
+/// Kept together because both come from one pass over the peers' bitfields,
+/// and the caller wants both — the summary for the verdict, the counts for the
+/// availability histogram.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Analysis {
+    /// What the swarm holds, in aggregate.
+    pub summary: Availability,
+    /// Connected peers holding each piece, indexed by piece.
+    pub copies: Vec<u32>,
+}
+
 /// Counts how many connected peers hold each piece.
 ///
 /// `bitfields` are the raw bytes each peer sent. Bitfields are big-endian by
@@ -38,7 +51,7 @@ pub struct Availability {
 /// Returns `None` when there is nothing to judge from: no peers, or a torrent
 /// whose piece count is not known yet. A caller must not read that as a
 /// healthy swarm, nor as a broken one.
-pub fn compute(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Availability> {
+pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Analysis> {
     if bitfields.is_empty() || total_pieces == 0 {
         return None;
     }
@@ -67,17 +80,20 @@ pub fn compute(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Availability>
     }
 
     let sum: u64 = copies.iter().map(|c| u64::from(*c)).sum();
-    Some(Availability {
-        rarest: copies.iter().copied().min().unwrap_or(0),
-        average: sum as f64 / total as f64,
-        seeds,
+    Some(Analysis {
+        summary: Availability {
+            rarest: copies.iter().copied().min().unwrap_or(0),
+            average: sum as f64 / total as f64,
+            seeds,
+        },
+        copies,
     })
 }
 
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use super::{Availability, compute};
+    use super::{Availability, analyse};
 
     /// Two peers with the same piece count can be very different swarms.
     ///
@@ -90,12 +106,12 @@ mod tests {
         let split = vec![vec![0b1100_0000], vec![0b0011_0000]];
 
         // Identical piece counts either way.
-        assert_eq!(compute(&same, 4).unwrap().average, 1.0);
-        assert_eq!(compute(&split, 4).unwrap().average, 1.0);
+        assert_eq!(analyse(&same, 4).unwrap().summary.average, 1.0);
+        assert_eq!(analyse(&split, 4).unwrap().summary.average, 1.0);
 
         // But only one of them can finish.
-        assert_eq!(compute(&same, 4).unwrap().rarest, 0);
-        assert_eq!(compute(&split, 4).unwrap().rarest, 1);
+        assert_eq!(analyse(&same, 4).unwrap().summary.rarest, 0);
+        assert_eq!(analyse(&split, 4).unwrap().summary.rarest, 1);
     }
 
     #[test]
@@ -106,7 +122,7 @@ mod tests {
             vec![0b1000_0000], // just piece 0
         ];
         assert_eq!(
-            compute(&peers, 4).unwrap(),
+            analyse(&peers, 4).unwrap().summary,
             Availability {
                 rarest: 2,
                 average: 2.25,
@@ -120,7 +136,7 @@ mod tests {
     fn ignores_padding_past_the_last_piece() {
         // 4 real pieces in a byte that has every bit set.
         let peers = vec![vec![0b1111_1111]];
-        let a = compute(&peers, 4).unwrap();
+        let a = analyse(&peers, 4).unwrap().summary;
         assert_eq!(a.rarest, 1);
         assert_eq!(a.average, 1.0);
         assert_eq!(a.seeds, 1);
@@ -130,14 +146,14 @@ mod tests {
     fn spans_multiple_bytes() {
         // 10 pieces: peer holds 0 and 9.
         let peers = vec![vec![0b1000_0000, 0b0100_0000]];
-        let a = compute(&peers, 10).unwrap();
+        let a = analyse(&peers, 10).unwrap().summary;
         assert_eq!(a.rarest, 0);
         assert_eq!(a.average, 0.2);
     }
 
     #[test]
     fn nothing_to_judge_from_is_not_a_verdict() {
-        assert!(compute(&[], 4).is_none());
-        assert!(compute(&[vec![0xff]], 0).is_none());
+        assert!(analyse(&[], 4).is_none());
+        assert!(analyse(&[vec![0xff]], 0).is_none());
     }
 }
