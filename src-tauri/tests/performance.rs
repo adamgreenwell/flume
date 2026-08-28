@@ -5,6 +5,17 @@
 //! per second, so that call is the whole budget: if it stays fast and its
 //! payload stays small, the interface cannot be starved by torrent count.
 //!
+//! **These torrents have no peers.** `test_config` disables the DHT and the
+//! torrents are built locally, so nothing ever connects. That makes the numbers
+//! here a floor rather than a realistic tick: everything gated on a live swarm
+//! is skipped, including the availability walk, which is O(peers x pieces) and
+//! the most expensive thing in a real tick. `analyse_stays_within_its_share_of_a_telemetry_tick`
+//! in `src/engine/availability.rs` covers that separately, with synthetic
+//! bitfields, because a swarm of the size that matters cannot be stood up here.
+//!
+//! Do not read a pass here as "telemetry is fast with 15 busy torrents". It is
+//! "telemetry is fast with 15 idle ones", which is a weaker claim.
+//!
 //! These are gated behind `--ignored` because timing assertions on a shared CI
 //! runner are flaky, and a flaky perf test gets ignored rather than fixed. Run
 //! locally before a release:
