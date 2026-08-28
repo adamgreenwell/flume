@@ -331,7 +331,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </div>
         </div>
 
-        <div className="border-line bg-bg-1 flex h-[62px] shrink-0 items-center gap-3.5 border-t px-6">
+        <div className="border-line bg-bg-1 flex min-h-[62px] shrink-0 items-center gap-3.5 border-t px-6 py-2">
           <span className={`shrink-0 ${error ? "text-err" : "text-ok"}`}>
             <Icon name={error ? "alert-circle" : "check-circle"} size={16} />
           </span>

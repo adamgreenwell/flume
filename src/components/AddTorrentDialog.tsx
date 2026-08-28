@@ -402,7 +402,7 @@ export function AddTorrentDialog({
           </p>
         ) : null}
 
-        <div className="border-line flex h-[70px] shrink-0 items-center gap-2.5 border-t px-5">
+        <div className="border-line flex min-h-[70px] shrink-0 items-center gap-2.5 border-t px-5 py-2">
           <span
             className={`shrink-0 ${reFetching.length > 0 ? "text-warn" : "text-ok"}`}
           >

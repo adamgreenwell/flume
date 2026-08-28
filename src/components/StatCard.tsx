@@ -12,7 +12,7 @@ export type StatCardSize = "dock" | "strip";
 
 const SIZE_CLASSES: Record<StatCardSize, string> = {
   dock: "gap-[3px]",
-  strip: "border-line gap-[5px] border-r px-5 py-4 last:border-r-0",
+  strip: "border-line gap-[5px] border-r px-5 py-3 last:border-r-0",
 };
 
 const VALUE_CLASSES: Record<StatCardSize, string> = {
@@ -62,7 +62,9 @@ export function StatCard({ label, value, hint, size = "dock" }: StatCardProps) {
         {value}
       </span>
       {hint && size === "strip" ? (
-        <span className="text-fg-2 text-[11px]">{hint}</span>
+        <span className="text-fg-2 truncate text-[11px]" title={String(hint)}>
+          {hint}
+        </span>
       ) : null}
     </div>
   );

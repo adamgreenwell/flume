@@ -169,7 +169,7 @@ export function TorrentDetail({
         aria-label={`Details for ${torrent.name}`}
         className="border-line bg-bg-0 flex h-[900px] max-h-[92vh] w-full max-w-[1440px] flex-col overflow-hidden rounded-lg border shadow-2xl"
       >
-        <div className="border-line bg-bg-1 flex h-[68px] shrink-0 items-center gap-3.5 border-b px-6">
+        <div className="border-line bg-bg-1 flex min-h-[68px] shrink-0 items-center gap-3.5 border-b px-6 py-2">
           <div className="min-w-0 grow">
             <h2
               className="truncate text-[17px] font-semibold tracking-[-0.02em]"
@@ -186,7 +186,7 @@ export function TorrentDetail({
           </Chip>
         </div>
 
-        <div className="border-line bg-bg-1 flex h-[88px] shrink-0 border-b">
+        <div className="border-line bg-bg-1 flex min-h-[88px] shrink-0 border-b">
           <StatCard
             size="strip"
             label="Progress"
