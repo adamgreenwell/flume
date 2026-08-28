@@ -37,6 +37,19 @@ updates:
             "typescript",
             "jsdom",
           ]
+    ignore:
+      # CLAUDE.md records the decision to stay on TypeScript 5.x, but the
+      # ignore that was supposed to enforce it was never written -- so #76
+      # proposed TS 7 anyway and took the whole dev-tooling group down with it.
+      #
+      # typescript-eslint 8.x declares `typescript ">=4.8.4 <6.1.0"`, so on 7
+      # `npm run lint` cannot run at all. It is the group, not the bump, that
+      # makes this expensive: one blocked major holds back vitest, prettier and
+      # the testing-library updates alongside it.
+      #
+      # Revisit in #28, once typescript-eslint supports the native compiler.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

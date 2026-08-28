@@ -19,22 +19,22 @@ flume.dev (a React node editor). Both verified unrelated.
 
 ## Confirmed decisions
 
-| Decision           | Value                                                  | Rationale                                                                                                                         |
-| ------------------ | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| License            | Apache-2.0                                             | Matches librqbit; express patent grant matters for P2P                                                                            |
-| Repo visibility    | Private for now                                        | Built open-source-ready; flip when ready                                                                                          |
-| Git workflow       | Feature branch → PR → Claude self-merges when green    | PR CI path exercised; readable diff per change                                                                                    |
-| Commit style       | Conventional Commits, small and frequent               | History is a deliverable, not bookkeeping                                                                                         |
-| Tracking           | GitHub Project #8 + issues per roadmap item            | Transparent audit trail before going public                                                                                       |
-| Bundle ID          | `io.github.adamgreenwell.flume`                        | `dev.flume.*` would claim an unrelated project's domain                                                                           |
-| TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                                                                     |
-| Fonts              | Instrument Sans + IBM Plex Mono, vendored as woff2     | Still no build-time or runtime fetch; the type ramp is measured against these metrics, and the app must render offline            |
-| MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more                                              |
-| Node (CI + dev)    | 26, pinned in `.nvmrc`                                 | Build tooling only, never shipped; matches `@types/node`. `.nvmrc` is the single source — `engines`, CI and `nvm use` all read it |
-| TypeScript         | Stay on 5.x                                            | TS 7 (native Go compiler) breaks `typescript-eslint`, so `npm run lint` cannot run — Dependabot ignores the major; revisit in #28 |
-| Add flow (Phase 1) | File picker first, then start                          | ISO torrents bundle several images; avoid downloading the wrong 4 GB                                                              |
-| Layout (Phase 1)   | Single list + detail panel                             | Focused; scales fine for a personal workload                                                                                      |
-| Settings store     | `tauri-plugin-store` (JSON)                            | Sufficient for a flat settings object; no SQLite migration burden                                                                 |
+| Decision           | Value                                                  | Rationale                                                                                                                                      |
+| ------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| License            | Apache-2.0                                             | Matches librqbit; express patent grant matters for P2P                                                                                         |
+| Repo visibility    | Private for now                                        | Built open-source-ready; flip when ready                                                                                                       |
+| Git workflow       | Feature branch → PR → Claude self-merges when green    | PR CI path exercised; readable diff per change                                                                                                 |
+| Commit style       | Conventional Commits, small and frequent               | History is a deliverable, not bookkeeping                                                                                                      |
+| Tracking           | GitHub Project #8 + issues per roadmap item            | Transparent audit trail before going public                                                                                                    |
+| Bundle ID          | `io.github.adamgreenwell.flume`                        | `dev.flume.*` would claim an unrelated project's domain                                                                                        |
+| TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                                                                                  |
+| Fonts              | Instrument Sans + IBM Plex Mono, vendored as woff2     | Still no build-time or runtime fetch; the type ramp is measured against these metrics, and the app must render offline                         |
+| MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more                                                           |
+| Node (CI + dev)    | 26, pinned in `.nvmrc`                                 | Build tooling only, never shipped; matches `@types/node`. `.nvmrc` is the single source — `engines`, CI and `nvm use` all read it              |
+| TypeScript         | Stay on 5.x                                            | TS 7 is outside `typescript-eslint`'s peer range (`>=4.8.4 <6.1.0`), so `npm run lint` cannot run. Ignored in `dependabot.yml`; revisit in #28 |
+| Add flow (Phase 1) | File picker first, then start                          | ISO torrents bundle several images; avoid downloading the wrong 4 GB                                                                           |
+| Layout (Phase 1)   | Single list + detail panel                             | Focused; scales fine for a personal workload                                                                                                   |
+| Settings store     | `tauri-plugin-store` (JSON)                            | Sufficient for a flat settings object; no SQLite migration burden                                                                              |
 
 ## Architecture rules (violating one is a design defect)
 
