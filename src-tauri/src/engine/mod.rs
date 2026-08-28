@@ -15,6 +15,7 @@
 
 mod add;
 mod availability;
+mod bottleneck;
 mod config;
 mod detail;
 mod import;
@@ -32,6 +33,7 @@ use librqbit::{
 };
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
+pub use bottleneck::{Bottleneck, LimitFactor};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
 pub use detail::{
     MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
@@ -695,12 +697,23 @@ impl Engine {
         );
         let note = note::describe(&summary, &swarm);
 
+        // Ranked from the same summary the row shows, so the panel cannot
+        // contradict the sentence above it.
+        let bottleneck = bottleneck::compute(
+            summary.state,
+            summary.download_bps,
+            self.current_limits().0,
+            avail,
+            summary.live_peers,
+        );
+
         Ok(TorrentDetail {
             peers,
             trackers,
             pieces,
             swarm,
             note,
+            bottleneck,
         })
     }
 

@@ -18,7 +18,10 @@
  * the whole module is dropped by tree-shaking.
  */
 
+import { formatSpeed } from "@/lib/format";
+
 import type {
+  Bottleneck,
   CoreStatus,
   DetectedClient,
   Settings,
@@ -303,12 +306,60 @@ function pieceMap(): TorrentDetail["pieces"] {
  * @param id - Which torrent to describe.
  * @returns Detail matching that torrent's summary.
  */
+function bottleneckFor(torrent: TorrentSummary): Bottleneck | null {
+  // Mirrors `bottleneck::compute` in Rust: only a downloading torrent is being
+  // limited, and the swarm is claimed only once the cap is ruled out.
+  if (torrent.state !== "downloading") return null;
+
+  if (torrent.livePeers === 0) {
+    return {
+      factors: [
+        {
+          name: "Peers",
+          utilisation: 100,
+          value: "none connected",
+          binding: true,
+        },
+      ],
+      explanation:
+        "Nothing is connected, so nothing is arriving. This is the swarm " +
+        "rather than a setting — Flume will keep trying, and a torrent with " +
+        "no reachable peers may simply have none.",
+    };
+  }
+
+  // SETTINGS has no download cap, so there is no cap row to show and the
+  // swarm is what is limiting.
+  return {
+    factors: [
+      {
+        name: "Peer upload",
+        utilisation: 100,
+        value: formatSpeed(torrent.downloadBps),
+        binding: true,
+      },
+      {
+        name: "Piece availability",
+        utilisation: 0,
+        value: "rarest on 5 peers",
+        binding: false,
+      },
+    ],
+    explanation:
+      `The ${torrent.livePeers} connected peers are supplying ` +
+      `${formatSpeed(torrent.downloadBps)}, and that is all they are ` +
+      "offering. You have no download cap set, so no setting will make this " +
+      "faster — only more or better-connected peers will.",
+  };
+}
+
 function detailFor(id: number): TorrentDetail {
   const torrent = TORRENTS.find((t) => t.id === id) ?? TORRENTS[0];
   const remaining = Math.max(torrent.totalBytes - torrent.progressBytes, 0);
 
   return {
     ...DETAIL,
+    bottleneck: bottleneckFor(torrent),
     // Live peers only exist while something is running.
     peers: torrent.livePeers === 0 ? [] : DETAIL.peers,
     pieces: torrent.livePeers === 0 && !torrent.finished ? null : DETAIL.pieces,
@@ -448,6 +499,9 @@ const CLIENTS: DetectedClient[] = [
 ];
 
 const DETAIL: TorrentDetail = {
+  // Replaced per torrent in `detailFor` — a fixed ranking would contradict the
+  // row it is shown beside.
+  bottleneck: null,
   peers: [
     {
       address: "185.125.190.59:6881",

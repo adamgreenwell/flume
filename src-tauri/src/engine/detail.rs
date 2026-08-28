@@ -133,6 +133,9 @@ pub struct TorrentDetail {
     /// three-sentence string per torrent per second is a lot of IPC for
     /// something nobody is reading.
     pub note: super::note::Note,
+    /// What is limiting this download, or `None` when the question does not
+    /// apply — a paused or seeding torrent is not being limited.
+    pub bottleneck: Option<crate::engine::bottleneck::Bottleneck>,
 }
 
 /// Downsamples a per-piece present/absent iterator into a compact heatmap.

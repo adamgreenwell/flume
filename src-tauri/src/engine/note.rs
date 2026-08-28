@@ -86,7 +86,7 @@ fn bytes(value: u64) -> String {
 /// held down to 0.1 — see `formatSpeed` in `src/lib/format.ts`, which this must
 /// agree with. Sizes and rates read differently on purpose, so they cannot
 /// share one formatter.
-fn rate(bytes_per_second: u64) -> String {
+pub(super) fn rate(bytes_per_second: u64) -> String {
     if bytes_per_second == 0 {
         return "0 B/s".to_string();
     }

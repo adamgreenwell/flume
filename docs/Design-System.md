@@ -285,17 +285,32 @@ The torrent is re-read from telemetry on every tick while the inspector is
 open, so its numbers move rather than freezing at whatever the row held when it
 was clicked.
 
-#### What is deliberately absent
+#### The bottleneck panel, and what is still absent
 
-The design's centrepiece is a panel that ranks every candidate constraint on a
-download and marks exactly one as binding. **It is not built.** It is no longer
-blocked, though: Flume now runs a patched librqbit that exposes the peers'
-bitfields, so piece availability is computable and the panel is buildable work
-rather than a data problem. See `CLAUDE.md` under "Piece availability, and the
-librqbit fork".
+The design's centrepiece — ranking every constraint on a download and marking
+exactly one as binding — **is built**. It ranks only what Flume can measure.
 
-Of the four smaller surfaces that leaned on the same number, two shipped with
-that patch and one is now merely unbuilt:
+| Factor             | Status                                                        |
+| ------------------ | ------------------------------------------------------------- |
+| Peer upload        | **Shown.** Binding by elimination — see below.                |
+| Your download cap  | **Shown.** Rate against the configured cap, measured exactly. |
+| Piece availability | **Shown.** Not in the design's list; the fork supplies it.    |
+| Connection slots   | Absent — `peer_limit` is unset, so there is no ceiling.       |
+| Disk writes        | Absent — librqbit exposes no write-queue depth.               |
+| Hash checking      | Absent — no CPU accounting.                                   |
+
+**"Peer upload is binding" is a deduction, not a guess.** The rate a swarm will
+supply cannot be observed, but its complement can: if the configured cap is not
+saturated and no piece is missing, nothing on this machine is holding the
+transfer back, so the peers are. It ranks last for that reason — it is the
+residual, claimed only once the measurable constraints are ruled out.
+
+A factor whose ceiling cannot be measured carries **no bar** and reads "Not
+measured". An empty bar would say "plenty of headroom", which is exactly the
+claim Flume cannot make.
+
+Of the four smaller surfaces that leaned on availability, two shipped with the
+fork:
 
 | Surface                                    | Status                                             |
 | ------------------------------------------ | -------------------------------------------------- |

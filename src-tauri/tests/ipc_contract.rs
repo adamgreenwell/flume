@@ -30,9 +30,9 @@
 use flume_lib::{
     commands::CommandError,
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, Note, NoteSeverity, PeerInfo, PieceMap, SwarmHealth,
-        SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState,
-        TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
+        Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
+        PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
+        TorrentFileState, TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
     },
     settings::{Settings, Theme},
 };
@@ -271,10 +271,19 @@ fn torrent_detail_matches_the_typescript_mirror() {
             title: "Pulling from 3 of 40 known peers".into(),
             body: "500 B verified so far, 500 B to go.".into(),
         },
+        bottleneck: Some(Bottleneck {
+            factors: vec![LimitFactor {
+                name: "Peer upload".into(),
+                utilisation: Some(100.0),
+                value: "6.6 MB/s".into(),
+                binding: true,
+            }],
+            explanation: "The peers are supplying all they have.".into(),
+        }),
     };
     assert_keys(
         &detail,
-        &["peers", "trackers", "pieces", "swarm", "note"],
+        &["peers", "trackers", "pieces", "swarm", "note", "bottleneck"],
         "TorrentDetail",
     );
     assert_keys(

@@ -283,6 +283,38 @@ export interface SwarmStats {
   rarest: number | null;
 }
 
+/**
+ * One candidate constraint on a download. Mirrors Rust `LimitFactor`.
+ *
+ * The design names five factors; Flume populates the three it can measure.
+ * Connection slots, disk writes and hash checking are absent because librqbit
+ * exposes no ceiling, no write-queue depth and no CPU accounting respectively —
+ * omitted rather than filled with a plausible number.
+ */
+export interface LimitFactor {
+  /** Display name, in the user's terms rather than the protocol's. */
+  name: string;
+  /**
+   * How constrained the torrent is by this factor, 0–100.
+   *
+   * `null` where the ceiling is not measurable — the row renders without a bar
+   * rather than with an invented one. A full bar always means "at its limit".
+   */
+  utilisation: number | null;
+  /** Preformatted for display: `"6.6 MB/s"`, `"rarest piece on 4 peers"`. */
+  value: string;
+  /** Whether this is *the* constraint. At most one factor is ever `true`. */
+  binding: boolean;
+}
+
+/** What is limiting a download. Mirrors Rust `Bottleneck`. */
+export interface Bottleneck {
+  /** Every measurable factor, most-constrained first. */
+  factors: LimitFactor[];
+  /** Two sentences: what is binding, and whether a setting would help. */
+  explanation: string;
+}
+
 /** One connected peer. Mirrors Rust `PeerInfo`. */
 export interface PeerInfo {
   /** Remote socket address, as `host:port`. */
@@ -373,6 +405,11 @@ export interface TorrentDetail {
   pieces: PieceMap | null;
   /** Peer pool health. */
   swarm: SwarmStats;
+  /**
+   * What is limiting this download, or `null` when the question does not apply
+   * — a paused or seeding torrent is not being limited.
+   */
+  bottleneck: Bottleneck | null;
   /**
    * What this torrent is actually doing, in words.
    *
