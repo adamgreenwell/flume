@@ -184,7 +184,18 @@ npm run check
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Network-dependent tests are `#[ignore]`d: `cargo test -- --ignored`.
+Tests needing more than a checkout are `#[ignore]`d: `cargo test -- --ignored`.
+They are not uniform, and a failure there is not automatically a regression:
+
+- **DHT and magnet tests** need working internet.
+- **`peer_connections_go_through_a_configured_proxy`** additionally needs a
+  SOCKS5 proxy on `127.0.0.1:1080`. Without one it fails on a 120-second
+  timeout, which looks alarming and means nothing. See the wiki's development
+  setup page for the one-line command that starts one.
+- **Timing tests** (`tests/performance.rs`, and the availability walk in
+  `src/engine/availability.rs`) only mean anything under `--release`.
+
+Each test's `#[ignore]` reason names its own prerequisite.
 
 ## Status
 
