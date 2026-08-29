@@ -212,12 +212,25 @@ where this bites.
 **Phase 0 complete.** Engine integration verified end to end: the running app
 bootstraps the DHT to 100+ nodes and persists state correctly.
 
-**Phase 1 next** — see `docs/Phase-1-Plan.md` for the build order and confirmed
-product decisions, plus `docs/Roadmap.md` and the project board.
+**Phase 1 built, not signed off.** All nine items in `docs/Phase-1-Plan.md` are
+implemented — telemetry is event-based, add/control/remove and file selection
+work, and the design retrofit landed on top. The definition of done still has
+open boxes, and they are the manual ones rather than the code:
+
+- Adding a real Linux ISO by magnet and by `.torrent` end to end
+- Kill and relaunch mid-download resuming without a full re-hash
+- Windows seeding, which is issue #48 rather than an unstarted item
+
+Do not mark Phase 1 done from the code alone; those three want a run on a real
+torrent. See `docs/Roadmap.md` and the project board for what follows.
 
 ## Known gaps
 
 - Windows and Linux are unverified locally (developed on macOS 27). CI covers
   build, but first-run behaviour on those platforms needs a manual pass.
-- The Phase 0 UI polls at 1 Hz; Phase 1 should replace this with backend-pushed
-  events before the torrent count grows.
+- Telemetry is pushed, not polled (`src-tauri/src/telemetry.rs` emits, the
+  frontend `listen()`s), but the snapshot is still _computed_ every second
+  whether or not anyone is looking — including while the window is hidden.
+  Availability now skips torrents that are not downloading, so a mostly-seeding
+  library is cheap; a library of many concurrent downloads is not. See
+  `analyse_stays_within_its_share_of_a_telemetry_tick` for the per-torrent cost.
