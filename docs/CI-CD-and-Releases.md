@@ -49,9 +49,11 @@ split upgrade usually fails to compile.
 
 ## Cost
 
-The repository is private, so Actions minutes are billed. A full release run is
-several dollars, and macOS dominates it — those runners bill at 10x, Windows at
-2x, Linux at 1x.
+The repository is public, so standard runners are free. That was not true for
+most of the project's life, and the habits below were formed when a full release
+run cost several dollars — macOS bills at 10x, Windows 2x, Linux 1x on private
+repositories. They are still worth keeping: a failure caught locally is a
+failure that did not cost ten minutes of waiting either.
 
 Two habits follow:
 

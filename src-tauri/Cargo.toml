@@ -1,6 +1,6 @@
 [package]
 name = "flume-app"
-version = "0.1.0"
+version = "1.0.0"
 description = "A beautiful, cross-platform BitTorrent client."
 authors = ["Adam Greenwell"]
 license = "Apache-2.0"
