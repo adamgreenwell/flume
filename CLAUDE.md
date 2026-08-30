@@ -217,8 +217,12 @@ implemented — telemetry is event-based, add/control/remove and file selection
 work, and the design retrofit landed on top. The definition of done still has
 open boxes, and they are the manual ones rather than the code:
 
-- Adding a real Linux ISO by magnet and by `.torrent` end to end
-- Kill and relaunch mid-download resuming without a full re-hash
+- Adding a real Linux ISO by magnet and by `.torrent` end to end. A real
+  torrent has been through the whole lifecycle, but by one route, not both.
+- Resuming _without a full re-hash_. Recovery is proven — a killed process
+  resumes correctly — but a kill never reaches the `RunEvent::Exit` flush, so
+  it re-hashes by definition. `fastresume` is on and the flush exists; what is
+  untested is a clean quit not entering `Checking`.
 - Windows seeding, which is issue #48 rather than an unstarted item
 
 Do not mark Phase 1 done from the code alone; those three want a run on a real
