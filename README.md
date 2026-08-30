@@ -8,7 +8,7 @@
 [![Website](https://img.shields.io/badge/website-flume.adamgreenwell.com-5ab8ea)](https://flume.adamgreenwell.com)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
-[![librqbit](https://img.shields.io/badge/librqbit-9.0.0-5319E7)](https://crates.io/crates/librqbit)
+[![librqbit](<https://img.shields.io/badge/librqbit-9.0.1%20(patched)-5319E7>)](https://github.com/adamgreenwell/rqbit/tree/peer-availability)
 
 </div>
 
@@ -65,6 +65,33 @@ cd flume
 npm install
 npm run tauri:dev
 ```
+
+### A note on the librqbit dependency
+
+**Your first build fetches librqbit from a fork, not crates.io.** That is
+deliberate, and `src-tauri/Cargo.toml` says so at the point it happens:
+
+```toml
+[patch.crates-io]
+librqbit = { git = "https://github.com/adamgreenwell/rqbit.git", rev = "..." }
+```
+
+Upstream librqbit tracks each peer's bitfield for piece picking but does not
+expose it, so an embedder cannot compute what the _swarm_ holds — which is what
+answers "will this download finish?" rather than merely "is it moving?". The
+fork adds two opt-in fields and three re-exports; nothing is computed unless
+asked for, so existing librqbit callers are unaffected.
+
+It is pinned by **full commit SHA** in `Cargo.lock`, so a force-push to the fork
+cannot change what you build. The same change is with upstream as
+[`ikatson/rqbit#644`][rqbit-pr]; when it lands in a crates.io release the
+`[patch.crates-io]` section is deleted and this note goes with it.
+
+The wiki's [Torrent Engine Notes][engine-notes] has the full reasoning, including
+why a per-peer _count_ is not sufficient.
+
+[rqbit-pr]: https://github.com/ikatson/rqbit/pull/644
+[engine-notes]: https://github.com/adamgreenwell/flume/wiki/Torrent-Engine-Notes
 
 Useful scripts:
 

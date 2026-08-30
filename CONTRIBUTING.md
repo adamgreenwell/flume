@@ -19,6 +19,21 @@ On Debian/Ubuntu you will also need:
 sudo apt-get install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev
 ```
 
+**Your first build fetches librqbit from a fork rather than crates.io.** This is
+deliberate and temporary — it adds per-peer bitfields, which upstream tracks but
+does not expose, and without which Flume cannot tell a swarm that will finish
+from one that will not. It is pinned by full commit SHA, and the change is with
+upstream as [`ikatson/rqbit#644`](https://github.com/ikatson/rqbit/pull/644).
+See the README's [note on the librqbit
+dependency](README.md#a-note-on-the-librqbit-dependency) for the detail.
+
+Two things follow for contributors:
+
+- Do not delete the fork's `peer-availability` branch. `Cargo.lock` pins the
+  commit, but the commit still has to stay reachable or every build fails.
+- When the patch lands upstream, deleting the `[patch.crates-io]` section is the
+  whole removal — nothing in Flume's own code depends on the fork existing.
+
 ## Architecture rules
 
 These are not style preferences. Violating one is a design defect, and a review
