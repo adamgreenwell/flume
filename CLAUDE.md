@@ -217,8 +217,9 @@ implemented — telemetry is event-based, add/control/remove and file selection
 work, and the design retrofit landed on top. The definition of done still has
 open boxes, and they are the manual ones rather than the code:
 
-- Adding a real Linux ISO by magnet and by `.torrent` end to end. A real
-  torrent has been through the whole lifecycle, but by one route, not both.
+- Adding a Linux ISO by **magnet**. The `.torrent` route is verified end to end
+  on a Debian ISO; magnets resolve metadata from peers first, which is a
+  different path and a slower one the UI has never been watched across.
 - Windows seeding, which is issue #48 rather than an unstarted item
 
 Do not mark Phase 1 done from the code alone; those two want a run on a real

@@ -145,9 +145,25 @@ restart and a mid-download kill, resuming correctly each time. That is most of
 the first and fourth boxes, but neither is ticked yet and the reasons are worth
 keeping:
 
-**The first box asks for a Linux ISO by magnet _and_ by `.torrent`.** One real
-torrent by one route is not both routes, and the add flow differs between them —
-a magnet resolves metadata from peers before the file picker can show anything.
+**The first box asks for a Linux ISO by magnet _and_ by `.torrent`.** The
+`.torrent` route is done — a Debian ISO added, completed, and seeded. The magnet
+route is not, and it is not a formality.
+
+Both converge on the same `list_only: true` preview, but they reach it
+differently: a `.torrent` is `AddTorrent::from_bytes` and has its metadata in
+hand, so the listing returns near-instantly. A magnet is `AddTorrent::from_url`
+and has to fetch metadata **from peers over the DHT** before any file listing
+can exist.
+
+The engine side of that is already covered by
+`magnet_resolves_real_metadata_over_the_dht` (`#[ignore]`d — it needs real
+peers). What no test covers is the UI across a preview that takes seconds
+rather than milliseconds. Worth watching when it is run:
+
+- what the add dialog shows while metadata resolves, rather than after
+- that the DHT reads **Ready** first; a magnet added while **Connecting** sits
+  waiting, which the User Guide already warns about
+- a magnet nobody is seeding — whether that surfaces as an error or hangs
 
 **The fourth box is met.** Verified on a real Debian torrent: a mid-download
 kill resumed correctly, and a clean quit relaunches straight into seeding with
