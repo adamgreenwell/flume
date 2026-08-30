@@ -214,16 +214,18 @@ bootstraps the DHT to 100+ nodes and persists state correctly.
 
 **Phase 1 built, not signed off.** All nine items in `docs/Phase-1-Plan.md` are
 implemented — telemetry is event-based, add/control/remove and file selection
-work, and the design retrofit landed on top. The definition of done still has
-open boxes, and they are the manual ones rather than the code:
+work, and the design retrofit landed on top. Six of the seven definition-of-done
+boxes are ticked. What is left:
 
 - Adding a Linux ISO by **magnet**. The `.torrent` route is verified end to end
   on a Debian ISO; magnets resolve metadata from peers first, which is a
   different path and a slower one the UI has never been watched across.
 - Windows seeding, which is issue #48 rather than an unstarted item
 
-Do not mark Phase 1 done from the code alone; those two want a run on a real
-torrent. See `docs/Roadmap.md` and the project board for what follows.
+Do not mark Phase 1 done from the code alone. The magnet route wants a run on a
+real torrent — the engine side is proven by
+`magnet_resolves_real_metadata_over_the_dht` against the live DHT, but nothing
+watches the UI across the several seconds that resolution takes. See `docs/Roadmap.md` and the project board for what follows.
 
 ## Known gaps
 

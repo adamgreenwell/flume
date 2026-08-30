@@ -131,14 +131,34 @@ Resist the temptation to emit per-torrent events.
 ## Definition of done
 
 - [ ] Add a Linux ISO by magnet and by `.torrent`, choosing files first
-- [ ] Pause, resume, and remove work, with delete-files confirmation
-- [ ] Settings persist and take effect without a relaunch
+- [x] Pause, resume, and remove work, with delete-files confirmation
+- [x] Settings persist and take effect without a relaunch
 - [x] Kill and relaunch mid-download resumes without full re-hash
 - [x] Telemetry is event-based and batched at ~1 Hz
 - [x] All CI gates green; new engine logic covered by tests
 - [x] Wiki User Guide updated to describe what actually shipped
 
 ### What a real build has shown so far
+
+Verified by hand on a fresh build: remove-with-delete, pause and resume, and
+settings surviving a close and reopen. Each is now also covered by a test, so
+the next regression is caught without another manual pass:
+
+| Behaviour                       | Test                                                       |
+| ------------------------------- | ---------------------------------------------------------- |
+| Remove keeps the data           | `remove_without_delete_leaves_files_on_disk`               |
+| Remove deletes the data         | `remove_with_delete_takes_the_files_too`                   |
+| Pause and resume round trip     | `pause_and_resume_round_trip`                              |
+| Settings survive a restart      | `settings_survive_a_save_and_load`                         |
+| A first run has usable settings | `absent_settings_load_as_usable_defaults_without_an_error` |
+| Limits apply without a relaunch | `rate_limits_apply_to_the_running_session`                 |
+
+Two of those were writing themselves into a hole and are worth remembering.
+`remove_without_delete_leaves_files_on_disk` **never checked the files** — it
+asserted only that the torrent left the session, so the half its name promised
+was untested. And the delete test asserts the file exists _before_ removing it,
+because a torrent that never laid anything down would make "the file is gone"
+pass for the wrong reason.
 
 A real torrent has been added, completed, seeded, and survived both a clean
 restart and a mid-download kill, resuming correctly each time. That is most of

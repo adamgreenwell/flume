@@ -17,7 +17,7 @@
 
 use std::time::Duration;
 
-use flume_lib::engine::{Engine, EngineConfig, EngineHealth, TorrentSource};
+use flume_lib::engine::{Engine, EngineConfig, EngineHealth, TorrentSource, TorrentState};
 use tempfile::TempDir;
 
 /// Builds a config rooted in a temporary directory, so tests never touch the
@@ -291,14 +291,23 @@ async fn control_operations_reject_unknown_ids() {
     engine.shutdown().await;
 }
 
-#[tokio::test]
-async fn remove_without_delete_leaves_files_on_disk() {
-    let tmp = TempDir::new().expect("temp dir");
-    let path = sample_torrent_file(&tmp.path().join("src")).await;
+/// Waits for a path to appear, or gives up.
+///
+/// librqbit lays a torrent's files out asynchronously after an add, so a bare
+/// assertion right afterwards races it.
+async fn wait_for(path: &std::path::Path) -> bool {
+    for _ in 0..50 {
+        if path.exists() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    false
+}
 
-    let engine = Engine::start(test_config(&tmp, false))
-        .await
-        .expect("engine starts");
+/// Adds the sample torrent and returns its id and the file it lays down.
+async fn add_sample(tmp: &TempDir, engine: &Engine) -> (usize, std::path::PathBuf) {
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
     let preview = engine
         .preview(TorrentSource::File { path })
         .await
@@ -308,11 +317,97 @@ async fn remove_without_delete_leaves_files_on_disk() {
         .await
         .expect("add");
 
+    // A single-file torrent: librqbit lays it directly in the download
+    // directory rather than under a folder named for the torrent.
+    let file = tmp.path().join("downloads").join("ubuntu.iso");
+    assert!(
+        wait_for(&file).await,
+        "librqbit should lay the file out at {file:?} -- without it the \
+         delete assertions below would pass vacuously"
+    );
+
+    (id, file)
+}
+
+#[tokio::test]
+async fn remove_without_delete_leaves_files_on_disk() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let (id, file) = add_sample(&tmp, &engine).await;
+
     engine.remove(id, false).await.expect("remove");
 
     assert!(
         engine.torrent_summaries().is_empty(),
         "torrent should be gone from the session"
+    );
+    // The half of this the name promises, which it never actually checked.
+    assert!(
+        file.exists(),
+        "removing without delete must leave the data alone"
+    );
+
+    engine.shutdown().await;
+}
+
+/// The destructive path, and the one the confirmation dialog exists to guard.
+#[tokio::test]
+async fn remove_with_delete_takes_the_files_too() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let (id, file) = add_sample(&tmp, &engine).await;
+
+    engine.remove(id, true).await.expect("remove with delete");
+
+    assert!(
+        engine.torrent_summaries().is_empty(),
+        "torrent should be gone from the session"
+    );
+    for _ in 0..50 {
+        if !file.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        !file.exists(),
+        "asking to delete the files must actually delete them, or the \
+         confirmation dialog is promising something that does not happen"
+    );
+
+    engine.shutdown().await;
+}
+
+/// Pause and resume are separate commands; a torrent has to survive the round
+/// trip and still be there afterwards.
+#[tokio::test]
+async fn pause_and_resume_round_trip() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let (id, _) = add_sample(&tmp, &engine).await;
+
+    engine.pause(id).await.expect("pause");
+    let paused = engine.torrent_summaries();
+    assert_eq!(paused.len(), 1, "pausing must not remove the torrent");
+    assert_eq!(
+        paused[0].state,
+        TorrentState::Paused,
+        "a paused torrent should report itself paused"
+    );
+
+    engine.resume(id).await.expect("resume");
+    let resumed = engine.torrent_summaries();
+    assert_eq!(resumed.len(), 1, "resuming must not remove the torrent");
+    assert_ne!(
+        resumed[0].state,
+        TorrentState::Paused,
+        "a resumed torrent should no longer report itself paused"
     );
 
     engine.shutdown().await;
@@ -503,6 +598,43 @@ async fn peer_connections_go_through_a_configured_proxy() {
         preview.name.to_lowercase().contains("ubuntu"),
         "unexpected torrent name: {}",
         preview.name
+    );
+
+    engine.shutdown().await;
+}
+
+/// Rate limits apply to the running session, not on next launch.
+///
+/// The settings screen has no OK or Apply button by design, so a change that
+/// only took effect after a restart would be a silent lie — the UI would show
+/// the new cap while the session kept using the old one.
+#[tokio::test]
+async fn rate_limits_apply_to_the_running_session() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    assert_eq!(
+        engine.current_limits(),
+        (None, None),
+        "a fresh session starts uncapped"
+    );
+
+    engine.apply_limits(Some(2_000_000), Some(500_000));
+    assert_eq!(
+        engine.current_limits(),
+        (Some(2_000_000), Some(500_000)),
+        "a limit set while running must be in force immediately"
+    );
+
+    // Lifting a cap is the direction that matters most: a stuck limit would
+    // throttle the user with the UI claiming otherwise.
+    engine.apply_limits(None, None);
+    assert_eq!(
+        engine.current_limits(),
+        (None, None),
+        "clearing a limit must lift it, not leave the old one in place"
     );
 
     engine.shutdown().await;
