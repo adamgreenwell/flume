@@ -260,3 +260,37 @@ jobs:
           # --clobber so a re-run replaces assets rather than failing on a name
           # collision.
           gh release upload "$TAG" rpms/*.rpm --clobber -R "$GITHUB_REPOSITORY"
+
+  notify-site:
+    name: Rebuild the website
+    needs: [build, rpm, attach-rpms]
+    runs-on: ubuntu-latest
+    # `always()` so a partial release still refreshes the site -- if Windows
+    # succeeded and Linux did not, the download page should still gain the
+    # Windows installers rather than staying a release behind.
+    if: always()
+    steps:
+      # The site reads the GitHub releases API at build time, so its download
+      # buttons render real filenames and sizes into static HTML and work with
+      # JavaScript disabled. The cost of that choice is that a new release is
+      # invisible until the site rebuilds, which is what this does.
+      #
+      # Skipped silently when no hook is configured: a fork has no Sevalla
+      # deployment, and failing a release over it would be absurd.
+      - name: Ping the Sevalla deploy hook
+        env:
+          HOOK: ${{ secrets.SEVALLA_DEPLOY_HOOK }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "No SEVALLA_DEPLOY_HOOK configured; skipping site rebuild."
+            echo "The site will show this release after its next deploy."
+            exit 0
+          fi
+          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" --max-time 30 "$HOOK")
+          echo "Deploy hook responded $code"
+          # Reported, not fatal. The release itself succeeded; a stale website
+          # is worth a warning and not worth failing a green release over.
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually."
+          fi
