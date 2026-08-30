@@ -4,6 +4,23 @@
 > [[Smoke-Test-Checklist]] rather than clicking around — it is ordered so the
 > most likely failures surface first.
 
+## Icons
+
+`app-icon.png` in the repository root is the source of every app icon, and is
+the default `cargo tauri icon` looks for. Regenerate after changing it:
+
+```bash
+cargo tauri icon
+```
+
+That rewrites everything in `src-tauri/icons/`. It also emits `android/` and
+`ios/` sets, which Flume does not ship — delete them, or the tree grows 35
+files and 1.5 MB for platforms with no build.
+
+The source must have a real alpha channel. macOS and Linux draw the icon
+against whatever is behind it, so a baked-in background renders as a square
+tile rather than a shaped mark.
+
 ## Build matrix
 
 | Target                     | Runner                  | Output                |
