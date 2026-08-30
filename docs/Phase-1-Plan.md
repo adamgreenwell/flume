@@ -134,9 +134,33 @@ Resist the temptation to emit per-torrent events.
 - [ ] Pause, resume, and remove work, with delete-files confirmation
 - [ ] Settings persist and take effect without a relaunch
 - [ ] Kill and relaunch mid-download resumes without full re-hash
-- [ ] Telemetry is event-based and batched at ~1 Hz
-- [ ] All CI gates green; new engine logic covered by tests
-- [ ] Wiki User Guide updated to describe what actually shipped
+- [x] Telemetry is event-based and batched at ~1 Hz
+- [x] All CI gates green; new engine logic covered by tests
+- [x] Wiki User Guide updated to describe what actually shipped
+
+### What a real build has shown so far
+
+A real torrent has been added, completed, seeded, and survived both a clean
+restart and a mid-download kill, resuming correctly each time. That is most of
+the first and fourth boxes, but neither is ticked yet and the reasons are worth
+keeping:
+
+**The first box asks for a Linux ISO by magnet _and_ by `.torrent`.** One real
+torrent by one route is not both routes, and the add flow differs between them —
+a magnet resolves metadata from peers before the file picker can show anything.
+
+**The fourth box asks for resume _without a full re-hash_,** which is a stronger
+claim than resume. The mechanism is configured — `fastresume: true` on
+`SessionOptions`, and a `RunEvent::Exit` hook that calls `session.stop()` to
+flush the bitfield — but a **kill never reaches that hook**, so a killed process
+leaves no fast-resume state and librqbit rebuilds the bitfield by hashing. A
+kill that resumes correctly therefore proves recovery, not fast-resume.
+
+A re-hash is visible: it shows as the `Checking` state. To close this box, quit
+cleanly rather than killing, relaunch, and watch whether a large torrent enters
+`Checking` at all. A clean quit that still re-checks would mean the flush is not
+doing its job, which is a real bug rather than expected behaviour — and it is
+what was observed once on a completed torrent.
 
 ## Open questions for Phase 2
 
