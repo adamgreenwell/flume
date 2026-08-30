@@ -2,22 +2,29 @@
 
 ## Installing
 
-> Packaged builds are not published yet. The release pipeline lands in Phase 3
-> ([#15](https://github.com/adamgreenwell/flume/issues/15)). Until then, build
-> from source — see [[Development-Setup]].
+Download the file for your platform from the
+[latest release](https://github.com/adamgreenwell/flume/releases/latest).
 
-When releases are available:
+| Platform                   | File                             | Notes                                      |
+| -------------------------- | -------------------------------- | ------------------------------------------ |
+| macOS 12+                  | `Flume_<version>_universal.dmg`  | One build for both Intel and Apple Silicon |
+| Windows 10/11              | `Flume_<version>_x64-setup.exe`  | The `.msi` is for managed deployment       |
+| Debian 12+ / Ubuntu 22.04+ | `Flume_<version>_amd64.deb`      | `sudo apt install ./Flume_*.deb`           |
+| Fedora 38+ / RHEL 9.4+     | `Flume-<version>-1.x86_64.rpm`   | `sudo dnf install ./Flume-*.rpm`           |
+| Any Linux                  | `Flume_<version>_amd64.AppImage` | `chmod +x` and run — no install            |
 
-| Platform                   | File                        | Notes                                    |
-| -------------------------- | --------------------------- | ---------------------------------------- |
-| macOS 12+                  | `Flume_x.y.z.dmg`           | Unsigned builds need a Gatekeeper bypass |
-| Windows 10/11              | `Flume_x.y.z.msi` or `.exe` | SmartScreen may warn on unsigned builds  |
-| Debian 12+ / Ubuntu 22.04+ | `flume_x.y.z_amd64.deb`     | `sudo apt install ./flume_*.deb`         |
-| Fedora 38+ / RHEL 9.4+     | `flume-x.y.z.rpm`           | `sudo dnf install ./flume-*.rpm`         |
+Windows and Linux also ship arm64 builds, named `arm64` or `aarch64` in place
+of `x64`/`amd64`/`x86_64`. macOS needs no such choice: the `.dmg` is a universal
+binary.
 
-Builds are unsigned, so your OS will likely warn you the first time.
-See [[Signing-and-Distribution]] for what the warning means and the least
-alarming way past it.
+Every release carries a `SHA256SUMS.txt` if you want to check what you
+downloaded.
+
+The macOS build is signed and notarized, so it opens without argument. The
+Windows builds are **not** signed, so SmartScreen will interrupt the installer
+with an "unrecognised app" panel — that is what an unsigned installer looks
+like, not a sign the download is damaged. See [[Signing-and-Distribution]] for
+what each system says and the least alarming way past it.
 
 ## First run
 
