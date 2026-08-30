@@ -122,6 +122,26 @@ Types to know:
 - `AggregatePeerStats` has a `live` field directly, alongside per-transport
   `live_tcp` / `live_utp` / `live_socks`.
 
+## `add_torrent` with `list_only` does not return for a dead magnet
+
+The preview step adds with `list_only: true` to get a file list without
+downloading. For a `.torrent` that is local work — the list is already in the
+file. For a magnet it is a network fetch: a magnet carries an info hash, and
+the list has to come from a peer who already has the torrent.
+
+**librqbit applies no deadline to that.** If no peer answers, the future never
+resolves. `Engine::preview` therefore imposes its own, magnet-only, and
+surfaces `EngineError::MetadataTimeout` — a distinct error kind from
+`Metadata`, because nothing is wrong with the link.
+
+This shipped in 1.0.0 as an add dialog that hung forever. It was visible in the
+test suite the whole time, as the 120-second `tokio::time::timeout` wrapped
+around `preview` in `tests/engine.rs` — a timeout added so a _test_ would not
+hang is evidence the thing under test can hang.
+
+`preview_within` takes the deadline as an argument so the timeout path can be
+tested in milliseconds.
+
 ## Upgrading
 
 1. Read the crate's changelog and diff `SessionOptions` first — it is where
