@@ -7,6 +7,11 @@ name: Windows check
 # Promote it into ci.yml if Windows regressions start slipping through.
 on:
   workflow_dispatch:
+    inputs:
+      build_installers:
+        description: "Also bundle .msi/.exe installers for x64 and arm64"
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -49,3 +54,62 @@ jobs:
       - name: File-locking reproduction (issue #9)
         working-directory: src-tauri
         run: cargo test --test windows_file_locking -- --nocapture
+
+  # Off by default. The tests above are one 2x runner; this is two more plus a
+  # full release build on each, so it is opt-in rather than something a routine
+  # issue-9 run pays for.
+  #
+  # Deliberately not the release pipeline: that is tag-driven and builds the
+  # 10x macOS leg too, which is most of a release run's cost and none of what
+  # is being tested here. This produces the same installers as workflow
+  # artifacts, without a tag or a draft release.
+  windows-packages:
+    name: Windows installers (${{ matrix.arch }})
+    if: inputs.build_installers
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One architecture failing should not deny the other's installer.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          # Native rather than cross-compiled: Tauri's Windows bundlers (WiX
+          # and NSIS) expect to run on the target architecture, and a cross
+          # build produces a binary with no installer around it.
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      # tauri-build needs the frontend export to exist before the crate builds.
+      - name: Build the frontend
+        run: npm run build
+
+      - name: Bundle the installers
+        working-directory: src-tauri
+        run: cargo install tauri-cli --version "^2" --locked && cargo tauri build
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: flume-windows-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
