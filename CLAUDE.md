@@ -12,7 +12,19 @@ records, not afterwards.
 
 A cross-platform BitTorrent client — Tauri v2 shell, Next.js static-export
 frontend, `librqbit` v9 engine. Tagline: _"A beautiful, cross-platform
-BitTorrent client."_ Primary use case: downloading Linux distribution ISOs.
+BitTorrent client."_
+
+**General-purpose — do not give it a use case.** This used to read "primary use
+case: downloading Linux distribution ISOs". That is the standard wink and it is
+not true; a general-purpose client is general-purpose. Do not reintroduce it,
+and do not correct it in the other direction either — acknowledging what people
+actually torrent is inducement, which is the one framing that carries real
+liability for a tool like this. Describe what the client does and leave what
+people download with it to them.
+
+Concrete examples are fine and are not the same thing: "a multi-gigabyte ISO"
+illustrating memory bounds, or a distro torrent explaining why file selection
+matters, are illustrations rather than claims about purpose.
 
 Not to be confused with the `flume` crate (an MPMC channel library) or
 flume.dev (a React node editor). Both verified unrelated.

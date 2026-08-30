@@ -20,8 +20,9 @@ genuinely pleasant to use. It pairs a modern, themeable interface with
 [Tauri][tauri] shell, so the whole app ships as a small native binary rather
 than a bundled browser.
 
-It is built around a specific use case: **downloading Linux distribution ISOs**
-(Ubuntu, Debian, Fedora, Rocky, AlmaLinux) for development and server testing.
+It is a **general-purpose** BitTorrent client, and deliberately only that: no
+cryptocurrency, no chat, no RSS automation, no bundled search, and no paid
+tier.
 
 > [!NOTE]
 > Flume is approaching 1.0. The core torrent lifecycle, the polish pass, and

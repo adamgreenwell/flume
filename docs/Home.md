@@ -6,8 +6,9 @@ Flume pairs a modern, themeable interface with [librqbit](https://github.com/ika
 a production-grade Rust BitTorrent engine — inside a [Tauri v2](https://tauri.app)
 shell. The result is a small native binary rather than a bundled browser.
 
-It is built around a specific use case: downloading Linux distribution ISOs
-(Ubuntu, Debian, Fedora, Rocky, AlmaLinux) for development and server testing.
+It is a general-purpose BitTorrent client, and deliberately only that: no
+cryptocurrency, no chat, no RSS automation, no bundled search, and no paid
+tier.
 
 ## Why Flume exists
 
