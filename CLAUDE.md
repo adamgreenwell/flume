@@ -222,25 +222,24 @@ where this bites.
 **Phase 0 complete.** Engine integration verified end to end: the running app
 bootstraps the DHT to 100+ nodes and persists state correctly.
 
-**Phase 1 built, not signed off.** All nine items in `docs/Phase-1-Plan.md` are
-implemented — telemetry is event-based, add/control/remove and file selection
-work, and the design retrofit landed on top. Six of the seven definition-of-done
-boxes are ticked. What is left:
+**Phase 1 complete.** All nine build-order items are implemented and all seven
+definition-of-done boxes are met, the last of them by manual use rather than by
+code: both add routes verified, controls and settings exercised, a mid-download
+kill resuming without a re-hash.
 
-- Adding a Linux ISO by **magnet**. The `.torrent` route is verified end to end
-  on a Debian ISO; magnets resolve metadata from peers first, which is a
-  different path and a slower one the UI has never been watched across.
-- Windows seeding, which is issue #48 rather than an unstarted item
+The design retrofit landed on top of it — swarm health, the limiting-factor
+panel, the availability histogram — none of which Phase 1 asked for.
 
-Do not mark Phase 1 done from the code alone. The magnet route wants a run on a
-real torrent — the engine side is proven by
-`magnet_resolves_real_metadata_over_the_dht` against the live DHT, but nothing
-watches the UI across the several seconds that resolution takes. See `docs/Roadmap.md` and the project board for what follows.
+See `docs/Roadmap.md` and the project board for what follows.
 
 ## Known gaps
 
-- Windows and Linux are unverified locally (developed on macOS 27). CI covers
-  build, but first-run behaviour on those platforms needs a manual pass.
+- Per-platform coverage is uneven. Development is on macOS 27; the add flow —
+  both routes, including clipboard magnet detection — has been exercised on
+  macOS, Windows and Linux, and Windows additionally through the file-locking
+  work in #9. What has not happened is a deliberate walk of the smoke checklist
+  in `docs/Platform-Notes.md` on each, so the gaps that remain are the ones
+  nobody has gone looking for.
 - Telemetry is pushed, not polled (`src-tauri/src/telemetry.rs` emits, the
   frontend `listen()`s), but the snapshot is still _computed_ every second
   whether or not anyone is looking — including while the window is hidden.

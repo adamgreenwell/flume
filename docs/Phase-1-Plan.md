@@ -130,7 +130,7 @@ Resist the temptation to emit per-torrent events.
 
 ## Definition of done
 
-- [ ] Add a Linux ISO by magnet and by `.torrent`, choosing files first
+- [x] Add a Linux ISO by magnet and by `.torrent`, choosing files first
 - [x] Pause, resume, and remove work, with delete-files confirmation
 - [x] Settings persist and take effect without a relaunch
 - [x] Kill and relaunch mid-download resumes without full re-hash
@@ -165,25 +165,20 @@ restart and a mid-download kill, resuming correctly each time. That is most of
 the first and fourth boxes, but neither is ticked yet and the reasons are worth
 keeping:
 
-**The first box asks for a Linux ISO by magnet _and_ by `.torrent`.** The
-`.torrent` route is done — a Debian ISO added, completed, and seeded. The magnet
-route is not, and it is not a formality.
+**Both add routes are verified, on all three platforms.** The `.torrent` route
+took a Debian ISO through add, completion and seeding. The magnet route has
+worked since early in the project, including the clipboard detection that offers
+a magnet when the add sheet opens, and the flow after that has been exercised on
+macOS, Windows and Linux.
 
-Both converge on the same `list_only: true` preview, but they reach it
-differently: a `.torrent` is `AddTorrent::from_bytes` and has its metadata in
-hand, so the listing returns near-instantly. A magnet is `AddTorrent::from_url`
-and has to fetch metadata **from peers over the DHT** before any file listing
-can exist.
-
-The engine side of that is already covered by
-`magnet_resolves_real_metadata_over_the_dht` (`#[ignore]`d — it needs real
-peers). What no test covers is the UI across a preview that takes seconds
-rather than milliseconds. Worth watching when it is run:
-
-- what the add dialog shows while metadata resolves, rather than after
-- that the DHT reads **Ready** first; a magnet added while **Connecting** sits
-  waiting, which the User Guide already warns about
-- a magnet nobody is seeding — whether that surfaces as an error or hangs
+They are worth distinguishing even though both now pass, because they reach the
+same `list_only: true` preview differently: a `.torrent` is
+`AddTorrent::from_bytes` and has its metadata in hand, so the listing returns
+near-instantly. A magnet is `AddTorrent::from_url` and must fetch metadata
+**from peers over the DHT** first, which is seconds rather than milliseconds and
+depends on the DHT reading **Ready**. `magnet_resolves_real_metadata_over_the_dht`
+covers the engine half; the UI across that wait is what manual use has now
+shown.
 
 **The fourth box is met.** Verified on a real Debian torrent: a mid-download
 kill resumed correctly, and a clean quit relaunches straight into seeding with

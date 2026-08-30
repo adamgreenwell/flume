@@ -2,8 +2,9 @@
 
 ## Adding torrents
 
-**Magnet links.** Paste into the add box. Flume detects a magnet link on the
-clipboard when the window regains focus and offers to add it.
+**Magnet links.** Paste into the add box, or copy one and let Flume notice:
+the add sheet detects a magnet on the clipboard and offers it. Verified on
+macOS, Windows and Linux.
 
 Magnet links resolve their metadata over the DHT, so the status indicator must
 read **Ready** first. A magnet added while **Connecting** will sit waiting.
