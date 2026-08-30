@@ -42,9 +42,10 @@ First public release.
 
 ### Known limitations
 
-- **Builds are unsigned.** Windows SmartScreen and macOS Gatekeeper will warn
-  until a signing certificate is in place. The wiki's Signing & Distribution
-  page covers the least alarming way through.
+- **Windows builds are unsigned.** SmartScreen warns on an unsigned executable
+  until a download reputation builds. The wiki's Signing & Distribution page
+  covers the least alarming way through. macOS is signed with a Developer ID
+  certificate and notarized by Apple, so Gatekeeper does not warn.
 - **Flume runs a patched librqbit.** Two changes are carried on a fork and are
   with upstream as [#644][r644] and [#645][r645]; the patch is removed when they
   land in a release. See the README.

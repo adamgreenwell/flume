@@ -22,9 +22,9 @@ env:
   RELEASE_BODY: |
     Download the file for your platform below.
 
-    Builds are unsigned unless signing credentials were configured. See the
-    wiki's Signing & Distribution page for what your OS will say about that
-    and the least alarming way past it.
+    macOS builds are signed and notarized. Windows builds are not signed, so
+    SmartScreen will warn until a download reputation builds — see the wiki's
+    Signing & Distribution page for the least alarming way past it.
 
 jobs:
   build:
