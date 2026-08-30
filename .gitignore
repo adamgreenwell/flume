@@ -36,6 +36,10 @@ next-env.d.ts
 # --- Claude Code -----------------------------------------------------------
 # Per-machine permission grants. `launch.json` is shared; this is not.
 .claude/settings.local.json
+# Local tooling config for running the app under an agent's browser pane. It
+# is machine-specific and arrives by accident via `git add -A`, which is how it
+# got committed once and broke Prettier on main.
+.claude/launch.json
 
 # --- Editors & OS -----------------------------------------------------------
 .DS_Store
