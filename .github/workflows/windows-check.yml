@@ -1,8 +1,12 @@
 name: Windows check
 
-# Manual only. The repository is private, so Actions minutes are billed, and
-# Windows runners bill at a 2x multiplier. This job exists to answer a specific
-# question (issue #9) on demand rather than on every push.
+# Manual only. This answers Windows-specific questions on demand rather than on
+# every push -- originally issue #9, which is now fixed and has a regression
+# test here.
+#
+# The whole test file is #[cfg(windows)], so ci.yml on Linux and macOS compiles
+# none of it. This is the only place it runs, which is worth remembering before
+# trusting a green CI badge on a Windows change.
 #
 # Promote it into ci.yml if Windows regressions start slipping through.
 on:
