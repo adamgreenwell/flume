@@ -5,6 +5,7 @@
 **A beautiful, cross-platform BitTorrent client.**
 
 [![CI](https://github.com/adamgreenwell/flume/actions/workflows/ci.yml/badge.svg)](https://github.com/adamgreenwell/flume/actions/workflows/ci.yml)
+[![Website](https://img.shields.io/badge/website-flume.adamgreenwell.com-5ab8ea)](https://flume.adamgreenwell.com)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![librqbit](https://img.shields.io/badge/librqbit-9.0.0-5319E7)](https://crates.io/crates/librqbit)
@@ -23,8 +24,9 @@ It is built around a specific use case: **downloading Linux distribution ISOs**
 (Ubuntu, Debian, Fedora, Rocky, AlmaLinux) for development and server testing.
 
 > [!NOTE]
-> Flume is in early development. Phase 0 (scaffold and engine integration) is
-> complete; torrent management lands in Phase 1. See the [Roadmap](#roadmap).
+> Flume is approaching 1.0. The core torrent lifecycle, the polish pass, and
+> the release pipeline are all built; what is left is signing Phase 1 off
+> against real torrents on each platform. See the [Roadmap](#roadmap).
 
 ## Why another torrent client?
 
@@ -41,8 +43,9 @@ into the part that is not solved: **the experience**.
 
 ## Installation
 
-> Builds are not yet published. Until Phase 3 ships the release pipeline, build
-> from source with the [development setup](#development) below.
+> No release has been tagged yet, so there is nothing to download. The pipeline
+> that builds these is in place and runs on a `v*` tag; until then, build from
+> source with the [development setup](#development) below.
 
 | Platform                              | Format                |
 | ------------------------------------- | --------------------- |
@@ -53,7 +56,7 @@ into the part that is not solved: **the experience**.
 
 ## Development
 
-**Prerequisites:** [Rust][rust] (stable, 1.88+), Node.js 22+, and your
+**Prerequisites:** [Rust][rust] (stable, 1.88+), Node.js 26 (see `.nvmrc`), and your
 platform's [Tauri system dependencies][tauri-prereqs].
 
 ```bash
@@ -98,23 +101,39 @@ to disk; the UI only ever receives small JSON payloads.
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-Full detail, including the IPC contract, lives in the [wiki][wiki].
+Full detail, including the IPC contract, lives in the [documentation][docs].
 
 ## Roadmap
 
-| Phase | Focus                                                          | Status      |
-| ----- | -------------------------------------------------------------- | ----------- |
-| 0     | Scaffold, engine integration, CI, docs                         | ✅ Complete |
-| 1     | Core torrent lifecycle (add, control, persist, file selection) | 🚧 Next     |
-| 2     | Polish: themes, detail views, deep links, tray, notifications  | Planned     |
-| 3     | Hardening: streaming, torrent v2, release pipeline, signing    | Planned     |
+| Phase | Focus                                                          | Status                      |
+| ----- | -------------------------------------------------------------- | --------------------------- |
+| 0     | Scaffold, engine integration, CI, docs                         | ✅ Complete                 |
+| 1     | Core torrent lifecycle (add, control, persist, file selection) | ✅ Built, awaiting sign-off |
+| 2     | Polish: themes, detail views, deep links, tray, notifications  | ✅ Complete                 |
+| 3     | Hardening: release pipeline, signing, performance              | 🚧 Mostly complete          |
+
+Phase 1 is implemented but not signed off: adding a real ISO by magnet and by
+`.torrent`, resuming mid-download across a relaunch, and Windows seeding
+([#48](https://github.com/adamgreenwell/flume/issues/48)) all want a run on a
+real torrent rather than a green CI badge.
 
 Tracked on the [project board][board] and in [issues][issues].
+
+## Documentation
+
+The full documentation is at **[flume.adamgreenwell.com/docs][docs]**, and the
+same pages are mirrored into the [GitHub Wiki][wiki]. Both are generated from
+[`docs/`](docs) in this repository — edit there, not in the wiki, so changes are
+reviewed alongside the code.
 
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-development workflow, coding standards, and commit conventions.
+development workflow, coding standards, and commit conventions, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the standard everyone is held to.
+
+Found a security issue? Please do not open a public issue — [SECURITY.md](SECURITY.md)
+explains how to report it privately.
 
 ## License
 
@@ -131,5 +150,6 @@ Flume embeds [librqbit][librqbit], also Apache-2.0. See [NOTICE](NOTICE).
 [rust]: https://rustup.rs
 [tauri-prereqs]: https://tauri.app/start/prerequisites/
 [wiki]: https://github.com/adamgreenwell/flume/wiki
+[docs]: https://flume.adamgreenwell.com/docs/
 [board]: https://github.com/users/adamgreenwell/projects/8
 [issues]: https://github.com/adamgreenwell/flume/issues

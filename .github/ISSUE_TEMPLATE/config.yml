@@ -1,5 +1,11 @@
 blank_issues_enabled: true
 contact_links:
   - name: Documentation
-    url: https://github.com/adamgreenwell/flume/wiki
+    url: https://flume.adamgreenwell.com/docs/
     about: Setup, usage, architecture, and platform notes.
+  - name: Wiki
+    url: https://github.com/adamgreenwell/flume/wiki
+    about: The same pages, mirrored into GitHub.
+  - name: Download
+    url: https://flume.adamgreenwell.com/download/
+    about: Installers for macOS, Windows, and Linux.

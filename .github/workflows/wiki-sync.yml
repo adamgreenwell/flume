@@ -1,0 +1,82 @@
+name: Sync wiki
+
+# Mirrors `docs/` into the GitHub Wiki.
+#
+# The wiki was previously synced by hand, and it drifted: Phase-1-Plan sat 57
+# lines behind the source while every other page happened to be current. That
+# is the failure mode a manual step always has — it works until the once it
+# does not, and nothing reports it.
+#
+# `docs/` stays the single source of truth. The wiki is an output, which is why
+# `_Footer.md` tells anyone who lands there to edit the source instead.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/wiki/**"
+      - ".github/workflows/wiki-sync.yml"
+  workflow_dispatch:
+
+# Two pushes racing to the same wiki produce a rejected non-fast-forward and a
+# red run for no reason. Later content wins; an in-flight sync is cancelled.
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Mirror docs/ to the wiki
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Check out the wiki
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki
+          # The wiki is a separate git repository and the default checkout
+          # token is not applied to it, so it is passed explicitly.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy pages
+        run: |
+          set -euo pipefail
+
+          # Every existing page is removed first so a file deleted from docs/
+          # disappears from the wiki too. Without this the wiki only ever grows,
+          # and a page that was deliberately retired stays published forever.
+          # `.git` is preserved, obviously.
+          find wiki -maxdepth 1 -name '*.md' -delete
+
+          cp docs/*.md wiki/
+          cp .github/wiki/_Sidebar.md .github/wiki/_Footer.md wiki/
+
+          echo "Pages now in the wiki:"
+          ls -1 wiki/*.md | sed 's|wiki/|  |'
+
+      - name: Commit and push
+        working-directory: wiki
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          # `git commit` exits non-zero when there is nothing staged, which is
+          # the normal outcome of a run triggered by an unrelated docs commit.
+          # That is success, not failure.
+          if git diff --cached --quiet; then
+            echo "Wiki already matches docs/ — nothing to push."
+            exit 0
+          fi
+
+          git commit -m "Sync wiki with docs/ at ${GITHUB_SHA::7}"
+          git push
