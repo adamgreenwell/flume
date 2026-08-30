@@ -63,7 +63,16 @@ commit still has to remain reachable. Deleting the branch, or the fork, leaves
 it eligible for garbage collection and every build and CI run breaks with a
 fetch error. The fork must also stay public: CI clones it anonymously.
 
-The patch adds three things, all in `PeerStats`:
+**A second patch fixes Windows file locking (#9).** `FilesystemStorage` opened
+every file read _and_ write when `allow_overwrite` is set, including a complete
+torrent that will only ever be served. On Windows a write open needs the holder
+to have granted `FILE_SHARE_WRITE`, so another application holding a download
+with `FILE_SHARE_READ` made the add fail outright. The patch retries read-only
+on a sharing violation and logs the degraded mode; seeding only reads, so a
+completed torrent is served normally. Unix is unaffected — an open handle does
+not restrict other opens there.
+
+The first patch adds three things, all in `PeerStats`:
 
 - `have_bitfield` — the peer's bitfield, opt-in via
   `PeerStatsFilter::include_bitfield`, off by default.
