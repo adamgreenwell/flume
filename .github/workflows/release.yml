@@ -202,21 +202,33 @@ jobs:
     container:
       image: fedora:40
     steps:
+      # No nodejs here: Fedora 40 ships Node 20, which is below the floor in
+      # `engines`, so `npm ci` fails with EBADENGINE. setup-node below supplies
+      # the right one and takes precedence on PATH.
       - name: Install build dependencies
         run: |
           dnf install -y \
             webkit2gtk4.1-devel openssl-devel curl wget file \
             libappindicator-gtk3-devel librsvg2-devel \
-            gcc gcc-c++ make rpm-build nodejs npm git
+            gcc gcc-c++ make rpm-build git xz
 
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # The container's own Node is too old. This is the same .nvmrc every
+      # other job reads, so there is still one source of truth.
+      #
+      # No `cache: npm` unlike elsewhere: the cache action needs a resolvable
+      # runner path, and this job's filesystem is the container's.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - run: npm ci
+      - run: node --version && npm ci
 
       - name: Build the frontend
         run: npm run build
