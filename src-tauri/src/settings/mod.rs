@@ -507,4 +507,53 @@ mod tests {
             );
         }
     }
+
+    /// The half of "settings persist" that a restart proves.
+    ///
+    /// `save` then `load` has to return what went in, including the optional
+    /// fields — a limit that round-trips as `None` would silently uncap the
+    /// user on every relaunch.
+    #[test]
+    fn settings_survive_a_save_and_load() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+
+        let mut original = valid();
+        original.download_limit_bps = Some(2_000_000);
+        original.upload_limit_bps = None;
+        original.listen_port = 51_413;
+        original.enable_dht = false;
+        original.theme = Theme::Dark;
+
+        original.save(tmp.path()).expect("save");
+        let (loaded, error) = Settings::load(tmp.path());
+
+        assert!(error.is_none(), "a settings file we just wrote should load");
+        assert_eq!(loaded, original, "every field must survive the round trip");
+    }
+
+    /// A missing file is a first run, not a failure.
+    ///
+    /// Note this is not `Settings::default()`: that leaves `download_dir`
+    /// empty, and `load` resolves a real one. A first run has to arrive with
+    /// somewhere to put downloads, since an empty path fails `validate`.
+    #[test]
+    fn absent_settings_load_as_usable_defaults_without_an_error() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let (loaded, error) = Settings::load(tmp.path());
+
+        assert!(
+            error.is_none(),
+            "a first run has no settings file and that is not an error"
+        );
+        assert!(
+            !loaded.download_dir.as_os_str().is_empty(),
+            "a first run must arrive with a download directory already chosen"
+        );
+        assert!(
+            loaded.validate().is_ok(),
+            "whatever load returns on a first run has to be usable as-is"
+        );
+        assert_eq!(loaded.listen_port, Settings::default().listen_port);
+        assert_eq!(loaded.theme, Settings::default().theme);
+    }
 }
