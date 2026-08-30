@@ -219,13 +219,9 @@ open boxes, and they are the manual ones rather than the code:
 
 - Adding a real Linux ISO by magnet and by `.torrent` end to end. A real
   torrent has been through the whole lifecycle, but by one route, not both.
-- Resuming _without a full re-hash_. Recovery is proven — a killed process
-  resumes correctly — but a kill never reaches the `RunEvent::Exit` flush, so
-  it re-hashes by definition. `fastresume` is on and the flush exists; what is
-  untested is a clean quit not entering `Checking`.
 - Windows seeding, which is issue #48 rather than an unstarted item
 
-Do not mark Phase 1 done from the code alone; those three want a run on a real
+Do not mark Phase 1 done from the code alone; those two want a run on a real
 torrent. See `docs/Roadmap.md` and the project board for what follows.
 
 ## Known gaps

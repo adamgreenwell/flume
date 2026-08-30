@@ -4,14 +4,33 @@
     {
       "name": "storybook",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "storybook"],
+      "runtimeArgs": [
+        "run",
+        "storybook"
+      ],
       "port": 6006
     },
     {
       "name": "app-mock",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:mock"],
+      "runtimeArgs": [
+        "run",
+        "dev:mock"
+      ],
       "port": 3000
+    },
+    {
+      "name": "flume-site",
+      "runtimeExecutable": "/opt/homebrew/bin/node",
+      "runtimeArgs": [
+        "/Users/adam/Code/flume-site/node_modules/astro/bin/astro.mjs",
+        "dev",
+        "--root",
+        "/Users/adam/Code/flume-site",
+        "--port",
+        "4321"
+      ],
+      "port": 4321
     }
   ]
 }

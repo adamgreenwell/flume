@@ -133,7 +133,7 @@ Resist the temptation to emit per-torrent events.
 - [ ] Add a Linux ISO by magnet and by `.torrent`, choosing files first
 - [ ] Pause, resume, and remove work, with delete-files confirmation
 - [ ] Settings persist and take effect without a relaunch
-- [ ] Kill and relaunch mid-download resumes without full re-hash
+- [x] Kill and relaunch mid-download resumes without full re-hash
 - [x] Telemetry is event-based and batched at ~1 Hz
 - [x] All CI gates green; new engine logic covered by tests
 - [x] Wiki User Guide updated to describe what actually shipped
@@ -149,18 +149,29 @@ keeping:
 torrent by one route is not both routes, and the add flow differs between them —
 a magnet resolves metadata from peers before the file picker can show anything.
 
-**The fourth box asks for resume _without a full re-hash_,** which is a stronger
-claim than resume. The mechanism is configured — `fastresume: true` on
-`SessionOptions`, and a `RunEvent::Exit` hook that calls `session.stop()` to
-flush the bitfield — but a **kill never reaches that hook**, so a killed process
-leaves no fast-resume state and librqbit rebuilds the bitfield by hashing. A
-kill that resumes correctly therefore proves recovery, not fast-resume.
+**The fourth box is met.** Verified on a real Debian torrent: a mid-download
+kill resumed correctly, and a clean quit relaunches straight into seeding with
+no `Checking` state.
 
-A re-hash is visible: it shows as the `Checking` state. To close this box, quit
-cleanly rather than killing, relaunch, and watch whether a large torrent enters
-`Checking` at all. A clean quit that still re-checks would mean the flush is not
-doing its job, which is a real bug rather than expected behaviour — and it is
-what was observed once on a completed torrent.
+The mechanism, since "it looked fast" is not evidence on its own:
+
+- `fastresume: true` on `SessionOptions`. librqbit defaults it to **false**, and
+  with it false the JSON store is paired with `NonPersistentBitVFactory` and
+  every launch re-hashes everything.
+- The bitfield is flushed **during** the download, not only at exit.
+  `on_piece_completed` accumulates `unflushed_bitv_bytes` and flushes every
+  16 MiB, synchronously again when the torrent finishes, and once more on
+  `Drop`. A killed process therefore leaves a bitfield at most 16 MiB stale, so
+  a kill costs re-downloading up to 16 MiB — not re-hashing the torrent.
+- `RunEvent::Exit` calling `session.stop()` is the final tidy-up rather than the
+  thing that makes this work. An earlier version of this note had that backwards
+  and concluded a kill must re-hash; it does not.
+
+The state is observable rather than inferred: `<info-hash>.bitv` in the app data
+directory is the persisted bitfield, and it is what a relaunch loads instead of
+hashing. On a finished torrent every bit is set.
+
+A re-hash, when it does happen, shows as the `Checking` state.
 
 ## Open questions for Phase 2
 
