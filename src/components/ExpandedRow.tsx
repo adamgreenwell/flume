@@ -23,12 +23,22 @@ function Stat({
   mono?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-[3px]">
+    // Figures never shrink; the one prose stat does. Without this the strip is
+    // a row of flex children that all give way equally, and "11,863 of 23,280"
+    // breaks at its spaces into three stacked lines — unreadable, and taller
+    // than the row it sits in. A truncated path is recoverable from the
+    // tooltip; a wrapped number is just wrong.
+    <div className={`flex flex-col gap-[3px] ${mono ? "shrink-0" : "min-w-0"}`}>
       <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
         {label}
       </span>
       <span
-        className={`font-medium tracking-[-0.01em] ${mono ? "flume-num text-[15px]" : "text-[12.5px]"}`}
+        className={`font-medium tracking-[-0.01em] ${
+          mono
+            ? "flume-num text-[15px] whitespace-nowrap"
+            : "truncate text-[12.5px]"
+        }`}
+        title={mono ? undefined : value}
       >
         {value}
       </span>
