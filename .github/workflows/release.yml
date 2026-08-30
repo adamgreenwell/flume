@@ -22,9 +22,16 @@ env:
   RELEASE_BODY: |
     Download the file for your platform below.
 
-    macOS builds are signed and notarized. Windows builds are not signed, so
-    SmartScreen will warn until a download reputation builds — see the wiki's
-    Signing & Distribution page for the least alarming way past it.
+    macOS builds are signed and notarized by Apple, so they open normally.
+
+    **Windows builds are not signed.** SmartScreen will show "Windows protected
+    your PC". The Run anyway button is behind **More info**, which is easy to
+    miss. Linux packages have no such gate.
+
+    `SHA256SUMS.txt` below covers every file here, if you would rather verify
+    the download than trust the dialog:
+
+        sha256sum -c SHA256SUMS.txt --ignore-missing
 
 jobs:
   build:
@@ -272,6 +279,44 @@ jobs:
           # --clobber so a re-run replaces assets rather than failing on a name
           # collision.
           gh release upload "$TAG" rpms/*.rpm --clobber -R "$GITHUB_REPOSITORY"
+
+  checksums:
+    name: Publish SHA-256 checksums
+    # After every artifact is attached, including the .rpm files that arrive
+    # via their own job. Checksums covering only some downloads are worse than
+    # none: a user who finds SHA256SUMS.txt reasonably assumes it is complete.
+    needs: [build, attach-rpms]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checksum every asset on the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist && cd dist
+
+          # Downloads from the release rather than the build artifacts, so the
+          # checksums describe exactly what a user gets. An artifact and its
+          # uploaded copy should be identical, but "should be" is not what a
+          # checksum is for.
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --clobber
+
+          # A previous run's checksum file would otherwise be hashed into the
+          # new one.
+          rm -f SHA256SUMS.txt
+
+          count=$(ls -1 | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "No assets found on $TAG -- refusing to publish an empty checksum file."
+            exit 1
+          fi
+
+          sha256sum * > SHA256SUMS.txt
+          echo "Checksummed $count assets:"
+          cat SHA256SUMS.txt
+
+          gh release upload "$TAG" SHA256SUMS.txt --clobber -R "$GITHUB_REPOSITORY"
 
   notify-site:
     name: Rebuild the website
