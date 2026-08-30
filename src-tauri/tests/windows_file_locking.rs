@@ -17,12 +17,25 @@
 //!
 //! The whole file is `#[cfg(windows)]`, so it costs nothing elsewhere.
 //!
-//! # What it actually tests
+//! # What it tests, and the answer
 //!
-//! `share_mode(0)` opens a file with **no** sharing — the strictest case, and
-//! what an application that has not opted into sharing gets. If librqbit can
-//! still initialize and verify a completed torrent whose file is held that
-//! way, Flume can seed it and no patch is needed.
+//! Two share modes, because conflating them is why this sat unconfirmed for so
+//! long. The original report described the strictest case, which no software
+//! can fix, so nobody could act on it.
+//!
+//! - **`FILE_SHARE_READ`** — the realistic case. A media player, indexer or
+//!   antivirus scanner holds the file, permitting reads and refusing writes.
+//!   This *used* to fail, because `FilesystemStorage` opened every file
+//!   read **and** write when `allow_overwrite` is set, including a torrent
+//!   already complete and only ever going to be served. Fixed in the patched
+//!   librqbit Flume carries: the open is retried read-only on a sharing
+//!   violation, and seeding only reads.
+//! - **`share_mode(0)`** — no sharing at all. Refuses every other open,
+//!   read-only included, so nothing can make it work. Asserted as a failure
+//!   rather than left failing, so this suite stays green and gateable.
+//!
+//! Both were confirmed against librqbit v9 on real Windows hardware. See
+//! issue #9.
 
 #![cfg(windows)]
 #![allow(clippy::expect_used, clippy::unwrap_used)]
@@ -161,63 +174,28 @@ async fn can_seed_a_file_another_process_holds_for_reading() {
 
 /// The strictest case: the holder permits no sharing whatsoever.
 ///
-/// Kept because it is what was originally reported, but note what it can and
-/// cannot show. `share_mode(0)` refuses *every* other open, including
-/// read-only, so no change to librqbit could make this pass. A failure here is
-/// Windows working as designed rather than a bug anyone can fix.
+/// This asserts a *failure*, deliberately. `share_mode(0)` refuses every other
+/// open, read-only included, so no change to librqbit or Flume can make this
+/// scenario work — it is Windows behaving as documented.
+///
+/// Written as a passing test rather than left failing because a suite that is
+/// expected to fail is one nobody can gate on, and `windows-check.yml` runs
+/// this file. The assertion is on the error *text*: it must name the read-only
+/// fallback, which proves the fix in `storage/filesystem/fs.rs` ran and was
+/// refused, rather than the open never having been retried at all.
+///
+/// If this ever starts succeeding, the fallback has become able to open a file
+/// nothing should be able to open, and that is worth knowing.
 #[tokio::test]
-async fn can_seed_a_file_another_process_holds_open() {
-    let tmp = TempDir::new().expect("temp dir");
-    let config = test_config(&tmp);
-    let (torrent_path, payload) = seeded_torrent(&config.download_dir).await;
-
-    // Hold the completed file with no sharing, standing in for another
-    // application that has the download open.
-    let _held = std::fs::OpenOptions::new()
-        .read(true)
-        .share_mode(NO_SHARING)
-        .open(&payload)
-        .expect("should be able to take an exclusive handle");
-
-    let engine = Engine::start(config).await.expect("engine starts");
-
-    let preview = engine
-        .preview(TorrentSource::File { path: torrent_path })
+async fn a_file_held_with_no_sharing_at_all_cannot_be_opened_by_anyone() {
+    let error = seed_while_held(NO_SHARING)
         .await
-        .expect("preview should succeed even with the file held");
-
-    let id = engine
-        .confirm_add(&preview.info_hash, None)
-        .await
-        .expect("adding should succeed even with the file held");
-
-    // Initialization hashes existing data; that is the step that must open the
-    // held file. Poll rather than assuming it completes synchronously.
-    let mut summary = None;
-    for _ in 0..50 {
-        let summaries = engine.torrent_summaries();
-        if let Some(s) = summaries.into_iter().find(|s| s.id == id) {
-            if s.finished || s.error.is_some() {
-                summary = Some(s);
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let summary = summary.expect("torrent should reach a terminal state within 5s");
+        .expect_err("share_mode(0) permits no other open, so this cannot succeed");
 
     assert!(
-        summary.error.is_none(),
-        "librqbit could not use a file held open by another process, which is \
-         the reported Windows behaviour in issue #9. Error: {:?}",
-        summary.error
+        error.contains("read-only after a sharing violation"),
+        "the read/write open should have failed and the read-only fallback \
+         should have been tried and refused in turn. Getting a different error \
+         means the fallback never ran. Got: {error}"
     );
-    assert!(
-        summary.finished,
-        "the torrent should verify as complete from existing data; state was {:?}",
-        summary.state
-    );
-
-    engine.shutdown().await;
 }
