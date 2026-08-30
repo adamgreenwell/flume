@@ -134,7 +134,7 @@ export function PreflightTiles({
             style={{ width: `${share}%` }}
           />
         }
-        note={`${selectedCount} of ${totalCount} files · ${
+        note={`${selectedCount} of ${totalCount} ${totalCount === 1 ? "file" : "files"} · ${
           skippedCount > 0
             ? `${formatBytes(skippedBytes)} skipped`
             : "nothing skipped"

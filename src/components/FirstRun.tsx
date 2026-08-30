@@ -320,7 +320,7 @@ export function FirstRun({ onDone }: FirstRunProps) {
         <div className="border-line mt-2 flex items-center gap-3 border-t pt-5">
           <span className="text-fg-3 text-[11px]">
             {total > 0 && imported === null
-              ? `${total} torrents waiting in other clients.`
+              ? `${total} ${total === 1 ? "torrent" : "torrents"} waiting in other clients.`
               : "Nothing here is permanent."}
           </span>
           <span className="grow" />

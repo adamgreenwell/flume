@@ -73,7 +73,9 @@ function Contributors({ peers }: { peers: readonly PeerInfo[] }) {
         <p className="text-fg-2 text-[11.5px]">
           {peers.length === 0
             ? "No peers connected."
-            : `${peers.length} peers connected, none has sent a verified piece yet.`}
+            : peers.length === 1
+              ? "1 peer connected, but it has not sent a verified piece yet."
+              : `${peers.length} peers connected, none has sent a verified piece yet.`}
         </p>
       </div>
     );
