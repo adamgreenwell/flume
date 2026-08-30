@@ -86,6 +86,11 @@ warns you: a tail that thins towards the right is a torrent heading for a
 stall. A region **no** peer holds is drawn full height in red, taller than
 anything else on the strip, and the caption says so.
 
+It counts the peers you are connected to and does not count you, because the
+question it answers is whether the swarm can finish your download. Once a
+torrent is complete the strip disappears — the question is answered, and a
+finished torrent cannot stall.
+
 ### What is limiting this download
 
 Ranks the constraints Flume can actually measure and marks at most one as
