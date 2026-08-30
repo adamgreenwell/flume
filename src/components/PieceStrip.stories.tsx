@@ -69,6 +69,27 @@ export const RegionNobodyHolds: Story = {
 };
 
 /**
+ * A completed torrent, seeding to peers that hold nothing yet.
+ *
+ * Availability counts the *connected peers* and deliberately excludes our own
+ * bitfield, so a seed whose only peer is a leecher computes zero copies for
+ * every piece. That is arithmetically right and, on a torrent that has already
+ * finished, a false alarm: the strip exists to warn that a download may stall,
+ * and this one cannot.
+ */
+export const CompleteWithLeecherPeers: Story = {
+  args: {
+    pieces: {
+      totalPieces: 377,
+      piecesComplete: 377,
+      piecesPerBucket: 1,
+      buckets: Array.from({ length: 377 }, () => 255),
+      availability: Array.from({ length: 377 }, () => 0),
+    },
+  },
+};
+
+/**
  * No peer bitfields yet, so there is nothing to judge from and the lower strip
  * is absent entirely rather than drawn empty.
  */

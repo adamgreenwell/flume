@@ -106,9 +106,25 @@ export interface PieceStripProps {
  */
 export function PieceStrip({ pieces }: PieceStripProps) {
   const cells = resample(pieces.buckets);
-  const rarest = pieces.availability
-    ? resampleRarest(pieces.availability)
-    : null;
+  // A finished torrent is not shown an availability strip, however many peers
+  // are connected.
+  //
+  // Availability counts the connected peers and deliberately excludes our own
+  // bitfield, because the question it answers is "will this finish" — which is
+  // about the swarm, not about us. Once we hold every piece that question is
+  // answered, and the arithmetic turns against the display: a seed whose peers
+  // are leechers computes zero copies everywhere and paints the whole strip
+  // red, warning about a stall that cannot happen.
+  //
+  // "You are the only source for these regions" would be a genuinely useful
+  // thing to tell a seeder, but it is a different message from this one and
+  // wants its own design rather than the download warning reused.
+  const finished =
+    pieces.totalPieces > 0 && pieces.piecesComplete >= pieces.totalPieces;
+  const rarest =
+    pieces.availability && !finished
+      ? resampleRarest(pieces.availability)
+      : null;
   // The tallest bar is the best-held region, so every other bar is read
   // against it. A floor of 1 keeps a swarm where nothing is held from
   // dividing by zero.
