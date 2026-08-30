@@ -15,9 +15,11 @@
 // exists to protect production paths, not this file.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use flume_lib::engine::{Engine, EngineConfig, EngineHealth, TorrentSource, TorrentState};
+use flume_lib::engine::{
+    Engine, EngineConfig, EngineError, EngineHealth, TorrentSource, TorrentState,
+};
 use tempfile::TempDir;
 
 /// Builds a config rooted in a temporary directory, so tests never touch the
@@ -636,6 +638,72 @@ async fn rate_limits_apply_to_the_running_session() {
         (None, None),
         "clearing a limit must lift it, not leave the old one in place"
     );
+
+    engine.shutdown().await;
+}
+
+/// A magnet nobody can answer must fail, not hang.
+///
+/// This is the bug that shipped in 1.0.0: `preview` awaited librqbit's
+/// metadata fetch with no deadline, so a magnet whose torrent has no reachable
+/// seeder left the add dialog on "Fetching the file list from peers" forever.
+/// The message reads identically at two seconds and at twenty minutes.
+///
+/// Uses `preview_within` with a short deadline rather than the real one, so
+/// this costs a second rather than a minute. The DHT is enabled because the
+/// point is that even *with* somewhere to look, an unanswerable info hash has
+/// to give up.
+#[tokio::test]
+async fn a_magnet_nobody_answers_times_out_rather_than_hanging() {
+    let tmp = TempDir::new().expect("temp dir");
+    let engine = Engine::start(test_config(&tmp, true))
+        .await
+        .expect("engine starts");
+
+    // A random info hash: syntactically valid, and no swarm exists for it.
+    let uri = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".to_string();
+
+    let started = Instant::now();
+    let result = engine
+        .preview_within(TorrentSource::Magnet { uri }, Duration::from_millis(750))
+        .await;
+    let waited = started.elapsed();
+
+    match result {
+        Err(EngineError::MetadataTimeout { seconds }) => {
+            assert_eq!(seconds, 0, "sub-second deadlines report as 0 whole seconds");
+        }
+        Err(other) => panic!("expected a metadata timeout, got: {other}"),
+        Ok(_) => panic!("a random info hash should not resolve to a file list"),
+    }
+
+    assert!(
+        waited < Duration::from_secs(10),
+        "the deadline should bound the wait; waited {waited:?}"
+    );
+
+    engine.shutdown().await;
+}
+
+/// The deadline is for magnets only.
+///
+/// A `.torrent` already carries its file list, so bounding it would only add a
+/// way to fail. This passes a deadline far too short for any network fetch and
+/// expects the local read to succeed regardless.
+#[tokio::test]
+async fn a_torrent_file_is_not_subject_to_the_magnet_deadline() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    let preview = engine
+        .preview_within(TorrentSource::File { path }, Duration::from_nanos(1))
+        .await
+        .expect("a local .torrent should not be subject to a network deadline");
+
+    assert_eq!(preview.files.len(), 1);
 
     engine.shutdown().await;
 }

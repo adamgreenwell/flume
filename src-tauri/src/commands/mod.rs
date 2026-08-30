@@ -53,6 +53,10 @@ impl From<EngineError> for CommandError {
         let kind = match &err {
             EngineError::InvalidMagnet(_) => "invalidMagnet",
             EngineError::Metadata(_) => "metadata",
+            // Distinct from `metadata`: nothing is wrong with the link, no
+            // peer answered. The UI can suggest waiting for the DHT rather
+            // than suggesting the input is malformed.
+            EngineError::MetadataTimeout { .. } => "metadataTimeout",
             EngineError::NoPendingPreview => "noPendingPreview",
             EngineError::UnknownTorrent(_) => "unknownTorrent",
             EngineError::Directory { .. } | EngineError::SessionStart(_) => "engineFailed",

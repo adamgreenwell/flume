@@ -59,6 +59,7 @@ export function AddTorrentDialog({
   // A dialog opened by a drop starts already resolving, so the effect below
   // never has to flip this synchronously.
   const [isResolving, setIsResolving] = useState(Boolean(droppedPath));
+  const [waitedSeconds, setWaitedSeconds] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,10 +97,24 @@ export function AddTorrentDialog({
     setIsResolving(false);
   }, []);
 
+  // Counts while a resolve is in flight, and resets when it is not. A magnet's
+  // wait is bounded in the engine, but a static sentence gives the user no way
+  // to tell a slow answer from a dead one before that deadline arrives.
+  useEffect(() => {
+    if (!isResolving) return;
+
+    const started = Date.now();
+    const id = setInterval(() => {
+      setWaitedSeconds(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isResolving]);
+
   /** Resolves from a user gesture (button press or file picker). */
   const resolve = useCallback(
     async (source: Parameters<typeof previewTorrent>[0]) => {
       setError(null);
+      setWaitedSeconds(0);
       setIsResolving(true);
       try {
         applyPreview(await previewTorrent(source));
@@ -282,6 +297,16 @@ export function AddTorrentDialog({
               Fetching the file list from peers over the DHT. Nothing is
               downloaded yet — this is only the list of what the torrent
               contains.
+              {/* A magnet carries no file list, so this wait depends on
+                  another peer answering. The count is what distinguishes
+                  "still working" from "stuck" — without it the sentence reads
+                  the same after two seconds and after a minute. */}
+              {waitedSeconds > 0 ? (
+                <>
+                  {" "}
+                  <span className="flume-num">{waitedSeconds}s</span> so far.
+                </>
+              ) : null}
             </p>
           ) : null}
 
