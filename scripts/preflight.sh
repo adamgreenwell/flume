@@ -17,6 +17,18 @@ set -uo pipefail
 FULL=0
 [[ "${1:-}" == "--full" ]] && FULL=1
 
+# Checked before anything else, because the failure it prevents is actively
+# misleading. Below Node 22, jsdom's copy of undici calls
+# `markAsUncloneable`, which does not exist yet, and vitest reports that as
+# "no tests" with a worker error rather than as a version problem. It also
+# passes on retry if a different node happens to come first, so it reads as
+# flaky rather than as a wrong toolchain.
+if ! node scripts/check-node.mjs; then
+  echo
+  echo "Wrong Node version. Nothing else was run."
+  exit 1
+fi
+
 failed=0
 run() {
   local label="$1"; shift

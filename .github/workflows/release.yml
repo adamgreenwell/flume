@@ -202,21 +202,33 @@ jobs:
     container:
       image: fedora:40
     steps:
+      # No nodejs here: Fedora 40 ships Node 20, which is below the floor in
+      # `engines`, so `npm ci` fails with EBADENGINE. setup-node below supplies
+      # the right one and takes precedence on PATH.
       - name: Install build dependencies
         run: |
           dnf install -y \
             webkit2gtk4.1-devel openssl-devel curl wget file \
             libappindicator-gtk3-devel librsvg2-devel \
-            gcc gcc-c++ make rpm-build nodejs npm git
+            gcc gcc-c++ make rpm-build git xz
 
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # The container's own Node is too old. This is the same .nvmrc every
+      # other job reads, so there is still one source of truth.
+      #
+      # No `cache: npm` unlike elsewhere: the cache action needs a resolvable
+      # runner path, and this job's filesystem is the container's.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - run: npm ci
+      - run: node --version && npm ci
 
       - name: Build the frontend
         run: npm run build
@@ -260,3 +272,37 @@ jobs:
           # --clobber so a re-run replaces assets rather than failing on a name
           # collision.
           gh release upload "$TAG" rpms/*.rpm --clobber -R "$GITHUB_REPOSITORY"
+
+  notify-site:
+    name: Rebuild the website
+    needs: [build, rpm, attach-rpms]
+    runs-on: ubuntu-latest
+    # `always()` so a partial release still refreshes the site -- if Windows
+    # succeeded and Linux did not, the download page should still gain the
+    # Windows installers rather than staying a release behind.
+    if: always()
+    steps:
+      # The site reads the GitHub releases API at build time, so its download
+      # buttons render real filenames and sizes into static HTML and work with
+      # JavaScript disabled. The cost of that choice is that a new release is
+      # invisible until the site rebuilds, which is what this does.
+      #
+      # Skipped silently when no hook is configured: a fork has no Sevalla
+      # deployment, and failing a release over it would be absurd.
+      - name: Ping the Sevalla deploy hook
+        env:
+          HOOK: ${{ secrets.SEVALLA_DEPLOY_HOOK }}
+        run: |
+          set -uo pipefail
+          if [ -z "${HOOK:-}" ]; then
+            echo "No SEVALLA_DEPLOY_HOOK configured; skipping site rebuild."
+            echo "The site will show this release after its next deploy."
+            exit 0
+          fi
+          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" --max-time 30 "$HOOK")
+          echo "Deploy hook responded $code"
+          # Reported, not fatal. The release itself succeeded; a stale website
+          # is worth a warning and not worth failing a green release over.
+          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
+            echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually."
+          fi
