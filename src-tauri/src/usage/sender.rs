@@ -23,22 +23,77 @@ use rand::Rng;
 
 use super::{Envelope, Recorder};
 
-/// Where batches are POSTed.
+/// The raw compiled-in value, exactly as the build environment supplied it.
 ///
-/// Baked in at build time. A build without `FLUME_USAGE_ENDPOINT` set compiles
-/// with reporting inert, which is what keeps CI and `cargo test` free of any
-/// network configuration — and means a fork builds a Flume that cannot report
-/// anything without someone deliberately setting it.
+/// Baked in at build time. Prefer [`endpoint`] over reading this directly:
+/// `option_env!` distinguishes unset from *empty*, so this is `Some("")` when
+/// `FLUME_USAGE_ENDPOINT=` was exported, which is not a usable endpoint and
+/// must not be treated as one.
 pub const ENDPOINT: Option<&str> = option_env!("FLUME_USAGE_ENDPOINT");
 
-/// Whether this build has a collector endpoint compiled in.
+/// The scheme a collector endpoint must use.
+///
+/// Deliberately identical to the `https://*` gate in
+/// `.github/workflows/release.yml`, so a value cannot pass one and fail the
+/// other. A predicate stricter than CI's would ship a build that compiles
+/// inert after a green release; looser, and CI is the only thing standing
+/// between a fork and a Flume that reports over plaintext.
+const REQUIRED_SCHEME: &str = "https://";
+
+/// Whether a compiled-in value is something this build could actually POST to.
+///
+/// Written as a byte walk rather than `starts_with` so it stays a `const fn`:
+/// `str::starts_with` is not const, and [`should_warn`] is const through
+/// [`is_configured`].
+///
+/// Requires at least one byte past the scheme, because a bare `https://` has
+/// no host and fails every request exactly as `""` does — the failure this
+/// whole predicate exists to stop.
+const fn is_usable(url: &str) -> bool {
+    let bytes = url.as_bytes();
+    let scheme = REQUIRED_SCHEME.as_bytes();
+
+    if bytes.len() <= scheme.len() {
+        return false;
+    }
+
+    let mut i = 0;
+    while i < scheme.len() {
+        if bytes[i] != scheme[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The endpoint this build can POST to, or `None` if it has none it can use.
+///
+/// **Everything that asks "can this build report?" must go through here.**
+/// [`is_configured`] and [`Sender::new`] used to ask two different questions —
+/// `ENDPOINT.is_some()` and `let endpoint = ENDPOINT?` — which happened to
+/// agree only while the value was either absent or good. Under `Some("")` they
+/// disagreed: the diagnostics report said the endpoint was missing while
+/// [`spawn`] built a sender and POSTed to the empty string forever, at debug
+/// level. One accessor means they cannot diverge again.
+const fn endpoint() -> Option<&'static str> {
+    // A let chain rather than nested `if`s: edition 2024, and clippy asks.
+    if let Some(url) = ENDPOINT
+        && is_usable(url)
+    {
+        return Some(url);
+    }
+    None
+}
+
+/// Whether this build has a collector endpoint it can actually use.
 ///
 /// Public so the diagnostics report can say so: "usage reporting is on" in a
 /// build that cannot send is a sentence that describes nothing happening, and
 /// the bundle is where someone would go looking for why.
 #[must_use]
 pub const fn is_configured() -> bool {
-    ENDPOINT.is_some()
+    endpoint().is_some()
 }
 
 /// Whether reporting is switched on in a build that cannot send.
@@ -65,9 +120,9 @@ pub const fn should_warn(enabled: bool) -> bool {
 pub fn warn_if_unconfigured(enabled: bool) {
     if should_warn(enabled) {
         log::warn!(
-            "usage reporting is switched on, but this build has no collector endpoint \
-             compiled in -- FLUME_USAGE_ENDPOINT was unset when it was built. Events \
-             will queue on disk and never be sent."
+            "usage reporting is switched on, but this build has no usable collector \
+             endpoint -- FLUME_USAGE_ENDPOINT was unset, empty, or not an https:// \
+             URL when it was built. Events will queue on disk and never be sent."
         );
     }
 }
@@ -92,14 +147,16 @@ pub struct Sender {
     /// Shared HTTP client. Reused so connections are pooled across flushes.
     client: reqwest::Client,
     /// The configured endpoint, or `None` when reporting is inert.
-    endpoint: Option<&'static str>,
+    endpoint: &'static str,
 }
 
 impl Sender {
     /// Builds a sender, or `None` if the HTTP client cannot be constructed.
     #[must_use]
     pub fn new() -> Option<Self> {
-        let endpoint = ENDPOINT?;
+        // Through `endpoint()`, never `ENDPOINT`: a sender that exists when
+        // `is_configured()` says otherwise is the bug this module had.
+        let endpoint = endpoint()?;
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             // Explicit rather than reqwest's default, which would announce the
@@ -107,24 +164,18 @@ impl Sender {
             .user_agent(concat!("Flume/", env!("CARGO_PKG_VERSION")))
             .build()
             .ok()?;
-        Some(Self {
-            client,
-            endpoint: Some(endpoint),
-        })
+        Some(Self { client, endpoint })
     }
 
     /// Sends whatever is queued, restoring it if the send fails.
     ///
     /// Does nothing when consent is absent or the queue is empty.
     pub async fn flush(&self, recorder: &Recorder) {
-        let Some(endpoint) = self.endpoint else {
-            return;
-        };
         let Some(envelope) = recorder.take_batch() else {
             return;
         };
 
-        match self.post(endpoint, &envelope).await {
+        match self.post(self.endpoint, &envelope).await {
             Ok(()) => log::debug!("sent {} usage events", envelope.events.len()),
             Err(err) => {
                 log::debug!("could not send usage events: {err}");
@@ -262,18 +313,61 @@ mod tests {
     }
 
     #[test]
-    fn is_configured_agrees_with_the_compiled_endpoint() {
-        assert_eq!(is_configured(), ENDPOINT.is_some());
+    fn only_a_real_https_url_counts_as_usable() {
+        // Table-driven and over literals, so it holds whatever this build was
+        // compiled with -- the previous test asserted
+        // `is_configured() == ENDPOINT.is_some()`, which is the exact
+        // equivalence that was wrong, and it passed under `Some("")` by
+        // agreeing with the bug.
+        for good in [
+            "https://flume-usage.example.workers.dev/v1/usage",
+            "https://x",
+            // Trailing whitespace is left alone deliberately: the `url` crate
+            // reqwest parses with normalises it away, and rejecting it here
+            // when `release.yml`'s glob accepts it would create the reverse
+            // drift -- a secret with a stray newline passing CI and shipping
+            // a build that compiles inert.
+            "https://x.dev/v1/usage\n",
+        ] {
+            assert!(is_usable(good), "{good:?} should be usable");
+        }
+
+        for bad in [
+            "",
+            "   ",
+            "not-a-url",
+            "ftp://x",
+            "http://collector.example.com/v1/usage",
+            // Plaintext to loopback is still plaintext, and no documented
+            // workflow needs it: collector/README.md drives `wrangler dev`
+            // with curl, never a client build.
+            "http://localhost:8787/v1/usage",
+            // Scheme but no host: fails every POST exactly as "" does.
+            "https://",
+            // Case matters, because `release.yml`'s glob is case-sensitive.
+            "HTTPS://x.dev",
+        ] {
+            assert!(!is_usable(bad), "{bad:?} should not be usable");
+        }
     }
 
     #[test]
-    fn a_build_without_an_endpoint_sends_nothing() {
-        // The default for CI, `cargo test`, and any fork that has not set one.
-        if ENDPOINT.is_none() {
-            assert!(
-                Sender::new().is_none(),
-                "a sender should not exist without an endpoint"
-            );
-        }
+    fn a_sender_exists_exactly_when_the_build_is_configured() {
+        // The invariant that was broken. `Sender::new` gated on `ENDPOINT?`
+        // while `is_configured()` gated on `ENDPOINT.is_some()`, so with
+        // `FLUME_USAGE_ENDPOINT=""` a sender was built and flushed forever
+        // against the empty string while the diagnostics report and the
+        // consent-change warning both said there was no endpoint. Both now
+        // route through `endpoint()`, and this pins that they agree.
+        assert_eq!(Sender::new().is_some(), is_configured());
+    }
+
+    #[test]
+    fn an_unusable_endpoint_is_not_a_configured_one() {
+        // Guards the empty case specifically, on a literal, so it fails on a
+        // machine where the variable is unset -- which the old suite could
+        // not do.
+        assert!(!is_usable(""), "an empty endpoint is not configured");
+        assert_eq!(endpoint().is_some(), is_configured());
     }
 }

@@ -199,7 +199,11 @@ pub struct Report<'a> {
     pub torrent_count: usize,
     /// The user's home directory, if one could be determined.
     pub home: Option<PathBuf>,
-    /// Whether this build has a collector endpoint compiled in.
+    /// Whether this build has a collector endpoint it can actually use.
+    ///
+    /// "Usable", not merely "present": an endpoint that is compiled in but
+    /// empty or not `https://` sends nothing, and saying it is absent would be
+    /// as wrong as saying it works.
     ///
     /// Passed in rather than read from [`crate::usage`] so this module stays a
     /// pure function of its inputs and its tests need no build configuration.
@@ -366,19 +370,23 @@ fn on_off(value: bool) -> String {
 
 /// Describes usage reporting, including the case where it cannot work.
 ///
-/// Consent and the compiled-in endpoint are reported as one sentence because
-/// either alone misleads. "On" in a build with no endpoint describes an app
-/// that queues events to disk and sends none of them, with no error anywhere
-/// the user can see -- and this line is the one place a bug report would
-/// reveal it.
+/// Consent and the endpoint are reported as one sentence because either alone
+/// misleads. "On" in a build that cannot send describes an app that queues
+/// events to disk and sends none of them, with no error anywhere the user can
+/// see -- and this line is the one place a bug report would reveal it.
+///
+/// The endpoint half is *usability*, not presence. An empty or non-`https://`
+/// value is compiled in and still cannot work, so a sentence saying no
+/// endpoint was compiled in would send someone off to set a variable they
+/// already set.
 fn describe_usage(consent: Option<bool>, endpoint_configured: bool) -> String {
     match (consent, endpoint_configured) {
         (None, _) => "not asked".to_owned(),
         (Some(false), _) => "off".to_owned(),
         (Some(true), true) => "on".to_owned(),
         (Some(true), false) => {
-            "ON, BUT THIS BUILD HAS NO COLLECTOR ENDPOINT COMPILED IN -- events are \
-             queued and never sent"
+            "ON, BUT THIS BUILD HAS NO USABLE COLLECTOR ENDPOINT -- events are queued \
+             and never sent"
                 .to_owned()
         }
     }
@@ -573,7 +581,7 @@ mod tests {
 
         let rendered = report.render();
         assert!(
-            rendered.contains("NO COLLECTOR ENDPOINT"),
+            rendered.contains("NO USABLE COLLECTOR ENDPOINT"),
             "a build that cannot send should say so:\n{rendered}"
         );
     }
@@ -586,7 +594,7 @@ mod tests {
         // would imply the setting is not being honoured.
         assert_eq!(describe_usage(Some(false), false), "off");
         assert_eq!(describe_usage(Some(true), true), "on");
-        assert!(describe_usage(Some(true), false).contains("NO COLLECTOR ENDPOINT"));
+        assert!(describe_usage(Some(true), false).contains("NO USABLE COLLECTOR ENDPOINT"));
     }
 
     #[test]
