@@ -48,6 +48,18 @@ Without that variable the client compiles with reporting inert and sends
 nothing — which is the default for CI, for `cargo test`, and for anyone who
 builds Flume from source without deliberately opting into it.
 
+**That combination used to fail silently and no longer does.** A build with no
+endpoint but with usage reporting switched on will queue events to disk and
+send none of them, with nothing visibly wrong. It now logs a warning at
+startup, and again if consent is granted later, and the diagnostics report says
+`ON, BUT THIS BUILD HAS NO COLLECTOR ENDPOINT COMPILED IN`. Both paths are
+covered by `should_warn` in `src-tauri/src/usage/sender.rs`.
+
+`build.rs` declares `cargo::rerun-if-env-changed=FLUME_USAGE_ENDPOINT`, so
+changing the variable forces a rebuild. Without that, setting it on an
+already-built tree changes nothing: cargo sees no reason to recompile and the
+previous value — including no value at all — stays baked in.
+
 ## Developing
 
 ```bash

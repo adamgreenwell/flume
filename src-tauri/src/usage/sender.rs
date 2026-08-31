@@ -31,6 +31,47 @@ use super::{Envelope, Recorder};
 /// anything without someone deliberately setting it.
 pub const ENDPOINT: Option<&str> = option_env!("FLUME_USAGE_ENDPOINT");
 
+/// Whether this build has a collector endpoint compiled in.
+///
+/// Public so the diagnostics report can say so: "usage reporting is on" in a
+/// build that cannot send is a sentence that describes nothing happening, and
+/// the bundle is where someone would go looking for why.
+#[must_use]
+pub const fn is_configured() -> bool {
+    ENDPOINT.is_some()
+}
+
+/// Whether reporting is switched on in a build that cannot send.
+///
+/// This is the one failure mode the design makes invisible: consent granted,
+/// events queueing to disk, a queue file growing, no error anywhere the user
+/// can see, and nothing arriving. Left at debug level it is indistinguishable
+/// from a healthy install whose collector happens to be empty -- which is
+/// exactly how it presented the first two times it happened.
+///
+/// Called at startup and again whenever consent is granted, because either can
+/// be the moment the contradiction appears: a build with no endpoint can be
+/// launched with consent already on, or consent can be switched on in one.
+#[must_use]
+pub const fn should_warn(enabled: bool) -> bool {
+    enabled && !is_configured()
+}
+
+/// Emits that warning.
+///
+/// Split from [`should_warn`] so the decision is testable without capturing a
+/// global logger. Verifying a "this failure is no longer silent" change by
+/// reading the code would repeat the mistake that made it necessary.
+pub fn warn_if_unconfigured(enabled: bool) {
+    if should_warn(enabled) {
+        log::warn!(
+            "usage reporting is switched on, but this build has no collector endpoint \
+             compiled in -- FLUME_USAGE_ENDPOINT was unset when it was built. Events \
+             will queue on disk and never be sent."
+        );
+    }
+}
+
 /// How long to wait for the collector before giving up.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -131,7 +172,13 @@ fn prune_expired(mut envelope: Envelope) -> Envelope {
 /// this module stays testable.
 pub fn spawn(recorder: Arc<Recorder>) {
     let Some(sender) = Sender::new() else {
-        log::debug!("usage reporting has no endpoint configured; nothing will be sent");
+        // Loud when it matters, quiet when it does not: a build with no
+        // endpoint is the normal state for CI, `cargo test`, and any fork, and
+        // warning at every launch would train people to ignore it.
+        warn_if_unconfigured(recorder.is_enabled());
+        if !recorder.is_enabled() {
+            log::debug!("usage reporting has no endpoint configured; nothing will be sent");
+        }
         return;
     };
 
@@ -192,6 +239,31 @@ mod tests {
 
         assert_eq!(pruned.events.len(), 1);
         assert_eq!(pruned.events[0].kind, EventKind::Launched);
+    }
+
+    #[test]
+    fn warns_exactly_when_consent_is_on_and_the_build_cannot_send() {
+        // Quiet when it does not matter: an endpoint-less build is the normal
+        // state for CI, `cargo test` and any fork, and warning at every launch
+        // would train people to ignore the one case that matters.
+        assert!(!should_warn(false), "never warn without consent");
+
+        if is_configured() {
+            assert!(
+                !should_warn(true),
+                "a configured build has nothing to warn about"
+            );
+        } else {
+            assert!(
+                should_warn(true),
+                "consent on with no endpoint is the silent failure this exists for"
+            );
+        }
+    }
+
+    #[test]
+    fn is_configured_agrees_with_the_compiled_endpoint() {
+        assert_eq!(is_configured(), ENDPOINT.is_some());
     }
 
     #[test]

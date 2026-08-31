@@ -223,6 +223,10 @@ pub async fn update_settings(
     // getting wrong.
     if previous.usage_reporting != settings.usage_reporting {
         state.usage().set_consent(settings.usage_reporting);
+        // The other moment the contradiction appears: the app started with an
+        // endpoint-less build and consent is being switched on now, so
+        // `sender::spawn` has long since decided there was nothing to do.
+        crate::usage::sender::warn_if_unconfigured(settings.usage_reporting == Some(true));
     }
     for key in SettingKey::changed(&previous, &settings) {
         state.note(EventKind::SettingChanged { key });
@@ -472,6 +476,7 @@ pub async fn get_diagnostics(
         core: core.as_ref(),
         torrent_count: names.len(),
         home,
+        usage_endpoint_configured: crate::usage::sender::is_configured(),
         log_tail: &log_tail,
         redactor: &redactor,
     }

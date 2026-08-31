@@ -199,6 +199,11 @@ pub struct Report<'a> {
     pub torrent_count: usize,
     /// The user's home directory, if one could be determined.
     pub home: Option<PathBuf>,
+    /// Whether this build has a collector endpoint compiled in.
+    ///
+    /// Passed in rather than read from [`crate::usage`] so this module stays a
+    /// pure function of its inputs and its tests need no build configuration.
+    pub usage_endpoint_configured: bool,
     /// The tail of the current session's log, oldest first.
     pub log_tail: &'a [String],
     /// Redacts the log tail and anything else free-form.
@@ -295,11 +300,10 @@ impl Report<'_> {
         line(
             &mut out,
             "Usage reporting",
-            match self.settings.usage_reporting {
-                None => "not asked",
-                Some(true) => "on",
-                Some(false) => "off",
-            },
+            &describe_usage(
+                self.settings.usage_reporting,
+                self.usage_endpoint_configured,
+            ),
         );
 
         out.push_str("\n## Recent log\n\n");
@@ -358,6 +362,26 @@ fn describe_limit(bps: Option<u32>) -> String {
 /// Renders a boolean as a word rather than `true`/`false`.
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.to_owned()
+}
+
+/// Describes usage reporting, including the case where it cannot work.
+///
+/// Consent and the compiled-in endpoint are reported as one sentence because
+/// either alone misleads. "On" in a build with no endpoint describes an app
+/// that queues events to disk and sends none of them, with no error anywhere
+/// the user can see -- and this line is the one place a bug report would
+/// reveal it.
+fn describe_usage(consent: Option<bool>, endpoint_configured: bool) -> String {
+    match (consent, endpoint_configured) {
+        (None, _) => "not asked".to_owned(),
+        (Some(false), _) => "off".to_owned(),
+        (Some(true), true) => "on".to_owned(),
+        (Some(true), false) => {
+            "ON, BUT THIS BUILD HAS NO COLLECTOR ENDPOINT COMPILED IN -- events are \
+             queued and never sent"
+                .to_owned()
+        }
+    }
 }
 
 /// Describes a proxy by scheme only.
@@ -484,6 +508,7 @@ mod tests {
             core: None,
             torrent_count: 3,
             home: Some(PathBuf::from("/Users/adam")),
+            usage_endpoint_configured: true,
             log_tail: log,
             redactor,
         }
@@ -531,6 +556,37 @@ mod tests {
         assert!(rendered.contains("not asked"), "no consent state");
         // The count, never the list.
         assert!(rendered.contains("**Torrents:** 3"), "no torrent count");
+    }
+
+    #[test]
+    fn a_bundle_says_when_reporting_is_on_in_a_build_that_cannot_send() {
+        // The failure this line exists for. Consent is on, events queue to
+        // disk, nothing is sent, and no error surfaces anywhere else -- so the
+        // bundle has to be the place it becomes visible.
+        let settings = Settings {
+            usage_reporting: Some(true),
+            ..settings()
+        };
+        let redactor = redactor();
+        let mut report = report(&settings, &redactor, &[]);
+        report.usage_endpoint_configured = false;
+
+        let rendered = report.render();
+        assert!(
+            rendered.contains("NO COLLECTOR ENDPOINT"),
+            "a build that cannot send should say so:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn usage_reporting_is_described_by_consent_and_endpoint_together() {
+        assert_eq!(describe_usage(None, true), "not asked");
+        assert_eq!(describe_usage(None, false), "not asked");
+        // A decline is a decline; the endpoint is irrelevant and mentioning it
+        // would imply the setting is not being honoured.
+        assert_eq!(describe_usage(Some(false), false), "off");
+        assert_eq!(describe_usage(Some(true), true), "on");
+        assert!(describe_usage(Some(true), false).contains("NO COLLECTOR ENDPOINT"));
     }
 
     #[test]
