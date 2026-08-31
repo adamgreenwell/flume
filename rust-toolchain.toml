@@ -1,0 +1,35 @@
+# The Rust toolchain this project is built and linted with.
+#
+# Pinned because CI used `dtolnay/rust-toolchain@stable` in seven places while
+# development machines ran whatever `rustup update` last fetched. That is not a
+# theoretical gap: PR #134 passed `cargo clippy` locally on 1.94 and failed CI
+# on 1.98 with `unnecessary_sort_by`, a lint that did not exist on the
+# developer's machine. A green local gate has to mean something, and it cannot
+# while the two sides disagree about which compiler is running.
+#
+# THIS IS NOT THE MSRV. `src-tauri/Cargo.toml` sets `rust-version = "1.88"`,
+# which is the oldest compiler the crate claims to support and the floor
+# cargo's resolver uses when picking dependency versions. Nothing verifies that
+# claim -- CI has always built on stable, and still does, it is just a stable
+# that no longer moves underneath us. Building on 1.88 to check would be a
+# separate job.
+#
+# Bump deliberately, in its own commit, so a new lint arrives as a change
+# someone chose rather than as a red build on unrelated work. `rustup check`
+# says what is available. The workflows stay on `@stable`: they install a
+# toolchain and rustup then honours this file, so the version lives in exactly
+# one place rather than seven.
+[toolchain]
+channel = "1.98.0"
+
+# Both are used by the quality gate, so a toolchain rustup installs from this
+# file arrives with them. `ci.yml` also names them explicitly on its install
+# step; that is kept rather than trimmed, because whether rustup back-fills
+# components onto an already-installed toolchain is not something worth
+# discovering from a red build.
+components = ["rustfmt", "clippy"]
+
+# The gate needs rustc, cargo, clippy and rustfmt. Nothing here needs docs or
+# rust-analyzer's proc-macro server, and a minimal profile is a smaller CI
+# download every time a bump forces a fresh install.
+profile = "minimal"
