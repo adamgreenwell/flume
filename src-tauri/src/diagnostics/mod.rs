@@ -33,7 +33,7 @@ use std::{
 
 use regex::Regex;
 
-use crate::{engine::CoreStatus, settings::Settings};
+use crate::{engine::CoreStatus, settings::Settings, usage::Delivery};
 
 /// How many lines of log tail a bundle carries.
 ///
@@ -208,6 +208,8 @@ pub struct Report<'a> {
     /// Passed in rather than read from [`crate::usage`] so this module stays a
     /// pure function of its inputs and its tests need no build configuration.
     pub usage_endpoint_configured: bool,
+    /// What happened on the most recent send attempt this session.
+    pub usage_delivery: Delivery,
     /// The tail of the current session's log, oldest first.
     pub log_tail: &'a [String],
     /// Redacts the log tail and anything else free-form.
@@ -307,6 +309,7 @@ impl Report<'_> {
             &describe_usage(
                 self.settings.usage_reporting,
                 self.usage_endpoint_configured,
+                self.usage_delivery,
             ),
         );
 
@@ -379,16 +382,40 @@ fn on_off(value: bool) -> String {
 /// value is compiled in and still cannot work, so a sentence saying no
 /// endpoint was compiled in would send someone off to set a variable they
 /// already set.
-fn describe_usage(consent: Option<bool>, endpoint_configured: bool) -> String {
+fn describe_usage(consent: Option<bool>, endpoint_configured: bool, delivery: Delivery) -> String {
     match (consent, endpoint_configured) {
         (None, _) => "not asked".to_owned(),
         (Some(false), _) => "off".to_owned(),
-        (Some(true), true) => "on".to_owned(),
+        (Some(true), true) => format!("on; {}", describe_delivery(delivery)),
         (Some(true), false) => {
             "ON, BUT THIS BUILD HAS NO USABLE COLLECTOR ENDPOINT -- events are queued \
              and never sent"
                 .to_owned()
         }
+    }
+}
+
+/// Describes the last send attempt as a fact, with no diagnosis attached.
+///
+/// Deliberately not a verdict. "Delivery looks broken" would be wrong for a
+/// laptop that was closed, a machine behind a household DNS blocklist, a
+/// firewall rule someone clicked Deny on, or a VPN kill switch — none of them
+/// defects, all of them indistinguishable from a dead endpoint at this layer.
+/// So a transport failure says only that nothing answered, and names the
+/// possibilities rather than picking one.
+///
+/// A refusal is different: a status code means a server answered, which none
+/// of the above can produce, so it is reported plainly.
+fn describe_delivery(delivery: Delivery) -> String {
+    match delivery {
+        Delivery::Untried => "nothing sent yet this session".to_owned(),
+        Delivery::Accepted => "last batch accepted".to_owned(),
+        Delivery::NoResponse => {
+            "last batch got no answer (offline, DNS, TLS or a proxy — not distinguishable \
+             from here)"
+                .to_owned()
+        }
+        Delivery::Refused(status) => format!("last batch refused with {status}"),
     }
 }
 
@@ -517,6 +544,7 @@ mod tests {
             torrent_count: 3,
             home: Some(PathBuf::from("/Users/adam")),
             usage_endpoint_configured: true,
+            usage_delivery: Delivery::Untried,
             log_tail: log,
             redactor,
         }
@@ -588,13 +616,37 @@ mod tests {
 
     #[test]
     fn usage_reporting_is_described_by_consent_and_endpoint_together() {
-        assert_eq!(describe_usage(None, true), "not asked");
-        assert_eq!(describe_usage(None, false), "not asked");
+        let untried = Delivery::Untried;
+        assert_eq!(describe_usage(None, true, untried), "not asked");
+        assert_eq!(describe_usage(None, false, untried), "not asked");
         // A decline is a decline; the endpoint is irrelevant and mentioning it
         // would imply the setting is not being honoured.
-        assert_eq!(describe_usage(Some(false), false), "off");
-        assert_eq!(describe_usage(Some(true), true), "on");
-        assert!(describe_usage(Some(true), false).contains("NO USABLE COLLECTOR ENDPOINT"));
+        assert_eq!(describe_usage(Some(false), false, untried), "off");
+        assert!(
+            describe_usage(Some(true), false, untried).contains("NO USABLE COLLECTOR ENDPOINT")
+        );
+
+        // On, and the delivery half is a fact rather than a diagnosis.
+        assert_eq!(
+            describe_usage(Some(true), true, Delivery::Accepted),
+            "on; last batch accepted"
+        );
+        assert_eq!(
+            describe_usage(Some(true), true, Delivery::Refused(404)),
+            "on; last batch refused with 404"
+        );
+
+        // The load-bearing one: a closed laptop must not be told anything is
+        // wrong, and must not be told which of several causes it was.
+        let offline = describe_usage(Some(true), true, Delivery::NoResponse);
+        assert!(offline.contains("no answer"), "{offline}");
+        assert!(offline.contains("not distinguishable"), "{offline}");
+        for verdict in ["broken", "BROKEN", "failed", "error"] {
+            assert!(
+                !offline.contains(verdict),
+                "offline should not read as a defect: {offline}"
+            );
+        }
     }
 
     #[test]

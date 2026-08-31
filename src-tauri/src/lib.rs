@@ -194,9 +194,13 @@ pub fn run() {
                     duration_bucket: usage::DurationBucket::of(state.uptime()),
                 });
                 tauri::async_runtime::block_on(async {
-                    // The last flush gets one shot. A quit that hangs waiting
-                    // on a network request is a far worse bug than a lost
-                    // batch, which the next launch would send anyway.
+                    // The last flush gets one shot, and the timeout is
+                    // shorter than the request's own on purpose: a quit that
+                    // hangs on a network request is a far worse bug than a
+                    // late batch. Cancelling here used to *destroy* the batch,
+                    // because `take_batch` had already deleted the queue file
+                    // and neither arm of the match ran; `Restore` now puts it
+                    // back on drop, so the next launch sends it.
                     if let Some(sender) = usage::sender::Sender::new() {
                         let flush = sender.flush(state.usage());
                         let _ = tokio::time::timeout(SHUTDOWN_FLUSH_TIMEOUT, flush).await;

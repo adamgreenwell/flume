@@ -42,6 +42,13 @@ download folder appears as "exists, inside the home directory", a proxy as
 "configured (socks5)" — and the last 200 lines of the current session's log
 with paths, addresses, URLs, info hashes and torrent names removed.
 
+If usage reporting is on, it also says what happened to the last batch — that
+it was accepted, that it was refused with a status code, or that it got no
+answer at all. That last one is reported as exactly that, without guessing:
+being offline, a DNS block, a certificate problem and a proxy in the way are
+not distinguishable from inside Flume, and claiming to know which would be a
+verdict the data cannot support.
+
 **One honest limitation.** Redaction removes torrent names by matching them
 against the torrents currently in your library. A log line naming a torrent
 you have already removed has nothing to match against and can survive. That is
@@ -101,7 +108,9 @@ schema has no column for them. Requests reach Cloudflare, which sees your IP
 as any web server would, but nothing in Flume's control records it.
 
 Counts are approximate. Delivery is at-least-once, so a response lost after a
-row was written means a handful of events are counted twice. For aggregate
+row was written means a handful of events are counted twice. Events are also
+discarded from your machine after three days if they cannot be sent, so a
+long time offline loses counts rather than accumulating them. For aggregate
 counters that is a better trade than the complexity of exact-once delivery,
 and overstating the precision would be worse than the imprecision.
 

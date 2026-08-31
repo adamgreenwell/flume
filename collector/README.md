@@ -107,3 +107,16 @@ FROM events WHERE event = 'settingChanged' GROUP BY setting ORDER BY n DESC;
 Counts are approximate: delivery is at-least-once and there is no dedupe
 table, so a response lost after the rows were written means a few events are
 counted twice. See `docs/Privacy.md`.
+
+## The success response is load-bearing
+
+`204` is the only success this Worker returns, and the client checks for
+exactly that rather than `is_success()`. The difference matters: a captive
+portal answers the POST with a 302 to its own login page, which returns 200.
+With redirects followed and any 2xx accepted, a hotel network reports every
+batch as delivered and the events — already removed from the client's disk
+queue — are destroyed. The client also sets `redirect::Policy::none()`, so the
+302 is seen for what it is.
+
+If this Worker ever returns a different success status, the client stops
+accepting batches. Change both together.

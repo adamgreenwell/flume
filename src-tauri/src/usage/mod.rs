@@ -58,6 +58,15 @@ const QUEUE_FILE: &str = "usage-queue.jsonl";
 /// Install identifier filename, beside `settings.json`.
 const INSTALL_ID_FILE: &str = "install-id";
 
+/// How old an event may be and still be worth sending.
+///
+/// Deliberately below the collector's own four-day window
+/// (`MAX_AGE_SECONDS` in `collector/src/index.ts`), so the client discards a
+/// stale event rather than posting one the collector will reject. Without the
+/// margin a queue that outlives a long app closure is refused with a 400
+/// forever, which reads as a broken build rather than as a holiday.
+pub const MAX_EVENT_AGE: Duration = Duration::from_secs(3 * 24 * 3_600);
+
 /// Most events held before the oldest are dropped.
 ///
 /// A queue that grows without bound on a machine that is offline for a month
@@ -420,6 +429,50 @@ pub struct Envelope {
     pub events: Vec<Event>,
 }
 
+/// What happened on the most recent send attempt.
+///
+/// In memory and per-session on purpose. A durable "it has been broken for N
+/// days" clock was designed and rejected: on an always-on seeding box any such
+/// clock trips for a household DNS blocklist, a firewall rule someone clicked
+/// Deny on months ago, or a VPN kill switch — none of which are defects, and
+/// all of which would produce a confident, wrong verdict in a report the user
+/// is asked to read and paste. This records what happened, not what it means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Delivery {
+    /// Nothing has been attempted yet this session.
+    #[default]
+    Untried,
+    /// The collector accepted the batch.
+    Accepted,
+    /// The request never got an answer.
+    ///
+    /// One variant rather than several because the causes are genuinely not
+    /// distinguishable: `hyper-util` tags every connector failure the same
+    /// way, so a closed laptop, a typo in the host, an expired certificate and
+    /// a blocking proxy all arrive here identically. Claiming to know which
+    /// would be a verdict the data cannot support.
+    NoResponse,
+    /// The collector answered and refused, with this status.
+    Refused(u16),
+}
+
+impl Delivery {
+    /// Whether a refusal will still be a refusal on the next identical try.
+    ///
+    /// A 404 means the endpoint is wrong; a 413 means the batch is too large
+    /// for the collector's cap. Neither improves by waiting, and both are
+    /// answers from a server — which a closed laptop, a plane or a captive
+    /// portal can never produce, so this cannot fire for being offline.
+    ///
+    /// 400 is deliberately excluded. The collector returns it for a clock more
+    /// than two hours fast and for events past its age window as well as for a
+    /// schema mismatch, and the first two are ordinary user situations.
+    #[must_use]
+    pub const fn is_settled_refusal(self) -> bool {
+        matches!(self, Self::Refused(404 | 413))
+    }
+}
+
 /// Queues events and decides whether any are collected at all.
 ///
 /// Every method is infallible from the caller's point of view: recording is a
@@ -434,6 +487,8 @@ pub struct Recorder {
     lock: Mutex<()>,
     /// How many events are queued, or [`UNKNOWN_LENGTH`] before the first read.
     queued: AtomicUsize,
+    /// The most recent send outcome. Session-scoped; never written to disk.
+    delivery: Mutex<Delivery>,
     /// Flume's version, for the envelope.
     app_version: String,
 }
@@ -447,6 +502,7 @@ impl Recorder {
             enabled: AtomicBool::new(consent == Some(true)),
             lock: Mutex::new(()),
             queued: AtomicUsize::new(UNKNOWN_LENGTH),
+            delivery: Mutex::new(Delivery::Untried),
             app_version,
         }
     }
@@ -473,6 +529,7 @@ impl Recorder {
         if !granted {
             let _guard = self.lock.lock();
             self.queued.store(0, Ordering::Relaxed);
+            self.set_delivery(Delivery::Untried);
             for file in [INSTALL_ID_FILE, QUEUE_FILE] {
                 let path = self.dir.join(file);
                 if let Err(err) = remove_if_present(&path) {
@@ -546,13 +603,28 @@ impl Recorder {
 
         let path = self.dir.join(QUEUE_FILE);
         let events = match read_queue(&path) {
-            Ok(events) if events.is_empty() => return None,
             Ok(events) => events,
             Err(err) => {
                 log::debug!("could not read the usage queue: {err}");
                 return None;
             }
         };
+
+        // Pruned on the way out, not only on the way back in after a failed
+        // send. A queue that outlives a week-long app closure would otherwise
+        // be posted verbatim and refused by the collector's own age window --
+        // a 400 that repeats every hour and looks exactly like a broken build
+        // rather than like a holiday.
+        let events = prune_expired(events);
+        if events.is_empty() {
+            // Everything aged out. The file still has to go, or the same dead
+            // events are re-read and re-pruned on every flush forever.
+            if let Err(err) = remove_if_present(&path) {
+                log::debug!("could not clear a fully-expired usage queue: {err}");
+            }
+            self.queued.store(0, Ordering::Relaxed);
+            return None;
+        }
 
         let install_id = match self.install_id() {
             Ok(id) => id,
@@ -626,11 +698,38 @@ impl Recorder {
         Ok(id)
     }
 
+    /// Records the outcome of a send attempt.
+    pub fn set_delivery(&self, outcome: Delivery) {
+        if let Ok(mut delivery) = self.delivery.lock() {
+            *delivery = outcome;
+        }
+    }
+
+    /// The outcome of the most recent send attempt this session.
+    #[must_use]
+    pub fn delivery(&self) -> Delivery {
+        self.delivery
+            .lock()
+            .map_or(Delivery::Untried, |delivery| *delivery)
+    }
+
     /// Whether an install id exists on disk.
     #[must_use]
     pub fn has_install_id(&self) -> bool {
         self.dir.join(INSTALL_ID_FILE).exists()
     }
+}
+
+/// Drops events too old to be worth sending.
+///
+/// Shared by the queue's read path and the sender's restore path so both use
+/// one definition of "too old"; a sender that pruned differently from the
+/// queue would restore events the queue would immediately discard.
+#[must_use]
+pub fn prune_expired(mut events: Vec<Event>) -> Vec<Event> {
+    let cutoff = unix_now().saturating_sub(MAX_EVENT_AGE.as_secs());
+    events.retain(|event| event.at >= cutoff);
+    events
 }
 
 /// Deletes a file, treating "already gone" as success.
@@ -791,6 +890,46 @@ mod tests {
             batch.events[MAX_QUEUED_EVENTS - 1].kind,
             EventKind::TorrentCompleted,
             "the newest event should survive"
+        );
+    }
+
+    #[test]
+    fn events_too_old_to_send_never_leave_the_queue() {
+        // The holiday case: a queue that outlived a long closure would
+        // otherwise be posted stale and refused with a 400 every hour.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = recorder(tmp.path(), Some(true));
+
+        let stale = Event {
+            at: unix_now() - (MAX_EVENT_AGE.as_secs() + HOUR),
+            kind: EventKind::Launched,
+        };
+        recorder.append(stale).expect("append");
+        recorder.record(EventKind::TorrentCompleted);
+
+        let batch = recorder.take_batch().expect("a batch");
+
+        assert_eq!(batch.events.len(), 1, "the stale event should be dropped");
+        assert_eq!(batch.events[0].kind, EventKind::TorrentCompleted);
+    }
+
+    #[test]
+    fn a_queue_of_nothing_but_stale_events_is_cleared() {
+        // Otherwise the same dead events are re-read on every flush forever.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = recorder(tmp.path(), Some(true));
+
+        recorder
+            .append(Event {
+                at: unix_now() - (MAX_EVENT_AGE.as_secs() + HOUR),
+                kind: EventKind::Launched,
+            })
+            .expect("append");
+
+        assert!(recorder.take_batch().is_none());
+        assert!(
+            !tmp.path().join(QUEUE_FILE).exists(),
+            "queue should be gone"
         );
     }
 
