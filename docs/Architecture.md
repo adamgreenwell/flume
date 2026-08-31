@@ -54,6 +54,32 @@ testing lives in the engine, where it can be tested.
 Status updates run at approximately 1 Hz. Per-piece events would flood the IPC
 channel on a fast download and jank the UI for no informational gain.
 
+### 4a. Telemetry is not usage reporting
+
+Two subsystems, deliberately not sharing a name.
+
+`telemetry.rs` is the 1 Hz push above: in-process, always on, never leaves the
+machine. `usage/` is opt-in anonymous counts sent to a collector, off unless
+the user says yes, and the only thing in Flume that talks to a server on its
+own behalf.
+
+**All network egress originates in Rust.** The webview's CSP is
+`connect-src 'self' ipc: http://ipc.localhost`, and it is not widened. A
+frontend analytics or crash-reporting SDK would require relaxing it, which
+would give every piece of UI code an egress path — including anything that
+renders an attacker-controlled torrent name into the DOM. Keeping the sender
+in `usage/sender.rs` means there is exactly one file to audit.
+
+The wire format is a closed enum: every field of every event is an enum or a
+bool, and there is no free-text field. That is a hard constraint rather than a
+style choice, because librqbit's error strings embed tracker URLs and
+filesystem paths — a `String` reason field would exfiltrate exactly what
+Flume promises not to collect. `tests/usage_contract.rs` pins the enum against
+`collector/schema.json`, and the collector rejects anything it does not
+recognise rather than storing it.
+
+See [[Privacy]] for the user-facing contract.
+
 ### 5. Flume owns its IPC types
 
 The types crossing the boundary are defined in `src-tauri/src/engine/status.rs`

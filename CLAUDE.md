@@ -49,6 +49,8 @@ flume.dev (a React node editor). Both verified unrelated.
 | Layout (Phase 1)   | Single list + detail panel                             | Focused; scales fine for a personal workload                                                                                                                                                                                         |
 | Windows signing    | Not signed, deliberately                               | SmartScreen reputation accrues per certificate from downloads, so an OV cert changes nothing at this volume; EV is hundreds a year for a free app. Keys must also be on hardware since 2023, so the macOS approach does not transfer |
 | Settings store     | `tauri-plugin-store` (JSON)                            | Sufficient for a flat settings object; no SQLite migration burden                                                                                                                                                                    |
+| Usage reporting    | Opt-in, asked once at first run                        | Opt-out telemetry in a BitTorrent client becomes the top comment in every thread about it, permanently. qBittorrent ships none; that is the baseline. Opt-in costs sample rate, opt-out costs the audience                           |
+| Usage collector    | Cloudflare Worker + D1, in `collector/`                | The Worker validates against the wire format, so it must move in the same commit as the Rust enum — a schema split across two repos drifts                                                                                           |
 
 ## Architecture rules (violating one is a design defect)
 
@@ -63,6 +65,44 @@ flume.dev (a React node editor). Both verified unrelated.
 9. Verdicts the data cannot support are not invented. `SwarmHealth` reports
    `unknown` only when there are no peer bitfields to judge from, never as a
    guess between `thin` and `healthy` — see below.
+10. **All network egress originates in Rust.** The webview's CSP is
+    `connect-src 'self' ipc: http://ipc.localhost` and is not widened, ever.
+    Adding an analytics or crash-reporting SDK to the frontend would mean
+    relaxing it, which hands every piece of UI code — including anything that
+    renders an attacker-controlled torrent name into the DOM — an egress path
+    it does not currently have. One place talks to the outside world:
+    `src-tauri/src/usage/sender.rs`.
+11. **Nothing that identifies a download leaves the machine.** No info hashes,
+    torrent or file names, tracker URLs, peer IPs, download paths or proxy
+    URLs — in a usage event or a diagnostics bundle. This rules out free-text
+    error strings, because librqbit's errors embed tracker URLs and paths, so
+    reported failures are a closed enum (`usage::FailureKind`) rather than a
+    message.
+
+## Telemetry is not usage reporting
+
+Two different things, and the vocabulary is load-bearing:
+
+- **`src-tauri/src/telemetry.rs`** is the 1 Hz push of torrent status to the
+  webview. It never leaves the process. Architecture rule 5 is about this.
+- **`src-tauri/src/usage/`** is opt-in anonymous counts sent to a collector.
+  It is the only thing in Flume that sends anything anywhere, and only with
+  consent.
+
+Do not rename either into the other's territory. `docs/Architecture.md`,
+`tests/performance.rs` and CONTRIBUTING all use "telemetry" in the first
+sense.
+
+`Settings.usage_reporting` is `Option<bool>` and the three states are the
+point: `None` is _not yet asked_, `Some(false)` is a decline that must never
+be re-asked. Collapsing it to a `bool` either nags someone who already said no
+or treats silence as consent. `FirstRun` records an untouched toggle as an
+explicit `Some(false)` on exit, so the value is never `None` after first run.
+
+The install id is written lazily, on the first batch actually sent — consent
+followed by a session that records nothing leaves no trace on disk.
+`docs/Privacy.md` is the user-facing contract and is the thing this feature is
+judged on; change it in the same commit as the schema.
 
 ## Piece availability, and the librqbit fork
 
@@ -185,6 +225,7 @@ Source for reference: `~/.cargo/registry/src/index.crates.io-*/librqbit-9.0.0/`
 ## Layout
 
 ```
+collector/            Cloudflare Worker + D1 for usage counts
 src/                  Next.js app (static export → out/)
   app/                routes; all client components
   components/         presentational React components
@@ -193,10 +234,13 @@ src/                  Next.js app (static export → out/)
   lib/format.ts       pure display helpers
 src-tauri/
   src/engine/         librqbit wrapper — no Tauri types
+  src/diagnostics/    redacted bundle builder — no Tauri types
+  src/usage/          opt-in counts + sender — no Tauri types
   src/commands/       #[tauri::command] handlers
   src/state/          shared app state
   tests/engine.rs     integration tests against a real librqbit Session
   tests/commands.rs   IPC-layer tests via Tauri's mock runtime
+  tests/usage_contract.rs  pins the wire format against collector/schema.json
 docs/                 wiki source, mirrored to the GitHub Wiki
 ```
 

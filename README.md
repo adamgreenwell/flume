@@ -147,6 +147,17 @@ real torrent rather than a green CI badge.
 
 Tracked on the [project board][board] and in [issues][issues].
 
+## Privacy
+
+Flume collects nothing by default. It asks once, during first run, whether it
+may send anonymous usage counts, and does not ask again. There is no update
+checker, no crash reporter, no analytics SDK, and no bundled search.
+
+Torrent names, file names, info hashes, tracker addresses, IP addresses and
+file paths are never collected — not with consent, not without it, and not in
+a diagnostics report. [`docs/Privacy.md`](docs/Privacy.md) is the complete
+list, and [`collector/`](collector/) is the ~250 lines that receive it.
+
 ## Documentation
 
 The full documentation is at **[flume.adamgreenwell.com/docs][docs]**, and the
