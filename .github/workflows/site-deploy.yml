@@ -1,0 +1,77 @@
+name: Deploy the website
+
+# flume.adamgreenwell.com resolves release data at build time, so its download
+# buttons carry real filenames and sizes in static HTML and work with
+# JavaScript disabled. The cost is that the site has to rebuild to notice a new
+# release, and pushing to this repo does not rebuild it -- the site lives in
+# `adamgreenwell/flume-site` and deploys on pushes there.
+#
+# This fires on `published` rather than from `release.yml`, and the difference
+# matters. `release.yml` runs on a tag and creates a **draft** release so builds
+# can be smoke-tested per OS first. The site deliberately ignores drafts
+# (`src/lib/releases.ts` filters them, and `/releases/latest` excludes them by
+# definition), so deploying at the end of that run would rebuild against a
+# release the site cannot see, then never rebuild again when the draft is
+# actually published. Publishing the draft is the moment the download page
+# changes, so that is the event to listen for.
+#
+# `edited` and `deleted` are here because both change what the page should
+# show: unticking pre-release promotes a version, and a deleted release would
+# otherwise leave the download buttons pointing at assets that are gone.
+on:
+  release:
+    types: [published, edited, deleted]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Trigger a Sevalla deployment
+    runs-on: ubuntu-latest
+    steps:
+      # Sevalla has no deploy-hook URL for static sites -- their API exposes
+      # deployment hooks under /v3/applications only -- so this calls the
+      # deploy endpoint directly.
+      #
+      # curl rather than `sevalla-hosting/sevalla-deploy`, whose static-site
+      # path is a thin wrapper around exactly this one request. This repo is
+      # public and the token can deploy, so that is one fewer third party
+      # holding it.
+      #
+      # Skipped silently when the secret is unset: a fork has no Sevalla
+      # deployment, and failing over it would be absurd.
+      - name: Deploy
+        env:
+          TOKEN: ${{ secrets.SEVALLA_API_TOKEN }}
+          # The static site's ID, from its Settings -> Details page.
+          SITE_ID: 6cade71a-c6ce-4f69-8ef3-e082a74e2039
+        run: |
+          set -uo pipefail
+          if [ -z "${TOKEN:-}" ]; then
+            echo "No SEVALLA_API_TOKEN configured; skipping site rebuild."
+            echo "The site will show this release after its next deploy."
+            exit 0
+          fi
+
+          # `branch` is required by the endpoint; omitting the body is a 400
+          # rather than a default-branch deploy.
+          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" --max-time 30 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"branch":"main"}' \
+            "https://api.sevalla.com/v3/static-sites/$SITE_ID/deployments")
+          echo "Sevalla responded $code"
+
+          # Reported, not fatal. The release itself is already published; a
+          # stale website is worth a warning and not worth a red X against a
+          # release that succeeded.
+          #
+          # The failures are separated because each has a different fix: a
+          # revoked token, a key without the deploy capability, and a site ID
+          # that no longer matches the dashboard.
+          case "$code" in
+            2*) echo "Deployment queued. The download page will show this release once it builds." ;;
+            401) echo "::warning::Sevalla rejected the token (401). Rotate SEVALLA_API_TOKEN." ;;
+            403) echo "::warning::Token lacks permission to deploy (403). Check the key's scope." ;;
+            404) echo "::warning::No static site with ID $SITE_ID (404). Check Settings -> Details." ;;
+            *)   echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually." ;;
+          esac
