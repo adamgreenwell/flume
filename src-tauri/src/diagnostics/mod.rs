@@ -152,7 +152,7 @@ impl Redactor {
         // Longest first: with `/Users/adam` and `/Users/adam/Downloads` both
         // present, the shorter one would otherwise win and leave the rest of
         // the path behind.
-        literals.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        literals.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
 
         Self { literals }
     }
