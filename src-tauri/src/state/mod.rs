@@ -1,12 +1,13 @@
 //! Application-wide state shared across Tauri commands.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use tokio::sync::RwLock;
 
 use crate::{
     engine::{Engine, EngineError},
     settings::Settings,
+    usage::{EventKind, Recorder},
 };
 
 /// Shared state managed by Tauri and injected into command handlers.
@@ -26,17 +27,46 @@ pub struct AppState {
     /// writes settings as the user answers it, so a value re-read later would
     /// flip to false halfway through and take the screen with it.
     first_run: bool,
+    /// Opt-in usage counts. Inert unless the user consented.
+    usage: Arc<Recorder>,
+    /// When this process started, for the session-length bucket.
+    started_at: Instant,
 }
 
 impl AppState {
     /// Creates state with the given settings and session directory.
     pub fn new(settings: Settings, session_dir: PathBuf, first_run: bool) -> Self {
+        let usage = Arc::new(Recorder::new(
+            session_dir.clone(),
+            settings.usage_reporting,
+            env!("CARGO_PKG_VERSION").to_owned(),
+        ));
         Self {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
             session_dir,
             first_run,
+            usage,
+            started_at: Instant::now(),
         }
+    }
+
+    /// The usage recorder. Records nothing unless the user consented.
+    pub fn usage(&self) -> &Arc<Recorder> {
+        &self.usage
+    }
+
+    /// How long this process has been running.
+    pub fn uptime(&self) -> std::time::Duration {
+        self.started_at.elapsed()
+    }
+
+    /// Records an event, if the user consented.
+    ///
+    /// A convenience so command handlers stay one line longer rather than
+    /// four; see [`crate::usage`] for why every field is an enum.
+    pub fn note(&self, kind: EventKind) {
+        self.usage.record(kind);
     }
 
     /// Whether this launch found no settings file.

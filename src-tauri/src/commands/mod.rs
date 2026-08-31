@@ -6,15 +6,17 @@
 //! Tauri.
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::{
+    diagnostics::{self, LOG_TAIL_LINES},
     engine::{
         CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
         TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
     },
     settings::{Settings, SettingsError},
     state::AppState,
+    usage::{AddSource, CountBucket, EventKind, FailureKind, SettingKey},
 };
 
 /// An error returned across the IPC boundary.
@@ -65,6 +67,19 @@ impl From<EngineError> for CommandError {
         Self {
             kind,
             message: err.to_string(),
+        }
+    }
+}
+
+impl AppState {
+    /// Records a failed operation, if the user consented to usage reporting.
+    ///
+    /// Takes the already-mapped [`CommandError`] rather than the engine error,
+    /// so the reported vocabulary is the same `kind` set the frontend branches
+    /// on. Anything [`FailureKind::parse`] does not recognise is dropped.
+    fn note_failure(&self, err: &CommandError) {
+        if let Some(kind) = FailureKind::parse(err.kind) {
+            self.note(EventKind::OperationFailed { kind });
         }
     }
 }
@@ -158,9 +173,13 @@ pub async fn import_client(
     output_folder: Option<String>,
 ) -> Result<ImportOutcome, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine
+    let outcome = engine
         .import_from(std::path::Path::new(&torrents_dir), output_folder)
-        .await?)
+        .await?;
+    state.note(EventKind::LibraryImported {
+        added: CountBucket::of(outcome.added),
+    });
+    Ok(outcome)
 }
 
 /// Returns the current user settings.
@@ -198,6 +217,17 @@ pub async fn update_settings(
     settings.save(state.session_dir())?;
     state.set_settings(settings.clone()).await;
 
+    // Applied before the changes are recorded, so withdrawing consent takes
+    // effect *before* the event that would say consent changed. Recording a
+    // withdrawal against the install id being withdrawn is not a nuance worth
+    // getting wrong.
+    if previous.usage_reporting != settings.usage_reporting {
+        state.usage().set_consent(settings.usage_reporting);
+    }
+    for key in SettingKey::changed(&previous, &settings) {
+        state.note(EventKind::SettingChanged { key });
+    }
+
     if previous.requires_restart(&settings) {
         state.restart_engine(&settings).await?;
     } else if let Some(engine) = state.engine().await {
@@ -223,7 +253,21 @@ pub async fn preview_torrent(
     source: TorrentSource,
 ) -> Result<TorrentPreview, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine.preview(source).await?)
+    let route = match &source {
+        TorrentSource::Magnet { .. } => AddSource::Magnet,
+        TorrentSource::File { .. } => AddSource::File,
+    };
+
+    match engine.preview(source).await.map_err(CommandError::from) {
+        Ok(preview) => {
+            state.note(EventKind::TorrentPreviewed { source: route });
+            Ok(preview)
+        }
+        Err(err) => {
+            state.note_failure(&err);
+            Err(err)
+        }
+    }
 }
 
 /// Starts a previewed torrent, downloading only the selected files.
@@ -241,7 +285,20 @@ pub async fn confirm_add(
     only_files: Option<Vec<usize>>,
 ) -> Result<usize, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine.confirm_add(&info_hash, only_files).await?)
+    match engine
+        .confirm_add(&info_hash, only_files)
+        .await
+        .map_err(CommandError::from)
+    {
+        Ok(id) => {
+            state.note(EventKind::TorrentAdded);
+            Ok(id)
+        }
+        Err(err) => {
+            state.note_failure(&err);
+            Err(err)
+        }
+    }
 }
 
 /// Releases a preview the user cancelled.
@@ -296,7 +353,22 @@ pub async fn remove_torrent(
     delete_files: bool,
 ) -> Result<(), CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine.remove(id, delete_files).await?)
+    match engine
+        .remove(id, delete_files)
+        .await
+        .map_err(CommandError::from)
+    {
+        Ok(()) => {
+            state.note(EventKind::TorrentRemoved {
+                deleted_data: delete_files,
+            });
+            Ok(())
+        }
+        Err(err) => {
+            state.note_failure(&err);
+            Err(err)
+        }
+    }
 }
 
 /// Changes which files a torrent downloads.
@@ -345,4 +417,100 @@ pub async fn get_torrent_detail(
 ) -> Result<TorrentDetail, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
     Ok(engine.torrent_detail(id)?)
+}
+
+/// Builds a redacted diagnostics bundle for the user to paste into an issue.
+///
+/// Nothing is sent anywhere: this returns the text, and the UI shows it before
+/// offering to copy it. Everything that identifies the user or what they are
+/// downloading is removed first — see [`crate::diagnostics`] for what that
+/// covers and, importantly, what it cannot.
+///
+/// # Errors
+///
+/// Never fails. A missing log directory, an unreadable log file or an engine
+/// that has not started each become a line in the bundle saying so, which is
+/// itself diagnostic — an error here would just deny the user the report.
+#[tauri::command]
+pub async fn get_diagnostics(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, CommandError> {
+    let settings = state.settings().await;
+    let engine = state.engine().await;
+
+    // Only the names, and only to redact them. They are never rendered.
+    let (core, names) = match &engine {
+        Some(engine) => {
+            let snapshot = engine.telemetry();
+            let names = snapshot
+                .torrents
+                .iter()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>();
+            (Some(snapshot.core), names)
+        }
+        None => (None, Vec::new()),
+    };
+
+    let home = directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+    let log_tail = app
+        .path()
+        .app_log_dir()
+        .ok()
+        .map(|dir| read_log_tail(&dir, LOG_TAIL_LINES))
+        .unwrap_or_default();
+
+    let redactor = diagnostics::Redactor::new(home.as_deref(), &settings.download_dir, &names);
+
+    Ok(diagnostics::Report {
+        app_version: env!("CARGO_PKG_VERSION"),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        debug_build: cfg!(debug_assertions),
+        settings: &settings,
+        core: core.as_ref(),
+        torrent_count: names.len(),
+        home,
+        log_tail: &log_tail,
+        redactor: &redactor,
+    }
+    .render())
+}
+
+/// Reads the last `lines` lines of the most recently modified log file.
+///
+/// The newest file rather than a fixed name: `tauri-plugin-log` rotates, so
+/// the interesting one after a long session is not the one it started with.
+fn read_log_tail(dir: &std::path::Path, lines: usize) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+
+    let newest = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("log"))
+        })
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .max_by_key(|(modified, _)| *modified);
+
+    let Some((_, path)) = newest else {
+        return Vec::new();
+    };
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+
+    let all: Vec<&str> = body.lines().collect();
+    all[all.len().saturating_sub(lines)..]
+        .iter()
+        .map(|line| (*line).to_owned())
+        .collect()
 }

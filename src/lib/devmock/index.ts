@@ -271,6 +271,8 @@ const SETTINGS: Settings = {
   proxyUrl: null,
   theme: "system",
   density: "comfortable",
+  // Not asked, so the mock exercises the state a real first run starts in.
+  usageReporting: null,
 };
 
 /**

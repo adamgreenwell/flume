@@ -16,6 +16,7 @@ import { applyDensity, applyTheme } from "@/lib/theme";
 
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
+import { DiagnosticsCard } from "./DiagnosticsCard";
 import { SettingControl } from "./SettingControl";
 import { Skeleton } from "./Skeleton";
 
@@ -328,6 +329,17 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   );
                 })
               : null}
+
+            {/*
+              The one thing on this screen that is not generated from
+              SETTING_DEFS. That table binds each row to a `Settings` field,
+              and a report you build on demand is an action with no field to
+              bind to. Hidden while searching rather than given a fake entry in
+              the search index, so the "N results" count stays truthful.
+            */}
+            {settings !== null && !searching && section === "privacy" ? (
+              <DiagnosticsCard />
+            ) : null}
           </div>
         </div>
 

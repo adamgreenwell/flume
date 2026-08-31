@@ -1,0 +1,20 @@
+{
+  "name": "flume-usage-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Validates and stores Flume's opt-in usage counts.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate": "wrangler d1 execute flume-usage --remote --file=./schema.sql",
+    "migrate:local": "wrangler d1 execute flume-usage --local --file=./schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260831.1",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.127.1"
+  }
+}

@@ -11,8 +11,12 @@
 //! * [`state`] — process-wide shared state handed to command handlers.
 //! * [`commands`] — `#[tauri::command]` entry points. Thin by design.
 //! * [`deeplink`] — `magnet:` handling and single-instance behaviour.
+//! * [`diagnostics`] — a redacted bundle the user can paste into an issue.
 //! * [`settings`] — user configuration and its persistence. Also Tauri-free.
 //! * [`telemetry`] — pushes batched status to the UI on a fixed cadence.
+//! * [`usage`] — opt-in anonymous counts. The only thing that leaves the
+//!   machine, and only with consent. Distinct from [`telemetry`], which never
+//!   leaves the process.
 //! * [`tray`] — system tray icon and quick actions.
 //!
 //! Torrent piece data is written to disk by librqbit and never crosses the IPC
@@ -20,16 +24,26 @@
 
 pub mod commands;
 pub mod deeplink;
+pub mod diagnostics;
 pub mod engine;
 mod menu;
 pub mod settings;
 pub mod state;
 pub mod telemetry;
 pub mod tray;
+pub mod usage;
+
+use std::{sync::Arc, time::Duration};
 
 use settings::Settings;
 use state::AppState;
 use tauri::Manager;
+
+/// How long the final usage flush may take before the process exits anyway.
+///
+/// A quit that hangs on a network request is a much worse bug than a lost
+/// batch — the next launch sends it regardless.
+const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Builds and runs the Tauri application.
 ///
@@ -87,6 +101,7 @@ pub fn run() {
             commands::set_only_files,
             commands::get_torrent_files,
             commands::get_torrent_detail,
+            commands::get_diagnostics,
             commands::get_settings,
             commands::update_settings,
             commands::is_first_run,
@@ -151,6 +166,20 @@ pub fn run() {
                 if let Err(err) = state.restart_engine(&settings).await {
                     log::error!("torrent engine failed to start: {err}");
                 }
+
+                // Recorded after the engine is up so the library size is the
+                // restored one rather than zero. Both are no-ops unless the
+                // user consented.
+                state.note(usage::EventKind::Launched);
+                let torrents = state
+                    .engine()
+                    .await
+                    .map_or(0, |engine| engine.telemetry().torrents.len());
+                state.note(usage::EventKind::LibraryCount {
+                    bucket: usage::CountBucket::of(torrents),
+                });
+
+                usage::sender::spawn(Arc::clone(state.usage()));
             });
             Ok(())
         })
@@ -161,7 +190,19 @@ pub fn run() {
             // restart resumes instead of re-hashing.
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<AppState>();
-                tauri::async_runtime::block_on(state.shutdown());
+                state.note(usage::EventKind::SessionEnded {
+                    duration_bucket: usage::DurationBucket::of(state.uptime()),
+                });
+                tauri::async_runtime::block_on(async {
+                    // The last flush gets one shot. A quit that hangs waiting
+                    // on a network request is a far worse bug than a lost
+                    // batch, which the next launch would send anyway.
+                    if let Some(sender) = usage::sender::Sender::new() {
+                        let flush = sender.flush(state.usage());
+                        let _ = tokio::time::timeout(SHUTDOWN_FLUSH_TIMEOUT, flush).await;
+                    }
+                    state.shutdown().await;
+                });
             }
         });
 }

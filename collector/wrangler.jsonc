@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flume-usage",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flume-usage",
+      // Filled in by `wrangler d1 create flume-usage`.
+      "database_id": "REPLACE_ME",
+    },
+  ],
+}

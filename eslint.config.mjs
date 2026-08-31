@@ -17,6 +17,10 @@ const eslintConfig = defineConfig([
     "src-tauri/gen/**",
     // Storybook's static build — bundled third-party code, not ours to lint.
     "storybook-static/**",
+    // The usage collector is a Cloudflare Worker, not part of the app: a
+    // different runtime, different globals, and its own tsconfig. Linting it
+    // with the Next config reports rules that do not apply to it.
+    "collector/**",
   ]),
 ]);
 
