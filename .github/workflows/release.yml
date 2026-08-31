@@ -147,6 +147,46 @@ jobs:
       # is not worth risking for a few minutes of compile time.
       - run: npm ci
 
+      # `usage::sender::ENDPOINT` is `option_env!("FLUME_USAGE_ENDPOINT")`, which
+      # distinguishes unset from empty. Unset compiles reporting inert. Empty
+      # compiles `Some("")` -- configured, pointed at nowhere, and silent about
+      # it, which is the exact failure `should_warn` exists to make impossible.
+      #
+      # So this cannot be `env: FLUME_USAGE_ENDPOINT: ${{ secrets.* }}` on the
+      # build step: a missing secret expands to an empty string, not to nothing.
+      # Same trap as the APPLE_* variables below, and the same rule -- when
+      # there is no value, the variable must be absent entirely. Exporting
+      # through $GITHUB_ENV is how a variable gets to be absent conditionally.
+      #
+      # A malformed value fails the build rather than shipping. An endpoint that
+      # is present but wrong is worse than none: reporting reads as configured,
+      # the warning never fires, and events queue forever against a URL that was
+      # never going to work.
+      - name: Bake in the collector endpoint, if one is configured
+        shell: bash
+        env:
+          ENDPOINT: ${{ secrets.FLUME_USAGE_ENDPOINT }}
+        run: |
+          if [ -z "${ENDPOINT:-}" ]; then
+            echo "No FLUME_USAGE_ENDPOINT secret configured."
+            echo "Usage reporting compiles inert: this build cannot send anything,"
+            echo "even if a user opts in. That is the correct result for a fork."
+            exit 0
+          fi
+
+          # Not echoed. Actions masks secrets in logs, so printing it would only
+          # produce ***, and the shape is the whole point of the check.
+          case "$ENDPOINT" in
+            https://*) ;;
+            *)
+              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL."
+              exit 1
+              ;;
+          esac
+
+          echo "FLUME_USAGE_ENDPOINT=$ENDPOINT" >> "$GITHUB_ENV"
+          echo "Collector endpoint configured."
+
       # Two steps rather than one, because passing empty APPLE_* variables is
       # not the same as passing none. tauri-action treats the presence of
       # APPLE_CERTIFICATE as a request to sign and then fails importing an
@@ -239,6 +279,34 @@ jobs:
 
       - name: Build the frontend
         run: npm run build
+
+      # The .rpm is attached to the same release as every other package, so it
+      # gets the same endpoint. Without this, one Linux package out of three
+      # would ship with reporting inert for no reason a user could discover.
+      #
+      # See the identical step in the `build` job for why this is exported
+      # through $GITHUB_ENV rather than set as step env: a missing secret
+      # expands to an empty string, and `option_env!` reads that as configured.
+      - name: Bake in the collector endpoint, if one is configured
+        shell: bash
+        env:
+          ENDPOINT: ${{ secrets.FLUME_USAGE_ENDPOINT }}
+        run: |
+          if [ -z "${ENDPOINT:-}" ]; then
+            echo "No FLUME_USAGE_ENDPOINT secret configured; reporting compiles inert."
+            exit 0
+          fi
+
+          case "$ENDPOINT" in
+            https://*) ;;
+            *)
+              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL."
+              exit 1
+              ;;
+          esac
+
+          echo "FLUME_USAGE_ENDPOINT=$ENDPOINT" >> "$GITHUB_ENV"
+          echo "Collector endpoint configured."
 
       - name: Bundle the .rpm
         working-directory: src-tauri
