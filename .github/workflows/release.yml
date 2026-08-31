@@ -332,22 +332,50 @@ jobs:
       # JavaScript disabled. The cost of that choice is that a new release is
       # invisible until the site rebuilds, which is what this does.
       #
-      # Skipped silently when no hook is configured: a fork has no Sevalla
+      # Sevalla has no deploy-hook URL for static sites. Their API exposes
+      # deployment hooks for applications only, so the earlier version of this
+      # step POSTed to a `SEVALLA_DEPLOY_HOOK` secret that could never exist.
+      # This calls the deploy endpoint directly instead.
+      #
+      # curl rather than `sevalla-hosting/sevalla-deploy`, whose static-site
+      # path is a thin wrapper around exactly this one request. This repo is
+      # public and the token can deploy, so that is one fewer third party
+      # holding it.
+      #
+      # Skipped silently when the secret is unset: a fork has no Sevalla
       # deployment, and failing a release over it would be absurd.
-      - name: Ping the Sevalla deploy hook
+      - name: Trigger a Sevalla deployment
         env:
-          HOOK: ${{ secrets.SEVALLA_DEPLOY_HOOK }}
+          TOKEN: ${{ secrets.SEVALLA_API_TOKEN }}
+          # The static site's ID, from its Settings -> Details page.
+          SITE_ID: 6cade71a-c6ce-4f69-8ef3-e082a74e2039
         run: |
           set -uo pipefail
-          if [ -z "${HOOK:-}" ]; then
-            echo "No SEVALLA_DEPLOY_HOOK configured; skipping site rebuild."
+          if [ -z "${TOKEN:-}" ]; then
+            echo "No SEVALLA_API_TOKEN configured; skipping site rebuild."
             echo "The site will show this release after its next deploy."
             exit 0
           fi
-          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" --max-time 30 "$HOOK")
-          echo "Deploy hook responded $code"
+
+          # `branch` is required by the endpoint; omitting the body is a 400
+          # rather than a default-branch deploy.
+          code=$(curl -sS -X POST -o /dev/null -w "%{http_code}" --max-time 30 \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"branch":"main"}' \
+            "https://api.sevalla.com/v3/static-sites/$SITE_ID/deployments")
+          echo "Sevalla responded $code"
+
           # Reported, not fatal. The release itself succeeded; a stale website
           # is worth a warning and not worth failing a green release over.
-          if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-            echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually."
-          fi
+          #
+          # 401 means the token is wrong or revoked, 403 that it is valid but
+          # lacks the deploy capability -- worth distinguishing, because the
+          # fix is a different one.
+          case "$code" in
+            2*) echo "Deployment queued. The download page will show this release once it builds." ;;
+            401) echo "::warning::Sevalla rejected the token (401). Rotate SEVALLA_API_TOKEN." ;;
+            403) echo "::warning::Token lacks permission to deploy (403). Check the key's scope." ;;
+            404) echo "::warning::No static site with ID $SITE_ID (404). Check Settings -> Details." ;;
+            *)   echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually." ;;
+          esac
