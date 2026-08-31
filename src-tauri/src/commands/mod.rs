@@ -472,6 +472,7 @@ pub async fn get_diagnostics(
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         debug_build: cfg!(debug_assertions),
+        build_id: env!("FLUME_BUILD_ID"),
         settings: &settings,
         core: core.as_ref(),
         torrent_count: names.len(),

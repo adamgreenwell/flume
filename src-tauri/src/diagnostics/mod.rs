@@ -191,6 +191,17 @@ pub struct Report<'a> {
     pub arch: &'a str,
     /// Whether this is a debug build.
     pub debug_build: bool,
+    /// Which commit this binary was built from, or `unknown` without git.
+    ///
+    /// The commit, not the moment of compilation, and it says nothing about
+    /// whether the tree was clean — see `build.rs` for why both of those are
+    /// deliberate.
+    ///
+    /// The version alone cannot tell two builds apart — every build of Flume
+    /// says `1.0.0` — so this is what answers "is the binary you are running
+    /// the one you think you built?". An installer that picked up a stale
+    /// artifact is invisible without it.
+    pub build_id: &'a str,
     /// The user's settings, reported as shape rather than value.
     pub settings: &'a Settings,
     /// Engine status, or `None` if the engine has not started.
@@ -233,7 +244,11 @@ impl Report<'_> {
         line(
             &mut out,
             "Build",
-            if self.debug_build { "debug" } else { "release" },
+            &format!(
+                "{} {}",
+                if self.debug_build { "debug" } else { "release" },
+                self.build_id
+            ),
         );
 
         out.push_str("\n## Engine\n\n");
@@ -539,6 +554,7 @@ mod tests {
             os: "macos",
             arch: "aarch64",
             debug_build: false,
+            build_id: "2026-08-31 (abc1234)",
             settings,
             core: None,
             torrent_count: 3,
@@ -587,6 +603,12 @@ mod tests {
         let rendered = report(&settings, &redactor, &[]).render();
 
         assert!(rendered.contains("1.0.0"), "no version:\n{rendered}");
+        // The version is 1.0.0 for every build ever made, so the commit is the
+        // only thing in the report that can tell two binaries apart.
+        assert!(
+            rendered.contains("release 2026-08-31 (abc1234)"),
+            "no build identity:\n{rendered}"
+        );
         assert!(rendered.contains("macos aarch64"), "no platform");
         assert!(rendered.contains("configured (socks5)"), "no proxy scheme");
         assert!(rendered.contains("not asked"), "no consent state");
