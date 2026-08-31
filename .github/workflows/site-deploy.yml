@@ -71,7 +71,18 @@ jobs:
           case "$code" in
             2*) echo "Deployment queued. The download page will show this release once it builds." ;;
             401) echo "::warning::Sevalla rejected the token (401). Rotate SEVALLA_API_TOKEN." ;;
-            403) echo "::warning::Token lacks permission to deploy (403). Check the key's scope." ;;
+            403)
+              echo "::warning::Token lacks permission to deploy (403). Check the key's scope."
+              # Any valid key may read its own effective capabilities, so a 403
+              # can say what the key actually has rather than only what it
+              # lacks. Printed as a plain list: these are permission names, not
+              # the token, and knowing them is what makes the fix obvious.
+              echo "Effective capabilities of this key:"
+              curl -sS --max-time 20 -H "Authorization: Bearer $TOKEN" \
+                "https://api.sevalla.com/v3/api-keys/me" \
+                | tr ',' '\n' | grep -o '"[A-Z_]*:[A-Z_]*"' | sort -u \
+                || echo "  (could not read them)"
+              ;;
             404) echo "::warning::No static site with ID $SITE_ID (404). Check Settings -> Details." ;;
             *)   echo "::warning::Site rebuild was not triggered (HTTP $code). Deploy the site manually." ;;
           esac
