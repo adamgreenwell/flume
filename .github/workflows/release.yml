@@ -176,10 +176,16 @@ jobs:
 
           # Not echoed. Actions masks secrets in logs, so printing it would only
           # produce ***, and the shape is the whole point of the check.
+          # `https://*` alone matches a bare `https://`, because the glob's
+          # `*` matches the empty string. That has no host and fails every
+          # request exactly as an empty value does, so it is rejected here to
+          # keep this gate identical to `usage::sender::is_usable` -- a
+          # predicate that disagrees with this one ships a build that compiles
+          # inert after a green release.
           case "$ENDPOINT" in
-            https://*) ;;
+            https://?*) ;;
             *)
-              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL."
+              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL with a host."
               exit 1
               ;;
           esac
@@ -297,10 +303,16 @@ jobs:
             exit 0
           fi
 
+          # `https://*` alone matches a bare `https://`, because the glob's
+          # `*` matches the empty string. That has no host and fails every
+          # request exactly as an empty value does, so it is rejected here to
+          # keep this gate identical to `usage::sender::is_usable` -- a
+          # predicate that disagrees with this one ships a build that compiles
+          # inert after a green release.
           case "$ENDPOINT" in
-            https://*) ;;
+            https://?*) ;;
             *)
-              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL."
+              echo "::error::FLUME_USAGE_ENDPOINT must be an https:// URL with a host."
               exit 1
               ;;
           esac

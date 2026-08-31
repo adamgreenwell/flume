@@ -48,12 +48,20 @@ Without that variable the client compiles with reporting inert and sends
 nothing — which is the default for CI, for `cargo test`, and for anyone who
 builds Flume from source without deliberately opting into it.
 
-**That combination used to fail silently and no longer does.** A build with no
-endpoint but with usage reporting switched on will queue events to disk and
+**That combination used to fail silently and no longer does.** A build that
+cannot send but has usage reporting switched on will queue events to disk and
 send none of them, with nothing visibly wrong. It now logs a warning at
 startup, and again if consent is granted later, and the diagnostics report says
-`ON, BUT THIS BUILD HAS NO COLLECTOR ENDPOINT COMPILED IN`. Both paths are
-covered by `should_warn` in `src-tauri/src/usage/sender.rs`.
+`ON, BUT THIS BUILD HAS NO USABLE COLLECTOR ENDPOINT`.
+
+"Cannot send" means unset, empty, or not an `https://` URL with a host — all
+three, not just unset. `option_env!` distinguishes unset from empty, so
+`FLUME_USAGE_ENDPOINT=` compiles to `Some("")`, which once read as configured
+and POSTed to the empty string forever. `usage::sender::endpoint()` is the
+single accessor both `is_configured()` and `Sender::new()` consult, so the
+warning, the diagnostics line and whether a sender exists at all can no longer
+disagree. The gate in `release.yml` enforces the same rule, deliberately
+character-for-character.
 
 `build.rs` declares `cargo::rerun-if-env-changed=FLUME_USAGE_ENDPOINT`, so
 changing the variable forces a rebuild. Without that, setting it on an
