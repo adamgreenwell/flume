@@ -477,6 +477,7 @@ pub async fn get_diagnostics(
         torrent_count: names.len(),
         home,
         usage_endpoint_configured: crate::usage::sender::is_configured(),
+        usage_delivery: state.usage().delivery(),
         log_tail: &log_tail,
         redactor: &redactor,
     }

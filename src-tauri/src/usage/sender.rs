@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 
 use rand::Rng;
 
-use super::{Envelope, Recorder};
+use super::{Delivery, Envelope, Recorder};
 
 /// The raw compiled-in value, exactly as the build environment supplied it.
 ///
@@ -139,9 +139,6 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(3_600);
 /// that the request is not a reliable marker of when the app was opened.
 const STARTUP_DELAY: std::ops::Range<u64> = 30..90;
 
-/// Events older than this are dropped rather than retried forever.
-const MAX_EVENT_AGE: Duration = Duration::from_secs(3 * 24 * 3_600);
-
 /// Posts batches to the collector.
 pub struct Sender {
     /// Shared HTTP client. Reused so connections are pooled across flushes.
@@ -159,15 +156,28 @@ impl Sender {
         let endpoint = endpoint()?;
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            // reqwest follows up to 10 redirects by default. A captive portal
+            // answers the POST with a 302 to its own login page, which returns
+            // 200 -- so with redirects on and `is_success()` as the test, a
+            // hotel network reports every batch as delivered and the events,
+            // already removed from disk, are destroyed. Refusing to follow
+            // means the 302 is seen for what it is.
+            .redirect(reqwest::redirect::Policy::none())
             // Explicit rather than reqwest's default, which would announce the
             // dependency's version to the collector for no reason.
             .user_agent(concat!("Flume/", env!("CARGO_PKG_VERSION")))
             .build()
+            .inspect_err(|err| {
+                // Previously `.ok()?`, which meant a configured build with
+                // consent granted could fail to construct a client and say
+                // nothing at all, anywhere.
+                log::warn!("usage reporting could not build an HTTP client: {err}");
+            })
             .ok()?;
         Some(Self { client, endpoint })
     }
 
-    /// Sends whatever is queued, restoring it if the send fails.
+    /// Sends whatever is queued, restoring it if the send does not land.
     ///
     /// Does nothing when consent is absent or the queue is empty.
     pub async fn flush(&self, recorder: &Recorder) {
@@ -175,46 +185,122 @@ impl Sender {
             return;
         };
 
-        match self.post(self.endpoint, &envelope).await {
-            Ok(()) => log::debug!("sent {} usage events", envelope.events.len()),
-            Err(err) => {
-                log::debug!("could not send usage events: {err}");
-                recorder.restore(&prune_expired(envelope));
+        // `take_batch` has already deleted the queue file, so from here until
+        // the send resolves the only copy of these events is this local. The
+        // quit path awaits this future under a 3-second timeout while the
+        // request's own is 10, so it can be dropped mid-await -- and a plain
+        // `match` would then run neither arm, restore nothing, and destroy the
+        // batch. The guard restores on drop however this scope is left.
+        let mut pending = Restore::armed(recorder, &envelope);
+
+        // Read before the send, so the warning below can tell entering a
+        // refusal from sitting in one.
+        let previous = recorder.delivery();
+        let outcome = self.post(&envelope).await;
+        recorder.set_delivery(outcome);
+
+        match outcome {
+            Delivery::Accepted => {
+                pending.disarm();
+                log::debug!("sent {} usage events", envelope.events.len());
             }
+            // Answered, and the answer will not change on its own. Keeping the
+            // batch would retry an identical body every hour until it ages
+            // out; it is dropped, and said out loud once below.
+            refusal if refusal.is_settled_refusal() => {
+                pending.disarm();
+                log::debug!("usage batch refused: {refusal:?}");
+            }
+            // Everything else is worth another try: no answer at all (offline,
+            // and not distinguishable from anything else), or a 5xx, which the
+            // collector returns specifically to mean "try again later".
+            other => log::debug!("usage batch not delivered: {other:?}"),
         }
+
+        warn_on_settled_refusal(previous, outcome);
     }
 
-    /// POSTs one envelope, treating any non-2xx as a failure.
-    async fn post(&self, endpoint: &str, envelope: &Envelope) -> Result<(), String> {
-        let response = self
-            .client
-            .post(endpoint)
-            .json(envelope)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            // A 4xx means the collector rejected the shape, and retrying an
-            // identical body forever would not help. It is still dropped by
-            // age rather than immediately, so a deploy that briefly 400s does
-            // not lose a backlog.
-            Err(format!("collector returned {}", response.status()))
+    /// POSTs one envelope and classifies what came back.
+    async fn post(&self, envelope: &Envelope) -> Delivery {
+        match self.client.post(self.endpoint).json(envelope).send().await {
+            // 204 exactly, not `is_success()`. The collector's only success
+            // response is `new Response(null, { status: 204 })`, so any other
+            // 2xx came from something that is not the collector -- a portal, a
+            // proxy, a parked domain -- and treating it as delivery throws the
+            // batch away.
+            Ok(response) if response.status().as_u16() == 204 => Delivery::Accepted,
+            Ok(response) => Delivery::Refused(response.status().as_u16()),
+            Err(_) => Delivery::NoResponse,
         }
     }
 }
 
-/// Drops events too old to be worth retrying.
-fn prune_expired(mut envelope: Envelope) -> Envelope {
-    let cutoff = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-        .saturating_sub(MAX_EVENT_AGE.as_secs());
+/// Restores a taken batch unless the send is known to have landed.
+///
+/// Exists because `flush` can be cancelled: the quit-time flush is awaited
+/// under a shorter timeout than the request it makes.
+struct Restore<'a> {
+    /// Where to put the events back.
+    recorder: &'a Recorder,
+    /// The batch in flight, or `None` once the outcome made restoring wrong.
+    envelope: Option<&'a Envelope>,
+}
 
-    envelope.events.retain(|event| event.at >= cutoff);
-    envelope
+impl<'a> Restore<'a> {
+    /// Arms the guard for a batch that is about to be sent.
+    fn armed(recorder: &'a Recorder, envelope: &'a Envelope) -> Self {
+        Self {
+            recorder,
+            envelope: Some(envelope),
+        }
+    }
+
+    /// Stops the guard restoring, for a batch that must not be retried.
+    fn disarm(&mut self) {
+        self.envelope = None;
+    }
+}
+
+impl Drop for Restore<'_> {
+    fn drop(&mut self) {
+        if let Some(envelope) = self.envelope.take() {
+            self.recorder.restore(envelope);
+        }
+    }
+}
+
+/// Whether this outcome is worth saying out loud, given the one before it.
+///
+/// Split from the logging so the decision is testable without capturing a
+/// global logger, the same way [`should_warn`] is.
+#[must_use]
+const fn should_announce(previous: Delivery, outcome: Delivery) -> bool {
+    outcome.is_settled_refusal()
+        && !matches!((previous, outcome),
+        (Delivery::Refused(a), Delivery::Refused(b)) if a == b)
+}
+
+/// Says once, out loud, that the collector is refusing in a way that will not
+/// resolve itself.
+///
+/// Only for an answered refusal: a closed laptop, a plane, a captive portal
+/// and a blocking firewall cannot produce one, so this cannot fire for being
+/// offline. Fired only on entering the state, because `spawn` flushes twice in
+/// quick succession at launch -- `tokio`'s interval yields its first tick
+/// immediately -- and a warning repeated on every tick is one people learn to
+/// scroll past.
+fn warn_on_settled_refusal(previous: Delivery, outcome: Delivery) {
+    if !should_announce(previous, outcome) {
+        return;
+    }
+    if let Delivery::Refused(status) = outcome {
+        log::warn!(
+            "the usage collector refused a batch with {status} and will refuse the next \
+             one identically. Nothing is being recorded about you that is not already \
+             queued, but reporting is not reaching the collector. This is a defect in \
+             Flume's build or its collector, not something you did."
+        );
+    }
 }
 
 /// Runs the flush loop until the process exits.
@@ -257,39 +343,93 @@ pub fn spawn(recorder: Arc<Recorder>) {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::usage::{Event, EventKind};
+    use crate::usage::{EventKind, Recorder};
 
-    fn envelope(events: Vec<Event>) -> Envelope {
-        Envelope {
-            schema: crate::usage::SCHEMA_VERSION,
-            install_id: "test".to_owned(),
-            app_version: "1.0.0".to_owned(),
-            os: "macos".to_owned(),
-            arch: "aarch64".to_owned(),
-            events,
-        }
+    #[test]
+    fn a_send_that_never_resolves_puts_the_batch_back() {
+        // The data-loss bug this guard exists for. `take_batch` deletes the
+        // queue file, and the quit path awaits `flush` under a 3-second
+        // timeout while the request's own is 10 -- so the future can be
+        // dropped mid-await. A plain `match` runs neither arm, restores
+        // nothing, and the batch is gone.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = Recorder::new(tmp.path().to_path_buf(), Some(true), "1.0.0".to_owned());
+        recorder.record(EventKind::Launched);
+
+        let envelope = recorder.take_batch().expect("a batch");
+        assert!(recorder.take_batch().is_none(), "the queue should be empty");
+
+        // Dropped without `disarm`, which is what cancellation looks like.
+        drop(Restore::armed(&recorder, &envelope));
+
+        let recovered = recorder
+            .take_batch()
+            .expect("the batch should have come back");
+        assert_eq!(recovered.events.len(), 1);
+        assert_eq!(recovered.events[0].kind, EventKind::Launched);
     }
 
     #[test]
-    fn expired_events_are_not_retried_forever() {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_secs();
+    fn a_landed_send_does_not_put_the_batch_back() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = Recorder::new(tmp.path().to_path_buf(), Some(true), "1.0.0".to_owned());
+        recorder.record(EventKind::Launched);
+        let envelope = recorder.take_batch().expect("a batch");
 
-        let fresh = Event {
-            at: now,
-            kind: EventKind::Launched,
-        };
-        let stale = Event {
-            at: now - (4 * 24 * 3_600),
-            kind: EventKind::TorrentCompleted,
-        };
+        let mut guard = Restore::armed(&recorder, &envelope);
+        guard.disarm();
+        drop(guard);
 
-        let pruned = prune_expired(envelope(vec![stale, fresh]));
+        assert!(
+            recorder.take_batch().is_none(),
+            "a delivered batch must not be queued again"
+        );
+    }
 
-        assert_eq!(pruned.events.len(), 1);
-        assert_eq!(pruned.events[0].kind, EventKind::Launched);
+    #[test]
+    fn only_an_answered_refusal_that_will_not_heal_is_loud() {
+        // The whole point. A closed laptop, a plane, a captive portal and a
+        // blocking firewall all produce NoResponse, which must never be loud;
+        // a status code means a server answered, which none of them can do.
+        assert!(!Delivery::Untried.is_settled_refusal());
+        assert!(!Delivery::Accepted.is_settled_refusal());
+        assert!(!Delivery::NoResponse.is_settled_refusal());
+
+        assert!(Delivery::Refused(404).is_settled_refusal());
+        assert!(Delivery::Refused(413).is_settled_refusal());
+
+        // 400 is excluded on purpose: the collector returns it for a clock two
+        // hours fast and for events past its age window, both of which are
+        // ordinary user situations rather than defects.
+        assert!(!Delivery::Refused(400).is_settled_refusal());
+        // 5xx is what the collector returns to mean "try again later".
+        assert!(!Delivery::Refused(503).is_settled_refusal());
+    }
+
+    #[test]
+    fn a_settled_refusal_is_announced_once_rather_than_every_tick() {
+        // `spawn` flushes twice in quick succession at launch, because tokio's
+        // interval yields its first tick immediately. A warning on every tick
+        // is one people learn to scroll past.
+        assert!(should_announce(Delivery::Accepted, Delivery::Refused(404)));
+        assert!(should_announce(
+            Delivery::NoResponse,
+            Delivery::Refused(413)
+        ));
+        assert!(!should_announce(
+            Delivery::Refused(404),
+            Delivery::Refused(404)
+        ));
+
+        // A different refusal is a different fact and is worth saying.
+        assert!(should_announce(
+            Delivery::Refused(404),
+            Delivery::Refused(413)
+        ));
+
+        // Recovery is silent; nothing is wrong any more.
+        assert!(!should_announce(Delivery::Refused(404), Delivery::Accepted));
+        assert!(!should_announce(Delivery::Accepted, Delivery::NoResponse));
     }
 
     #[test]
