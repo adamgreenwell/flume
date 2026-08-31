@@ -517,6 +517,14 @@ export interface Settings {
    * reason: a preference the user re-sets on every launch is not a preference.
    */
   density: Density;
+  /**
+   * Whether anonymous usage counts may be sent.
+   *
+   * Three states, not two. `null` means *not yet asked*, which is what the
+   * first-run consent step keys off; a decline is `false` and must not be
+   * re-asked. Only `true` sends anything.
+   */
+  usageReporting: boolean | null;
 }
 
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */

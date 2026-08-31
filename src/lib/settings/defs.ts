@@ -18,7 +18,7 @@ import type { Settings } from "@/lib/ipc/types";
  */
 
 /** Which group a setting belongs to. */
-export type SectionId = "speed" | "files" | "network" | "ui";
+export type SectionId = "speed" | "files" | "network" | "ui" | "privacy";
 
 /** One group in the settings nav. */
 export interface SectionDef {
@@ -53,6 +53,12 @@ export const SECTIONS: readonly SectionDef[] = [
     name: "Appearance",
     description: "How the app itself looks.",
     icon: "settings",
+  },
+  {
+    id: "privacy",
+    name: "Privacy",
+    description: "What leaves this machine, and what does not.",
+    icon: "shield",
   },
 ];
 
@@ -240,6 +246,30 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
       theme === "system"
         ? "Follows the operating system, and changes with it while Flume is open."
         : `Always ${theme}, whatever the system is set to.`,
+  },
+  {
+    id: "usageReporting",
+    section: "privacy",
+    label: "Send anonymous usage counts",
+    key: "privacy.usage",
+    control: { kind: "toggle" },
+    keywords: [
+      "telemetry",
+      "analytics",
+      "tracking",
+      "data collection",
+      "opt in",
+      "diagnostics",
+    ],
+    // Spells out the whole payload rather than gesturing at it. Anyone who
+    // opens this row is asking exactly one question — what gets sent — and a
+    // vague answer is the reason nobody trusts a toggle like this.
+    consequence: (on) =>
+      on === true
+        ? "Sending: a random ID for this install, Flume's version, your OS and CPU type, and counts of things like launches, torrents added and errors — bucketed, and timed to the hour. Never torrent names, file names, info hashes, tracker addresses, IP addresses or folder paths. Turning this off deletes the ID and anything not yet sent."
+        : "Nothing is sent. Flume makes no network requests except to trackers, peers and the DHT.",
+    // Not `restartsSession`: consent applies immediately, and a torrent client
+    // that made you restart to stop being counted would deserve the reaction.
   },
   {
     id: "density",

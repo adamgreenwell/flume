@@ -91,6 +91,16 @@ pub struct Settings {
 
     /// Row height in the library. Frontend-only, persisted for the same reason.
     pub density: Density,
+
+    /// Whether anonymous usage counts may be sent.
+    ///
+    /// Three states, not two. `None` means *not yet asked*, which is what the
+    /// first-run consent step keys off; a decline is `Some(false)` and must
+    /// not be re-asked. Collapsing these into a `bool` would either nag a user
+    /// who already said no, or silently treat "never asked" as consent.
+    ///
+    /// Only `Some(true)` sends anything. See [`crate::usage`].
+    pub usage_reporting: Option<bool>,
 }
 
 impl Default for Settings {
@@ -107,6 +117,9 @@ impl Default for Settings {
             proxy_url: None,
             theme: Theme::System,
             density: Density::Comfortable,
+            // Not asked yet. Never defaults to `Some(true)`: consent that the
+            // user did not give is not consent.
+            usage_reporting: None,
         }
     }
 }

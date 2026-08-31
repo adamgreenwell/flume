@@ -1,0 +1,57 @@
+{
+  "$comment": "Generated shape of the usage wire format. Verified against the Rust enums by src-tauri/tests/usage_contract.rs, and read by the Worker at src/index.ts. Change the Rust enum and this file together; the test fails until you do.",
+  "schema": 1,
+  "envelope": {
+    "required": ["schema", "installId", "appVersion", "os", "arch", "events"],
+    "os": ["macos", "windows", "linux"],
+    "arch": ["x86_64", "aarch64", "arm", "x86"]
+  },
+  "events": {
+    "launched": {},
+    "sessionEnded": {
+      "durationBucket": ["<5m", "5-30m", "30m-2h", "2-8h", "8h+"]
+    },
+    "libraryCount": {
+      "bucket": ["0", "1-5", "6-20", "21-100", "100+"]
+    },
+    "torrentPreviewed": {
+      "source": ["magnet", "file"]
+    },
+    "torrentAdded": {},
+    "torrentCompleted": {},
+    "torrentRemoved": {
+      "deletedData": [true, false]
+    },
+    "libraryImported": {
+      "added": ["0", "1-5", "6-20", "21-100", "100+"]
+    },
+    "settingChanged": {
+      "key": [
+        "speed.download",
+        "speed.upload",
+        "files.downloadDir",
+        "net.dht",
+        "net.listenPort",
+        "net.upnp",
+        "net.proxy",
+        "ui.theme",
+        "ui.density",
+        "privacy.usage"
+      ]
+    },
+    "operationFailed": {
+      "kind": [
+        "invalidMagnet",
+        "metadata",
+        "metadataTimeout",
+        "noPendingPreview",
+        "unknownTorrent",
+        "engineFailed",
+        "operationFailed",
+        "settingsSaveFailed",
+        "settingsInvalid",
+        "engineNotReady"
+      ]
+    }
+  }
+}

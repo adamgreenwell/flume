@@ -1,5 +1,8 @@
 # --- Dependencies -----------------------------------------------------------
 /node_modules
+# The collector is its own npm package with its own toolchain.
+collector/node_modules
+collector/.wrangler
 /.pnp
 .pnp.*
 .yarn/*

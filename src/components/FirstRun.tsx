@@ -138,6 +138,21 @@ export function FirstRun({ onDone }: FirstRunProps) {
     }
   }, []);
 
+  /**
+   * Leaves the first-run screen, recording an untouched consent toggle as a
+   * decline.
+   *
+   * A toggle the user saw and left off *is* an answer. Persisting it as one
+   * means `usageReporting` is never `null` after first run, so nothing can
+   * later mistake "not asked" for "ask again" and prompt a second time.
+   */
+  const finish = useCallback(async () => {
+    if (settings && settings.usageReporting === null) {
+      await patch({ usageReporting: false });
+    }
+    onDone();
+  }, [settings, patch, onDone]);
+
   const total = (clients ?? []).reduce((sum, c) => sum + c.torrentCount, 0);
 
   return (
@@ -308,6 +323,46 @@ export function FirstRun({ onDone }: FirstRunProps) {
           </Question>
         </div>
 
+        {/*
+          Deliberately not a fourth numbered question. The three above are
+          preferences; this is consent, and dressing it up as a preference is
+          how a torrent client ends up with a reputation. It sits apart, reads
+          as optional because it is, and starts off.
+        */}
+        <div className="border-line bg-bg-1 mt-6 flex items-start gap-4 rounded-lg border px-5 py-4">
+          <span className="text-fg-2 mt-0.5 shrink-0">
+            <Icon name="shield" size={20} />
+          </span>
+          <div className="grow">
+            <div className="text-[13.5px] font-semibold">
+              Send anonymous usage counts?
+            </div>
+            <p className="text-fg-1 mt-1 text-[12.5px] leading-[1.5]">
+              Off unless you turn it on. If you do, Flume sends a random ID for
+              this install, its version, your OS and CPU type, and counts of
+              things like launches and errors — bucketed, and timed to the hour.
+            </p>
+            <p className="text-fg-2 mt-1.5 text-[11.5px] leading-[1.5]">
+              Never torrent names, file names, info hashes, tracker addresses,
+              IP addresses or folder paths. You can change this later in
+              Settings, and turning it off deletes the ID and anything not yet
+              sent.
+            </p>
+          </div>
+          <div className="shrink-0 pt-0.5">
+            {settings ? (
+              <SettingControl
+                control={{ kind: "toggle" }}
+                value={settings.usageReporting === true}
+                label="Send anonymous usage counts"
+                onChange={(next) =>
+                  void patch({ usageReporting: next === true })
+                }
+              />
+            ) : null}
+          </div>
+        </div>
+
         {error ? (
           <p
             className="border-err/30 bg-err/10 text-err mt-4 rounded-md border px-3 py-2 text-[12.5px]"
@@ -328,7 +383,7 @@ export function FirstRun({ onDone }: FirstRunProps) {
             variant="primary"
             size="dialog"
             disabled={settings === null}
-            onClick={onDone}
+            onClick={() => void finish()}
           >
             Start using Flume
           </Button>

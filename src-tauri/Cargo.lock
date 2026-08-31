@@ -1444,6 +1444,9 @@ dependencies = [
  "fs4",
  "librqbit",
  "log",
+ "rand 0.9.5",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tauri",
@@ -1460,6 +1463,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

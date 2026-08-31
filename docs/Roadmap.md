@@ -73,6 +73,29 @@ With 15 torrents on macOS:
 The payload figure is the one to watch: it should scale with torrent _count_,
 never with piece count or file size.
 
+## Diagnostics and usage reporting
+
+Added on top of Phase 3, and not something an earlier phase asked for.
+
+- **Diagnostics report** — Settings → Privacy builds a redacted bundle the user
+  copies into an issue. Nothing is sent. This is the piece that closes the
+  "Windows and Linux unverified locally" gap below: it turns "it doesn't work"
+  into a paste naming the bound port, the DHT node count and the log tail.
+- **Usage counts** — opt-in, asked once at first run, off unless granted. Sent
+  from Rust; the webview's CSP forbids it reaching the network at all.
+- **Collector** — a Cloudflare Worker and D1 database in `collector/`, which
+  validates every batch against the wire format and rejects anything it does
+  not recognise rather than storing it.
+
+Deliberately **not** included: crash reporting. A Rust panic hook is easy, but
+it catches only Rust panics — not a segfault in a dependency, an OOM kill, or a
+webview crash, and the webview is a separate process running a different engine
+on each platform. Real native capture means minidumps, a crash-handler child
+process, symbol upload for three targets per release, and a macOS
+hardened-runtime interaction. That is its own project.
+
+See [[Privacy]].
+
 ## Known limitations
 
 - **Windows and Linux unverified locally.** Developed on macOS 27. CI builds

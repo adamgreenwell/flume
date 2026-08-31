@@ -209,3 +209,16 @@ export async function importClient(
 ): Promise<ImportOutcome> {
   return invoke<ImportOutcome>("import_client", { torrentsDir, outputFolder });
 }
+
+/**
+ * Builds a redacted diagnostics bundle to paste into a bug report.
+ *
+ * Nothing is sent anywhere — this returns the text so the UI can show it
+ * before offering to copy it. Paths, addresses, URLs, info hashes and the
+ * names of torrents currently in the library are removed first.
+ *
+ * @returns The bundle as markdown.
+ */
+export async function getDiagnostics(): Promise<string> {
+  return invoke<string>("get_diagnostics");
+}

@@ -35,6 +35,7 @@ Torrent management arrives in Phase 1. See [[Roadmap]].
 | [[User-Guide]]           | Adding torrents, file selection, settings            |
 | [[Architecture]]         | System design, IPC contract, data flow               |
 | [[Design-System]]        | Tokens, type, controls, accessibility floors         |
+| [[Privacy]]              | What is collected, what never is, and how to say no  |
 | [[Torrent-Engine-Notes]] | librqbit v9 integration surface and upgrade guidance |
 | [[Platform-Notes]]       | Per-OS packaging, signing, WebView quirks            |
 | [[Development-Setup]]    | Toolchain, dev loop, debugging, testing              |

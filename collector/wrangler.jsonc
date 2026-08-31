@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flume-usage",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      // `src/index.ts` reads `env.DB`; the binding name has to match it.
+      // `wrangler d1 create` appends a second binding named after the
+      // database — delete that rather than keeping both, or the Worker
+      // binds to the one still holding a placeholder.
+      "binding": "DB",
+      "database_name": "flume-usage",
+      // Not a secret: reaching the database still needs account
+      // credentials, and wrangler configs conventionally carry it so a
+      // fresh checkout can deploy without setup.
+      "database_id": "f4262051-cc13-4ae1-bee6-5faa2fb02e52",
+      // Deliberately no `"remote": true` — that makes `wrangler dev` write
+      // to the production database, so local testing would put real rows
+      // in it.
+    },
+  ],
+}

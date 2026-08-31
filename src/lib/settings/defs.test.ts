@@ -14,6 +14,7 @@ const SETTINGS: Settings = {
   proxyUrl: null,
   theme: "system",
   density: "comfortable",
+  usageReporting: null,
 };
 
 describe("the definition table", () => {

@@ -19,7 +19,8 @@ export type IconName =
   | "clock"
   | "check-circle"
   | "alert-circle"
-  | "alert-triangle";
+  | "alert-triangle"
+  | "shield";
 
 /**
  * Inline SVG paths on the design's 16×16 grid.
@@ -65,6 +66,10 @@ const PATHS: Record<IconName, string> = {
     "M8 2.2a5.8 5.8 0 1 0 0 11.6 5.8 5.8 0 0 0 0-11.6zM5.4 8.2l1.9 1.9 3.5-4",
   "alert-circle": "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM8 4.8v3.6M8 11v.1",
   "alert-triangle": "M8 2.2 14.8 13.8H1.2zM8 6.4v3.2M8 11.8v.1",
+  // [undesigned] Plain geometry rather than a crest: straight shoulders down
+  // to a single curve at the point, so it holds its shape at 14px where a
+  // heraldic outline collapses. Matches the circle glyphs' 2.2–13.8 extent.
+  shield: "M8 2.2 13 4v4.6c0 2.6-2 4.4-5 5.2-3-.8-5-2.6-5-5.2V4z",
 };
 
 /**
