@@ -6,8 +6,17 @@
 the add sheet detects a magnet on the clipboard and offers it. Verified on
 macOS, Windows and Linux.
 
-Magnet links resolve their metadata over the DHT, so the status indicator must
-read **Ready** first. A magnet added while **Connecting** will sit waiting.
+A magnet carries an info hash, not a file list — that has to come from a peer
+who already has the torrent, over the DHT. So the status indicator must read
+**Ready** first; a magnet added while **Connecting** will sit waiting.
+
+The add sheet counts the seconds while it waits, and gives up after a minute
+rather than waiting forever. A well-seeded torrent answers in a few seconds. If
+it times out, that usually means the torrent has no active seeders — not that
+the link is wrong.
+
+A `.torrent` file needs none of this, because the file list is already inside
+it.
 
 **`.torrent` files.** Use the file picker, or drag the file anywhere onto the
 window — Flume highlights the drop target and opens the add dialog with it.
@@ -128,6 +137,14 @@ count — zero peers on a well-seeded torrent usually means a blocked port.
 **Torrent stuck at 99%.** Usually a single rare piece. librqbit will keep
 trying; leave it running.
 
-**Downloads restart after a crash.** Fast-resume state flushes on clean
-shutdown. If the app is killed hard, some re-hashing on next launch is
-expected — it verifies rather than re-downloads.
+**Add dialog stuck fetching a file list.** Only magnets do this, and only
+while looking for a peer who has the torrent. It gives up after a minute. A
+torrent with no active seeders will never answer, however long you wait.
+
+**Progress after a crash.** Very little is lost. Flume writes its record of
+which pieces it has as the download runs, not only at exit, so even killing the
+process leaves that record at most a few megabytes behind. Restarting picks up
+from there and re-fetches only that much — it does not re-check the whole file.
+
+You may briefly see **Checking** on launch. That is Flume verifying data
+already on disk, which is fast and does not re-download anything.
