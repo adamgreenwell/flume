@@ -174,7 +174,11 @@ export default function Home() {
       });
   }, []);
 
-  const status = telemetry?.core ?? null;
+  // Cleared while held, for the same reason the torrent list is: there is no
+  // session, so the DHT count, the listening port and the uptime are the last
+  // reading taken before it stopped rather than facts about now. The rail
+  // renders a null status as "not listening", which is exactly true.
+  const status = held ? null : (telemetry?.core ?? null);
   const guardNote = useMemo(() => describeGuard(guardStatus), [guardStatus]);
 
   // Cleared while held rather than left frozen. Stopping the engine stops
@@ -460,6 +464,7 @@ export default function Home() {
           torrents={torrents}
           history={history}
           limitBps={downloadLimitBps}
+          held={held}
         />
       </div>
 
