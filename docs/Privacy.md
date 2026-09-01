@@ -145,6 +145,49 @@ The interface itself cannot make network requests. Its Content Security Policy
 allows it to talk to the Rust backend and nothing else, so every connection
 above originates in Rust where it can be audited in one place.
 
+## The tunnel check — what it can and cannot tell you
+
+**Settings → Network → Only transfer while traffic leaves through a tunnel.**
+
+Off unless you turn it on. When it is on, Flume works out which network
+interface your traffic would actually leave by, and can hold all transfer while
+that is not a tunnel.
+
+**It sends nothing to do this.** The check is two lookups against your own
+routing table plus, when something changes, a walk of your interface list.
+There is no "what is my IP" request to a web service — that would mean handing
+your address to a third party in order to tell you your address is protected.
+
+**What holding actually does.** Flume does not pause your torrents; it does not
+start the torrent engine at all. So while transfer is held there is no session:
+no peer connections, no tracker announces, no DHT, no listening port. Your
+torrents are not modified, which is why the ones you paused yourself stay paused
+and the ones that were running come back running when a tunnel returns.
+
+A drop takes effect immediately. Recovery waits about ten seconds of a steady
+tunnel before resuming, so a VPN reconnecting or a laptop waking does not make
+your library flap between states, re-announcing to every tracker each time.
+
+**What it cannot tell you.** Flume can see which interface traffic leaves by and
+whether that interface looks like a tunnel. It cannot see where the tunnel goes,
+who runs it, or whether it is doing what you think:
+
+- A **PPPoE connection or a USB cellular modem** looks exactly like a VPN
+  tunnel from here — the same kind of point-to-point link with no hardware
+  address. If your machine dials the connection itself rather than going through
+  a router, the check may say "tunnel" about your ordinary internet connection.
+- On **Windows with OpenVPN**, the adapter is named `Local Area Connection` and
+  is indistinguishable from an Ethernet card through anything Flume can read. It
+  will not be recognised as a tunnel, and transfer will be held even though you
+  are protected. Pinning that interface in settings is the way through.
+- **Pinning an interface** means Flume accepts it because you said so, not
+  because it agrees. The interface says so where it appears, and it never claims
+  that traffic is tunnelled on the strength of your pin.
+
+This is a check on your own machine, not a guarantee about the internet. It is
+the difference between "traffic leaves through utun6, which is a tunnel
+interface" and "you are anonymous", and Flume only ever claims the first.
+
 ## Changes to this page
 
 The wire format is versioned (`schema: 1`). A change to what is collected
