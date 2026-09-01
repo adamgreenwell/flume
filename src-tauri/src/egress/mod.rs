@@ -95,6 +95,21 @@
 //! `Local Area Connection` would trade it for calling a WAN Miniport a
 //! tunnel, which is the failure that actually costs someone something.
 //!
+//! How far that reaches is worth stating, because it bounds the exposure. On
+//! the Windows 11 **ARM** machine this was measured on, WireGuard is the only
+//! one of TorGuard's three tunnel types that connects at all — OpenVPN and
+//! OpenConnect both fail. The probable reason is that Windows on ARM does not
+//! emulate kernel-mode drivers, so an x64 `.sys` cannot load, and WireGuard's
+//! Wintun ships ARM64 while the TAP-family drivers effectively do not. That
+//! cause is inferred and not verified; the observation is not.
+//!
+//! So the gap is one protocol on x64 Windows, where WireGuard — the mode that
+//! *is* recognised — is also the default TorGuard offers. It is not nothing,
+//! and it is not enough to justify taking a new dependency for
+//! `IP_ADAPTER_ADDRESSES.IfType` against this project's preference for crates
+//! already in the tree. Revisit if someone reports it, or if a second VPN
+//! client turns out to present the same way.
+//!
 //! # Measured behaviour worth keeping
 //!
 //! **macOS renumbers on every connect.** The development machine went from
