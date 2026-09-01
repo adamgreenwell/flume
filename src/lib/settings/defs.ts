@@ -72,7 +72,16 @@ export type Control =
   | {
       kind: "segment";
       options: ReadonlyArray<{ value: string; label: string }>;
-    };
+    }
+  /**
+   * A picker over the machine's real network interfaces.
+   *
+   * The options are not in the definition because they are not knowable at
+   * build time — they are the interfaces this machine has right now, which on
+   * macOS changes every time a VPN reconnects. {@link SettingsDialog} loads
+   * them and hands them down.
+   */
+  | { kind: "interface" };
 
 /** One setting, bound to the field it edits. */
 export interface SettingDef<K extends keyof Settings = keyof Settings> {
@@ -268,10 +277,7 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     section: "network",
     label: "Accept only this interface",
     key: "net.egressInterface",
-    control: {
-      kind: "text",
-      placeholder: "any tunnel",
-    },
+    control: { kind: "interface" },
     keywords: ["interface", "utun", "wg0", "adapter", "pin", "device"],
     consequence: (name) =>
       name === null || name === ""

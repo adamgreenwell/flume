@@ -12,6 +12,7 @@ import type {
   CoreStatus,
   DetectedClient,
   GuardStatus,
+  Hop,
   ImportOutcome,
   Settings,
   TorrentDetail,
@@ -227,6 +228,19 @@ export async function importClient(
  */
 export async function checkEgress(): Promise<GuardStatus> {
   return invoke<GuardStatus>("check_egress");
+}
+
+/**
+ * Lists the machine's network interfaces, classified, for the pin picker.
+ *
+ * Ordered tunnels first; loopback is excluded, since pinning it would hold
+ * transfer permanently. Costs a full interface enumeration, so it is called
+ * when the settings dialog opens rather than on a timer.
+ *
+ * @returns Every interface with what Flume makes of it.
+ */
+export async function listEgressInterfaces(): Promise<Hop[]> {
+  return invoke<Hop[]>("list_egress_interfaces");
 }
 
 /**

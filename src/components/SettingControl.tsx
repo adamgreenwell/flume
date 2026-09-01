@@ -1,5 +1,6 @@
 "use client";
 
+import type { Hop } from "@/lib/ipc/types";
 import type { Control } from "@/lib/settings/defs";
 import { formatSpeed } from "@/lib/format";
 
@@ -69,6 +70,17 @@ export interface SettingControlProps {
   onChange: (next: unknown) => void;
   /** Opens a folder picker, for `path` controls. */
   onBrowse?: () => void;
+  /** The machine's interfaces, for `interface` controls. */
+  interfaces?: readonly Hop[];
+  /**
+   * The interface currently carrying traffic, for `interface` controls.
+   *
+   * Marked in the list, and it is the whole reason the list is usable. This
+   * machine reports twelve `utun` interfaces, all correctly classified as
+   * tunnels and eleven of them carrying nothing; without saying which is live,
+   * a picker is no more use than the text field it replaced.
+   */
+  activeInterface?: string | null;
 }
 
 /**
@@ -87,6 +99,8 @@ export function SettingControl({
   label,
   onChange,
   onBrowse,
+  interfaces,
+  activeInterface,
 }: SettingControlProps) {
   switch (control.kind) {
     case "toggle":
@@ -226,5 +240,44 @@ export function SettingControl({
           className="border-line bg-bg-2 text-fg-0 placeholder:text-fg-3 selectable h-[var(--flume-h-control)] w-[280px] rounded-md border px-2.5 font-mono text-[12.5px]"
         />
       );
+
+    case "interface": {
+      const options = interfaces ?? [];
+      const current = (value as string | null) ?? "";
+      // A pin can name an interface that is not present right now -- the whole
+      // point of being able to configure the guard before connecting -- so it
+      // is offered explicitly rather than silently reverting to "any".
+      const missing =
+        current !== "" &&
+        !options.some(
+          (hop) => hop.interface.toLowerCase() === current.toLowerCase(),
+        );
+
+      return (
+        <select
+          value={current}
+          aria-label={label}
+          onChange={(event) =>
+            onChange(event.target.value === "" ? null : event.target.value)
+          }
+          className="border-line bg-bg-2 text-fg-0 selectable h-[var(--flume-h-control)] w-[280px] rounded-md border px-2.5 text-[12.5px]"
+        >
+          <option value="">Any tunnel interface</option>
+          {missing && (
+            <option value={current}>{current} — not present right now</option>
+          )}
+          {options.map((hop) => (
+            <option key={hop.interface} value={hop.interface}>
+              {hop.interface}
+              {hop.interface === activeInterface
+                ? " — carrying traffic now"
+                : hop.kind === "tunnel"
+                  ? " — tunnel"
+                  : ""}
+            </option>
+          ))}
+        </select>
+      );
+    }
   }
 }
