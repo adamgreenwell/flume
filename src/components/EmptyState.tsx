@@ -1,8 +1,9 @@
 "use client";
 
-import type { CoreStatus } from "@/lib/ipc/types";
+import type { CoreStatus, Note } from "@/lib/ipc/types";
 
 import { Button } from "./Button";
+import { Chip } from "./Chip";
 
 /** Props for {@link EmptyState}. */
 export interface EmptyStateProps {
@@ -19,6 +20,18 @@ export interface EmptyStateProps {
    * they have none reads as data loss.
    */
   filtered?: boolean;
+  /**
+   * Why the guard is holding transfer, if it is.
+   *
+   * Takes priority over every other branch. Without it, launching while held
+   * shows the first-run onboarding screen — "No torrents yet", "Add your first
+   * torrent" — to someone with a full library, which reads as data loss. It is
+   * also the one branch whose primary action cannot be "add a torrent", since
+   * adding is exactly what a stopped engine cannot do.
+   */
+  guardNote?: Note | null;
+  /** Opens settings, the only action that can lift a hold from inside Flume. */
+  onOpenSettings?: () => void;
 }
 
 /**
@@ -39,8 +52,26 @@ export function EmptyState({
   status,
   onAdd,
   filtered = false,
+  guardNote = null,
+  onOpenSettings,
 }: EmptyStateProps) {
   const dhtReady = status?.health === "ready";
+
+  if (guardNote) {
+    return (
+      <div className="flex max-w-md flex-col items-center gap-3 px-6 py-16 text-center">
+        <h2 className="text-fg-0 text-sm font-medium">{guardNote.title}</h2>
+        <p className="text-fg-2 text-xs leading-relaxed">{guardNote.body}</p>
+        <p className="text-fg-2 text-xs leading-relaxed">
+          Your library is on disk exactly as you left it, and every torrent
+          comes back in the state it was in.
+        </p>
+        {onOpenSettings ? (
+          <Chip onClick={onOpenSettings}>Open network settings</Chip>
+        ) : null}
+      </div>
+    );
+  }
 
   if (filtered) {
     return (

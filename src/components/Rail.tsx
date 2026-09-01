@@ -7,7 +7,8 @@ import {
   type Shortcut,
 } from "@/hooks/useKeyboardShortcuts";
 
-import type { CoreStatus, EngineHealth } from "@/lib/ipc/types";
+import { guardRailLabel } from "@/lib/egress";
+import type { CoreStatus, EngineHealth, GuardStatus } from "@/lib/ipc/types";
 import { VIEWS, type ViewId } from "@/lib/views";
 
 import { Icon } from "./Icon";
@@ -83,6 +84,14 @@ export interface RailProps {
   status: CoreStatus | null;
   /** Whether the first telemetry tick is still outstanding. */
   loading: boolean;
+  /**
+   * The egress guard's latest status, or `null` before one arrives.
+   *
+   * Rendered as a third line in the network footer, which is already the "what
+   * is the network doing" block and already pairs a dot with words — so the
+   * state stays legible without relying on colour, as the design rules require.
+   */
+  guard?: GuardStatus | null;
   /** Suspends the `/` shortcut, e.g. while a dialog is open. */
   searchDisabled?: boolean;
 }
@@ -105,9 +114,17 @@ export function Rail({
   onQueryChange,
   status,
   loading,
+  guard = null,
   searchDisabled = false,
 }: RailProps) {
   const search = useRef<HTMLInputElement>(null);
+
+  const guardLabel = guardRailLabel(guard);
+  // "Accepted" rather than "on": a pinned interface the classifier could not
+  // vouch for still counts, because the user said so.
+  const guardOk =
+    guard?.report.verdict.verdict === "tunnelled" ||
+    guard?.report.verdict.verdict === "pinned";
 
   // The search field owns its own shortcut rather than the page reaching in
   // through the DOM. `/` is the design's binding; it is safe as a bare key
@@ -204,6 +221,9 @@ export function Rail({
       </nav>
 
       <div className="border-line flex flex-col gap-2.5 border-t px-3.5 pt-3 pb-3.5">
+        {guardLabel ? (
+          <NetRow ok={guard?.held !== true && guardOk}>{guardLabel}</NetRow>
+        ) : null}
         <NetRow ok={dhtNodes > 0}>
           DHT · <span className="flume-num">{dhtNodes.toLocaleString()}</span>{" "}
           nodes
