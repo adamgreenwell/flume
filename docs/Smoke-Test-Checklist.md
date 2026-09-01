@@ -99,7 +99,30 @@ default. Both are registered; the OS picks. Note which one wins.
       and transfers resume by themselves afterwards
 - [ ] Reopen settings: the values persisted
 
-## 7. Windows only — the file-locking question ([#9](https://github.com/adamgreenwell/flume/issues/9))
+## 7. The tunnel check
+
+Needs a VPN on the machine. Off by default, so skip if there is none.
+
+- [ ] Settings → Network, set the check to **Warn** with the VPN disconnected:
+      a sentence names the interface traffic is leaving by, and nothing stops
+- [ ] Set it to **Hold**: the engine stops before the dialog closes, the library
+      empties, and the dock figures read as dashes rather than zeros
+- [ ] The message names the interface and says your torrents were not paused
+- [ ] It does **not** say "The torrent engine is still starting"
+- [ ] Connect the VPN: a countdown appears, and after about ten seconds the
+      library comes back
+- [ ] Whatever you had paused before the hold is still paused
+- [ ] Disconnect: transfer stops again within a second or two
+- [ ] Quit while held, relaunch: the library is still intact and still held —
+      **not** paused, and not the first-run "No torrents yet" screen
+- [ ] Pin an interface that is not the live one: transfer holds, and the message
+      offers to re-pin
+
+The launch case is the one worth being careful about. Quit while held, relaunch,
+and check the log for `holding at launch, no torrent engine started` — there
+should be no tracker or DHT activity after that line at all.
+
+## 8. Windows only — the file-locking question ([#9](https://github.com/adamgreenwell/flume/issues/9))
 
 Unanswered, and only answerable on Windows. The claim predates librqbit v9 and
 has never been checked against it.
@@ -113,7 +136,7 @@ has never been checked against it.
 Either answer closes the issue. "It kept seeding" means no patch is needed
 against v9.
 
-## 8. Anything odd
+## 9. Anything odd
 
 Worth recording even if it seems minor:
 

@@ -222,6 +222,41 @@ Flume needs:
 macOS prompts for incoming connections on first launch. Linux firewalls
 (`ufw`, `firewalld`) usually need an explicit rule for inbound.
 
+## The tunnel check reads differently on each platform
+
+`src-tauri/src/egress/` decides which interface traffic leaves by. What it can
+see varies, and the differences are measured rather than assumed — run
+`cargo test --lib egress::tests::show_this_machines_interfaces -- --ignored
+--nocapture` on any machine to see exactly what it is handed.
+
+**macOS.** Every tunnel is a `utun`, whatever the protocol — WireGuard,
+OpenVPN and OpenConnect all land there, since kexts were blocked on Apple
+Silicon and `NEPacketTunnelProvider` is the only route left. A new `utun`
+appears on each connect and the old ones persist; one machine went from
+`utun0`–`utun8` to `utun0`–`utun12` in an afternoon, which is why pinning is
+discouraged here. The MAC address is useless on this platform:
+`network-interface` reports a placeholder for every interface, including real
+Ethernet adapters.
+
+**Linux.** The name belongs to the VPN config, not the OS — TorGuard's
+WireGuard interface is `torguard-wg`, not `wg0`. What identifies it is that a
+tunnel has no `AF_PACKET` entry and so reports no MAC, while `eth0` reports a
+real one.
+
+**Windows.** The friendly name is the WireGuard config file's name, so the same
+vendor produces `wg-torguard` here against `torguard-wg` on Linux. The OpenVPN
+adapter is the hard case: a TAP-Windows Adapter V9 called `Local Area
+Connection`, with a MAC and an 802.3 media type, indistinguishable from an
+Ethernet card through anything the crate exposes. `IP_ADAPTER_ADDRESSES.IfType`
+(53 `propVirtual` against 6 `ethernetCsmacd`) would separate them; the crate
+reads that field and does not expose it, and Flume forbids `unsafe_code`. So
+OpenVPN on Windows is not recognised, and the interface pin is the way through.
+
+On **Windows on ARM**, WireGuard is the only one of TorGuard's three tunnel
+types that connects at all — the TAP-family drivers are kernel-mode x64 `.sys`
+files and Windows on ARM does not emulate those. That bounds the gap above to
+x64.
+
 ## Per-platform smoke checklist
 
 Run before tagging a release:
@@ -235,3 +270,5 @@ Run before tagging a release:
 - [ ] Quit and relaunch; torrent resumes without full re-hash
 - [ ] Open containing folder works
 - [ ] Theme matches system setting
+- [ ] With a VPN available: the tunnel check names the right interface, and
+      Hold stops and restarts the engine (see the Smoke Test Checklist)

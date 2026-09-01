@@ -96,6 +96,34 @@ hardened-runtime interaction. That is its own project.
 
 See [[Privacy]].
 
+## The tunnel check
+
+Added on top of Phase 3, and not something any earlier phase asked for
+([#143](https://github.com/adamgreenwell/flume/issues/143)).
+
+Opt-in, off by default. Flume works out which interface traffic would actually
+leave by — a route lookup against the local table, sending nothing — and can
+hold all transfer while that is not a tunnel.
+
+Two decisions are worth knowing without reading the code:
+
+- **Holding stops the engine rather than pausing torrents.** `Session::pause`
+  writes `is_paused` to `session.json` synchronously and librqbit stores one
+  paused bit with no reason, so a guard pause would be indistinguishable from
+  the user's — and quitting while held would strand the library paused with the
+  tunnel up. Stopping the session touches no torrent at all, and is stronger:
+  pausing leaves the DHT, the listener and UPnP running.
+- **The first check runs before any engine exists.** librqbit restores _and
+  starts_ persisted torrents inside `Session::new_with_opts`, so a session built
+  before the check has already announced.
+
+Not covered, deliberately: OpenVPN on Windows, which is indistinguishable from
+an Ethernet adapter through what `network-interface` exposes. The interface pin
+is the workaround. Closing it properly needs `IP_ADAPTER_ADDRESSES.IfType`,
+which means a new dependency for one protocol on one platform.
+
+See [[Privacy]] and [[User-Guide]].
+
 ## Known limitations
 
 - **Windows and Linux unverified locally.** Developed on macOS 27. CI builds
