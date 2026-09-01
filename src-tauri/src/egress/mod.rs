@@ -33,6 +33,23 @@
 //! `usage::sender`, and a privacy feature that phoned home to work would be a
 //! poor joke.
 //!
+//! # Why the classifier looks only at the name
+//!
+//! A point-to-point tunnel has no link-layer address, so "no MAC" reads like a
+//! free corroborating signal. It is not one, at least not through this crate:
+//! on macOS `network-interface` 2.0.5 reports `en7` — a real Ethernet adapter
+//! `ifconfig` gives as `80:6d:97:63:a2:67` — as `02:00:00:00:00:00`, and every
+//! `utun` and `lo0` as `00:00:00:00:00:00`. It reads the address out of
+//! `sockaddr_dl` at what appears to be the wrong offset and hands back a
+//! placeholder. There is an accidental `02:` versus `00:` split in those
+//! values, and it is a byte from a wrong offset rather than a fact about the
+//! interface; a guard someone trusts is not the place for it.
+//!
+//! So [`classify`] takes the name and the platform's own `internal` flag,
+//! both of which this crate reports correctly. Do not reintroduce the MAC
+//! check without first re-running `show_this_machines_interfaces` on all three
+//! platforms and finding different values there.
+//!
 //! Like [`crate::engine`], this module imports no Tauri types and runs under a
 //! plain `cargo test`.
 
@@ -250,26 +267,26 @@ pub fn source_address(destination: SocketAddr) -> Option<IpAddr> {
 ///
 /// The evidence available, for the caller and for whoever revises this:
 ///
-/// * `name` — `utun6` on macOS, `wg0`/`tun0`/`ppp0` on Linux, and on Windows
-///   the adapter's *friendly name*, which the user can rename to anything.
-///   Case is not guaranteed.
-/// * `mac_addr` — `None` for every point-to-point tunnel observed
-///   (all nine `utun`s on the development machine report no MAC, while `en7`
-///   reports `80:6d:97:63:a2:67`). Ethernet and Wi-Fi adapters have one.
-///   Absent is *evidence* of a tunnel, not proof: the platform may simply not
-///   have said.
+/// * `name` — exactly as the platform gives it. `utun6` on macOS,
+///   `wg0`/`tun0`/`ppp0` on Linux, and on Windows the adapter's *friendly
+///   name*, which the user can rename to anything and whose case is not
+///   guaranteed.
 /// * `internal` — the platform's own "loopback or otherwise not remotely
-///   reachable" flag.
+///   reachable" flag. Correct on every platform checked, and the only thing
+///   separating `lo0` from a tunnel here.
+///
+/// The MAC address is deliberately absent; see the module docs for the
+/// measurements that ruled it out.
 ///
 /// Returning [`InterfaceKind::Unknown`] is a legitimate answer and is treated
 /// as "not a tunnel" downstream, so it is the safe thing to return when the
 /// evidence genuinely does not settle it.
 #[must_use]
-pub fn classify(name: &str, mac_addr: Option<&str>, internal: bool) -> InterfaceKind {
+pub fn classify(name: &str, internal: bool) -> InterfaceKind {
     // TODO(adam): implement. See `classification_*` tests below for the cases
     // this has to satisfy — they are the specification, and they fail until
     // this is written.
-    let _ = (name, mac_addr, internal);
+    let _ = (name, internal);
     InterfaceKind::Unknown
 }
 
@@ -284,11 +301,7 @@ fn hop_for(address: IpAddr, interfaces: &[NetworkInterface]) -> Option<Hop> {
         .find(|candidate| candidate.addr.iter().any(|addr| addr.ip() == address))?;
 
     Some(Hop {
-        kind: classify(
-            &interface.name,
-            interface.mac_addr.as_deref(),
-            interface.internal,
-        ),
+        kind: classify(&interface.name, interface.internal),
         interface: interface.name.clone(),
     })
 }
@@ -404,6 +417,66 @@ mod tests {
         }
     }
 
+    /// Prints what [`classify`] is handed on this machine, and what it makes
+    /// of it.
+    ///
+    /// Not an assertion — a window. The classifier has to work against strings
+    /// three operating systems choose for themselves, and every other way of
+    /// reading those strings gives a *different* one: on Windows this crate
+    /// reports the adapter's `FriendlyName`, while `ipconfig /all` prints its
+    /// Description and `Get-NetAdapter` prints two further names again.
+    /// Classifying against the wrong one of those four fails only on real
+    /// hardware, months later.
+    ///
+    /// So this reads them the way production will. Run it on each platform,
+    /// once with the VPN connected and once without — the disconnected run is
+    /// the one that proves the classifier does not hand out false positives.
+    ///
+    /// ```text
+    /// cargo test --lib egress::tests::show_this_machines_interfaces -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "prints this machine's interfaces; run by hand when teaching the classifier a platform"]
+    fn show_this_machines_interfaces() {
+        let path = probe();
+        let routed: Vec<&str> = [path.v4.as_ref(), path.v6.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|hop| hop.interface.as_str())
+            .collect();
+
+        println!("\nplatform: {}", std::env::consts::OS);
+        println!(
+            "IPv4 leaves by: {}",
+            path.v4.as_ref().map_or("(no route)", |h| &h.interface)
+        );
+        println!(
+            "IPv6 leaves by: {}",
+            path.v6.as_ref().map_or("(no route)", |h| &h.interface)
+        );
+        println!("verdict (no pin): {:?}\n", path.verdict(None));
+
+        println!(
+            "{:<4} {:<34} {:<19} {:<9} {:?}",
+            "", "name (as the crate reports it)", "mac_addr (unused)", "internal", "classify()"
+        );
+        for interface in NetworkInterface::show().unwrap_or_default() {
+            println!(
+                "{:<4} {:<34} {:<19} {:<9} {:?}",
+                if routed.contains(&interface.name.as_str()) {
+                    "-->"
+                } else {
+                    ""
+                },
+                interface.name,
+                interface.mac_addr.as_deref().unwrap_or("(none)"),
+                interface.internal,
+                classify(&interface.name, interface.internal)
+            );
+        }
+        println!("\n--> marks an interface currently carrying traffic.\n");
+    }
+
     // --- Classification -------------------------------------------------
     //
     // These are the specification for `classify`. They fail until it is
@@ -412,14 +485,14 @@ mod tests {
     #[test]
     fn classification_recognises_a_macos_tunnel() {
         // The shape every `utun` has: point-to-point, so no MAC at all.
-        assert_eq!(classify("utun6", None, false), InterfaceKind::Tunnel);
+        assert_eq!(classify("utun6", false), InterfaceKind::Tunnel);
     }
 
     #[test]
     fn classification_recognises_linux_tunnels() {
         for name in ["wg0", "tun0", "ppp0"] {
             assert_eq!(
-                classify(name, None, false),
+                classify(name, false),
                 InterfaceKind::Tunnel,
                 "{name} should read as a tunnel"
             );
@@ -436,7 +509,7 @@ mod tests {
             "WireGuard Tunnel",
         ] {
             assert_eq!(
-                classify(name, None, false),
+                classify(name, false),
                 InterfaceKind::Tunnel,
                 "{name} should read as a tunnel"
             );
@@ -446,14 +519,9 @@ mod tests {
     #[test]
     fn classification_does_not_mistake_ethernet_or_wifi_for_a_tunnel() {
         // The failure that matters most: telling someone they are covered.
-        for (name, mac) in [
-            ("en7", Some("80:6d:97:63:a2:67")),
-            ("eth0", Some("02:42:ac:11:00:02")),
-            ("Wi-Fi", Some("a4:83:e7:00:11:22")),
-            ("Ethernet", Some("00:15:5d:01:02:03")),
-        ] {
+        for name in ["en7", "eth0", "Wi-Fi", "Ethernet", "enp3s0", "wlan0"] {
             assert_eq!(
-                classify(name, mac, false),
+                classify(name, false),
                 InterfaceKind::Ordinary,
                 "{name} must not read as a tunnel"
             );
@@ -462,21 +530,18 @@ mod tests {
 
     #[test]
     fn classification_does_not_mistake_loopback_for_a_tunnel() {
-        // `lo0` has no MAC either, so MAC absence alone cannot be the whole
-        // rule.
-        assert_ne!(classify("lo0", None, true), InterfaceKind::Tunnel);
-        assert_ne!(classify("lo", None, true), InterfaceKind::Tunnel);
+        // `internal` is the only thing separating loopback from a tunnel now
+        // that the MAC is out, and `lo` is a prefix of nothing useful.
+        assert_ne!(classify("lo0", true), InterfaceKind::Tunnel);
+        assert_ne!(classify("lo", true), InterfaceKind::Tunnel);
     }
 
     #[test]
     fn classification_is_not_confused_by_case() {
         // macOS and Linux are lower case; Windows friendly names are whatever
         // the vendor typed.
-        assert_eq!(classify("UTUN6", None, false), InterfaceKind::Tunnel);
-        assert_eq!(
-            classify("wireguard tunnel", None, false),
-            InterfaceKind::Tunnel
-        );
+        assert_eq!(classify("UTUN6", false), InterfaceKind::Tunnel);
+        assert_eq!(classify("wireguard tunnel", false), InterfaceKind::Tunnel);
     }
 
     // --- The verdict ----------------------------------------------------
