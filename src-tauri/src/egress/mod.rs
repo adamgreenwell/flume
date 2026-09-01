@@ -45,6 +45,25 @@
 //! values, and it is a byte from a wrong offset rather than a fact about the
 //! interface; a guard someone trusts is not the place for it.
 //!
+//! # The name is not equally trustworthy on all three platforms
+//!
+//! macOS and Linux name tunnel interfaces themselves — `utun6`, `wg0`, `tun0`
+//! — and the prefix is the operating system's, not an application's. Windows
+//! is different: the friendly name of a WireGuard adapter is the *config
+//! file's* name, so TorGuard's reads `wg-torguard` only because TorGuard
+//! writes the config. Its OpenVPN adapter is worse — a TAP-Windows Adapter V9
+//! whose friendly name is `Local Area Connection`, sitting in the list beside
+//! `Local Area Connection* 6`, a WAN Miniport that is not a tunnel. Nothing in
+//! either name separates them.
+//!
+//! The consequence is deliberate and worth knowing before someone tries to
+//! make the classifier cleverer: on Windows it will sometimes fail to
+//! recognise a tunnel that is genuinely up. That is the cheap direction — the
+//! guard holds transfer that was in fact protected, the user notices
+//! immediately, and the interface pin exists for exactly this. Widening the
+//! name match to catch `Local Area Connection` would trade it for the
+//! expensive failure: telling someone a WAN Miniport is a tunnel.
+//!
 //! So [`classify`] takes the name and the platform's own `internal` flag,
 //! both of which this crate reports correctly. Do not reintroduce the MAC
 //! check without first re-running `show_this_machines_interfaces` on all three
@@ -500,18 +519,38 @@ mod tests {
     }
 
     #[test]
-    fn classification_recognises_a_windows_adapter_by_its_friendly_name() {
-        // Windows gives the friendly name, which is what the VPN client set
-        // when it installed the adapter.
-        for name in [
-            "TorGuard WireGuard",
-            "OpenVPN TAP-Windows6",
-            "WireGuard Tunnel",
-        ] {
-            assert_eq!(
+    fn classification_recognises_a_windows_wireguard_adapter() {
+        // Measured, not guessed. TorGuard's WireGuard adapter on Windows 11
+        // ARM reports the friendly name `wg-torguard`; its
+        // InterfaceDescription is "WireGuard Tunnel", which `classify` never
+        // sees.
+        //
+        // Note what that name actually is: WireGuard for Windows names the
+        // adapter after the tunnel *config file*, so this is TorGuard's choice
+        // of config name and not a vendor string. It holds for TorGuard users
+        // because TorGuard generates the config, and it would not hold for a
+        // hand-rolled one.
+        assert_eq!(classify("wg-torguard", false), InterfaceKind::Tunnel);
+    }
+
+    #[test]
+    fn classification_refuses_to_guess_at_a_name_that_says_nothing() {
+        // The case that rules name-matching out as a general Windows strategy.
+        // TorGuard's OpenVPN adapter is a TAP-Windows Adapter V9 whose
+        // friendly name is "Local Area Connection" -- and it sits in the
+        // adapter list directly beside "Local Area Connection* 6", a WAN
+        // Miniport that is not a tunnel at all. No substring separates them.
+        //
+        // So both fail closed. The first is a false negative: with TorGuard in
+        // OpenVPN mode the guard holds transfer that is in fact tunnelled,
+        // which is the cheap direction to be wrong in and what the interface
+        // pin exists to fix. Matching "Local Area Connection" would trade that
+        // for a false positive on a WAN Miniport, which is the expensive one.
+        for name in ["Local Area Connection", "Local Area Connection* 6"] {
+            assert_ne!(
                 classify(name, false),
                 InterfaceKind::Tunnel,
-                "{name} should read as a tunnel"
+                "{name} must not read as a tunnel; nothing in it says tunnel"
             );
         }
     }
@@ -519,6 +558,8 @@ mod tests {
     #[test]
     fn classification_does_not_mistake_ethernet_or_wifi_for_a_tunnel() {
         // The failure that matters most: telling someone they are covered.
+        // "Ethernet" is measured: it is the Parallels VirtIO adapter carrying
+        // traffic on the Windows VM.
         for name in ["en7", "eth0", "Wi-Fi", "Ethernet", "enp3s0", "wlan0"] {
             assert_eq!(
                 classify(name, false),
