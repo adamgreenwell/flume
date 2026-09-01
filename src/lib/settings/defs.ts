@@ -259,8 +259,8 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
       const checked =
         "Flume checks which network interface traffic would actually leave by — the route, not just whether a tunnel exists on the machine. It reads this locally and sends nothing to do it.";
       return mode === "hold"
-        ? `${checked} While the answer is anything other than a tunnel, all transfer is held, and resumes on its own when a tunnel is back.`
-        : `${checked} You are told when the answer is anything other than a tunnel, and nothing is stopped.`;
+        ? `${checked} While traffic is leaving by anything it does not accept, every torrent is held, and they resume on their own when a tunnel is back. An interface you pin below counts as accepted even where Flume cannot confirm it is a tunnel. This holds torrents, not Flume itself: peer discovery keeps running.`
+        : `${checked} You are told when traffic is leaving outside a tunnel, and nothing is stopped.`;
     },
   },
   {

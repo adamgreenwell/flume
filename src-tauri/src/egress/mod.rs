@@ -698,7 +698,17 @@ impl EgressPath {
         // the classifier to see, so a pin that could not override it would be
         // a setting that rescues nothing.
         if let Some(expected) = pinned {
-            if expected != deciding.interface {
+            // Compared case-insensitively and trimmed, because this string is
+            // typed by a person while the other side comes from the operating
+            // system. Someone who types `ethernet` where Windows says
+            // `Ethernet`, or pastes a name with a trailing space, would
+            // otherwise get `WrongTunnel` forever — a permanently held library
+            // whose cause is invisible, since the two names look identical
+            // wherever they are displayed.
+            if !expected
+                .trim()
+                .eq_ignore_ascii_case(deciding.interface.trim())
+            {
                 return Verdict::WrongTunnel {
                     interface: deciding.interface.clone(),
                     expected: expected.to_owned(),
@@ -1319,6 +1329,33 @@ mod tests {
                 expected: "utun6".into(),
             }
         );
+    }
+
+    #[test]
+    fn a_pin_is_matched_the_way_a_person_would_type_it() {
+        // The pin is free text in a settings field; the interface name comes
+        // from the OS. Byte-exact comparison between those two strands the
+        // library on a capitalisation the user cannot see.
+        let path = EgressPath {
+            v4: Some(hop("Ethernet", InterfaceKind::Ordinary)),
+            v6: None,
+        };
+
+        for typed in [
+            "Ethernet",
+            "ethernet",
+            "ETHERNET",
+            "  Ethernet  ",
+            "ethernet ",
+        ] {
+            assert!(
+                path.verdict(Some(typed)).allows_transfer(),
+                "{typed:?} should match the interface named Ethernet"
+            );
+        }
+
+        // Still a different interface, not merely differently spelled.
+        assert!(!path.verdict(Some("en7")).allows_transfer());
     }
 
     #[test]
