@@ -211,14 +211,40 @@ impl Settings {
         let path = dir.join(SETTINGS_FILE);
         let defaults = Self::with_os_defaults().unwrap_or_default();
 
+        /// Defaults, except that the tunnel guard fails *closed*.
+        ///
+        /// Every other setting can fall back to its default harmlessly: a lost
+        /// rate limit is an uncapped download, a lost theme is the system
+        /// theme. The guard is the one field whose default is the unsafe
+        /// value. A user who set `Hold`, whose settings file then became
+        /// unreadable, would silently start transferring outside their tunnel
+        /// — the exact outcome they turned it on to prevent, arrived at by a
+        /// mechanism they cannot see.
+        ///
+        /// So a settings file that *exists* and cannot be used means Hold. The
+        /// cost is that someone who never enabled the guard and whose file
+        /// corrupts finds transfer held; that is visible, recoverable in one
+        /// click, and safe, which is the right way round for this trade.
+        fn failing_closed(defaults: &Settings) -> Settings {
+            Settings {
+                egress_guard: EgressGuard::Hold,
+                ..defaults.clone()
+            }
+        }
+
         let raw = match std::fs::read_to_string(&path) {
             Ok(raw) => raw,
-            // Missing file on first run is expected, not a problem.
+            // Missing file on first run is expected, not a problem — and not a
+            // reason to hold, since there is no prior choice to protect.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (defaults, None),
             Err(e) => {
                 return (
-                    defaults,
-                    Some(format!("could not read {}: {e}", path.display())),
+                    failing_closed(&defaults),
+                    Some(format!(
+                        "could not read {}: {e}. Transfer is held until you \
+                         confirm how the tunnel check should behave.",
+                        path.display()
+                    )),
                 );
             }
         };
@@ -226,11 +252,24 @@ impl Settings {
         match serde_json::from_str::<Self>(&raw) {
             Ok(settings) => match settings.validate() {
                 Ok(()) => (settings, None),
-                Err(e) => (defaults, Some(format!("settings were invalid: {e}"))),
+                // Parsing succeeded, so the user's guard choice is known even
+                // though something else in the file is unusable. Honour it
+                // rather than overriding a decision that was read correctly.
+                Err(e) => (
+                    Settings {
+                        egress_guard: settings.egress_guard,
+                        egress_interface: settings.egress_interface,
+                        ..defaults
+                    },
+                    Some(format!("settings were invalid: {e}")),
+                ),
             },
             Err(e) => (
-                defaults,
-                Some(format!("settings file was not valid JSON: {e}")),
+                failing_closed(&defaults),
+                Some(format!(
+                    "settings file was not valid JSON: {e}. Transfer is held \
+                     until you confirm how the tunnel check should behave."
+                )),
             ),
         }
     }
@@ -506,6 +545,61 @@ mod tests {
             ..valid()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn a_corrupt_settings_file_holds_transfer_rather_than_releasing_it() {
+        // The guard is the one setting whose default is the unsafe value, so
+        // it is the one setting that must not simply fall back to it.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(tmp.path().join(SETTINGS_FILE), "{ not json").expect("write");
+
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert_eq!(
+            loaded.egress_guard,
+            EgressGuard::Hold,
+            "a settings file that exists and cannot be read must fail closed"
+        );
+        let problem = problem.expect("corruption is reported");
+        assert!(
+            problem.contains("held"),
+            "the message has to say transfer is held, or the hold is inexplicable: {problem}"
+        );
+    }
+
+    #[test]
+    fn a_first_run_does_not_hold_transfer() {
+        // No file is not a corrupt file. There is no prior choice to protect,
+        // and greeting a new user with a held library would be absurd.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert_eq!(loaded.egress_guard, EgressGuard::Off);
+        assert!(problem.is_none());
+    }
+
+    #[test]
+    fn a_file_that_parses_but_fails_validation_keeps_the_users_guard_choice() {
+        // Parsing succeeded, so what the user chose is known. Overriding a
+        // decision that was read correctly would be failing closed for its own
+        // sake.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(
+            tmp.path().join(SETTINGS_FILE),
+            r#"{"downloadDir":"/tmp/x","listenPort":0,"egressGuard":"warn","egressInterface":"utun6"}"#,
+        )
+        .expect("write");
+
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert!(problem.is_some(), "port 0 is invalid and must be reported");
+        assert_eq!(loaded.egress_guard, EgressGuard::Warn);
+        assert_eq!(loaded.egress_interface.as_deref(), Some("utun6"));
+        assert_eq!(
+            loaded.listen_port, DEFAULT_LISTEN_PORT,
+            "the invalid field still falls back"
+        );
     }
 
     #[test]

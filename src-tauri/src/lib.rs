@@ -27,6 +27,7 @@ pub mod deeplink;
 pub mod diagnostics;
 pub mod egress;
 pub mod engine;
+pub mod guard;
 mod menu;
 pub mod settings;
 pub mod state;
@@ -158,16 +159,24 @@ pub fn run() {
             }
             tauri::async_runtime::spawn(async move {
                 let state = handle.state::<AppState>();
-                let settings = state.settings().await;
-                log::info!(
-                    "starting torrent engine: port={} dht={} upnp={}",
-                    settings.listen_port,
-                    settings.enable_dht,
-                    settings.enable_upnp
-                );
-                if let Err(err) = state.restart_engine(&settings).await {
-                    log::error!("torrent engine failed to start: {err}");
+
+                // The engine is started by the guard, not here. librqbit
+                // restores *and starts* every persisted torrent inside
+                // `Session::new_with_opts`, with no hook between construction
+                // and the first tracker announce -- so a session built before
+                // the egress check has already transferred from the address
+                // the check exists to protect. Running the first guard tick
+                // first closes that window rather than shrinking it: if
+                // traffic is not leaving through a tunnel, no session is
+                // constructed at all.
+                let status = guard::tick(&handle).await;
+                if status.held {
+                    log::info!(
+                        "egress guard: holding at launch, no torrent engine started ({:?})",
+                        status.report.verdict
+                    );
                 }
+                guard::spawn(handle.clone());
 
                 // Recorded after the engine is up so the library size is the
                 // restored one rather than zero. Both are no-ops unless the

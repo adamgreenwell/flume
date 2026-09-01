@@ -10,7 +10,7 @@ use tauri::{Manager, State};
 
 use crate::{
     diagnostics::{self, LOG_TAIL_LINES},
-    egress::EgressReport,
+    egress::GuardStatus,
     engine::{
         CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
         TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
@@ -194,16 +194,16 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, Comman
     Ok(state.settings().await)
 }
 
-/// Reports which interface traffic would leave by, and what Flume makes of it.
+/// Reports where traffic leaves by, and whether the guard is holding transfer.
 ///
-/// Sends nothing: two route lookups against the local table plus, when an
-/// address has moved since the last call, one walk of the interface list. See
-/// [`crate::egress`] for why this is a route question rather than an
-/// interface-list question.
+/// Reads the status the guard loop last published rather than probing: a
+/// command that probed independently would read the routing table at a
+/// different instant from the loop that acts on it, and the two would disagree
+/// on screen during exactly the transitions the user is watching.
 ///
-/// Independent of [`crate::settings::Settings::egress_guard`] on purpose — the
-/// UI can show where traffic is going even when the guard is `Off`, and the
-/// guard only decides what is *done* about the answer.
+/// The answer is available whatever the guard is set to — even `Off`, where
+/// nothing is held. The guard decides what is *done* about where traffic goes,
+/// not whether it is known.
 ///
 /// # Errors
 ///
@@ -212,8 +212,8 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, Comman
 /// rather than as an error, because "Flume could not tell" is a thing the UI
 /// has to render anyway.
 #[tauri::command]
-pub async fn check_egress(state: State<'_, AppState>) -> Result<EgressReport, CommandError> {
-    Ok(state.egress_report().await)
+pub async fn check_egress(state: State<'_, AppState>) -> Result<GuardStatus, CommandError> {
+    Ok(state.egress_status().await)
 }
 
 /// Validates, persists, and applies new settings.
@@ -231,6 +231,7 @@ pub async fn check_egress(state: State<'_, AppState>) -> Result<EgressReport, Co
 /// cannot be written, or `engineFailed` if the session will not restart.
 #[tauri::command]
 pub async fn update_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Settings, CommandError> {
@@ -255,10 +256,33 @@ pub async fn update_settings(
         state.note(EventKind::SettingChanged { key });
     }
 
+    // Guarded, because `restart_engine` builds a session unconditionally and
+    // would happily start one while the guard is holding -- handing the user
+    // an engine on the network they turned the guard on to stay off. While
+    // held, the new settings are simply recorded; the guard builds the session
+    // from them when it releases.
+    let held = state.egress_status().await.held;
     if previous.requires_restart(&settings) {
-        state.restart_engine(&settings).await?;
+        if held {
+            log::info!("settings changed while the egress guard is holding; the engine stays down");
+        } else {
+            state.restart_engine(&settings).await?;
+        }
     } else if let Some(engine) = state.engine().await {
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
+    }
+
+    // A guard change the user just made takes effect now rather than up to a
+    // second later. Both directions matter: switching *into* Hold while
+    // traffic is outside a tunnel has to stop the engine before the dialog
+    // closes, and a corrected interface pin has to be seen to work -- a
+    // ten-second settle window on a change someone is watching reads as the
+    // change not having taken.
+    if previous.egress_guard != settings.egress_guard
+        || previous.egress_interface != settings.egress_interface
+    {
+        state.release_egress_settle().await;
+        crate::guard::tick(&app).await;
     }
 
     Ok(settings)

@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreStatus,
   DetectedClient,
-  EgressReport,
+  GuardStatus,
   ImportOutcome,
   Settings,
   TorrentDetail,
@@ -222,10 +222,11 @@ export async function importClient(
  * guard is off, since the guard decides what is *done* about it rather than
  * whether it is known.
  *
- * @returns Where each address family leaves from, and the verdict on it.
+ * @returns Where traffic leaves, the verdict on it, and whether the guard is
+ *   currently holding transfer.
  */
-export async function checkEgress(): Promise<EgressReport> {
-  return invoke<EgressReport>("check_egress");
+export async function checkEgress(): Promise<GuardStatus> {
+  return invoke<GuardStatus>("check_egress");
 }
 
 /**

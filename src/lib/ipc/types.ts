@@ -582,6 +582,37 @@ export interface EgressReport {
   verdict: Verdict;
 }
 
+/**
+ * Everything the UI needs to explain the guard. Mirrors Rust `GuardStatus`.
+ *
+ * Published once per second by the guard loop, which is the only thing that
+ * probes — a second prober would read the routing table at a different instant
+ * and disagree, and a guard that contradicts itself on screen is worse than no
+ * guard.
+ */
+export interface GuardStatus {
+  /** The mode the user chose. */
+  guard: EgressGuard;
+  /** Where traffic leaves, and what Flume makes of it. */
+  report: EgressReport;
+  /**
+   * Whether transfer is being held right now.
+   *
+   * Always `false` unless {@link GuardStatus.guard} is `"hold"` — `"warn"`
+   * says so and stops nothing.
+   */
+  held: boolean;
+  /**
+   * Seconds until transfer resumes, while a settle window is running.
+   *
+   * `null` when transfer is running, and when it is held with no prospect of
+   * resuming. The difference between "held, and counting down" and "held, and
+   * waiting for you" is the difference between a status and an unexplained
+   * pause.
+   */
+  resumesInSeconds: number | null;
+}
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */

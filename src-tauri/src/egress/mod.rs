@@ -155,7 +155,10 @@
 //! Like [`crate::engine`], this module imports no Tauri types and runs under a
 //! plain `cargo test`.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
+    time::{Duration, Instant},
+};
 
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use serde::{Deserialize, Serialize};
@@ -506,6 +509,182 @@ fn hop_for(address: IpAddr, interfaces: &[NetworkInterface]) -> Option<Hop> {
         ),
         interface: interface.name.clone(),
     })
+}
+
+/// How long the verdict must permit continuously before transfer is released.
+///
+/// Asymmetric on purpose, and the asymmetry is the design: a failing verdict
+/// takes effect on the tick it appears, while a permitting one has to hold for
+/// this long. Protection is never delayed; only recovery is.
+///
+/// Ten seconds is chosen against what actually flaps. A laptop waking, a VPN
+/// reconnecting onto a new interface and a Wi-Fi handover all resolve in a few
+/// seconds, and releasing into the middle of one costs a full re-announce to
+/// every tracker plus a DHT announce, per torrent — slow for the user and rude
+/// to the swarm. Ten seconds is long enough to sit out those transients and
+/// short enough that a genuine reconnect is not noticed as downtime.
+pub const SETTLE: Duration = Duration::from_secs(10);
+
+/// Whether transfer may happen, given a history of verdicts over time.
+///
+/// Pure and clock-injected: [`Self::observe`] takes the current instant rather
+/// than reading one, so the hysteresis can be tested without sleeping.
+#[derive(Debug, Clone)]
+pub struct TransferGate {
+    settle: Duration,
+    state: GateState,
+}
+
+/// Where the gate currently sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateState {
+    /// Transfer is permitted and running.
+    Open,
+    /// Held, with the verdict still failing.
+    Held,
+    /// Held, but the verdict has permitted continuously since this instant.
+    Settling {
+        /// When the verdict started permitting.
+        since: Instant,
+    },
+}
+
+/// What the gate says to do right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Transfer may proceed.
+    Open,
+    /// Transfer must not proceed.
+    Held,
+}
+
+impl Gate {
+    /// Whether transfer may proceed.
+    #[must_use]
+    pub const fn is_open(self) -> bool {
+        matches!(self, Self::Open)
+    }
+}
+
+impl Default for TransferGate {
+    fn default() -> Self {
+        Self::new(SETTLE)
+    }
+}
+
+impl TransferGate {
+    /// A gate that releases after `settle` of continuous permission.
+    ///
+    /// Starts [`Gate::Held`]. A gate that began open would permit transfer for
+    /// the first tick of its life, which is exactly the launch window this
+    /// feature exists to close.
+    #[must_use]
+    pub const fn new(settle: Duration) -> Self {
+        Self {
+            settle,
+            state: GateState::Held,
+        }
+    }
+
+    /// Folds one verdict into the gate and returns what to do.
+    pub fn observe(&mut self, permitted: bool, now: Instant) -> Gate {
+        if !permitted {
+            // Immediate, from any state. A verdict that stopped permitting
+            // while the settle window was running resets it rather than
+            // shortening it.
+            self.state = GateState::Held;
+            return Gate::Held;
+        }
+
+        self.state = match self.state {
+            GateState::Open => GateState::Open,
+            GateState::Held => GateState::Settling { since: now },
+            GateState::Settling { since } => {
+                if now.duration_since(since) >= self.settle {
+                    GateState::Open
+                } else {
+                    GateState::Settling { since }
+                }
+            }
+        };
+
+        match self.state {
+            GateState::Open => Gate::Open,
+            GateState::Held | GateState::Settling { .. } => Gate::Held,
+        }
+    }
+
+    /// What the gate last decided, without advancing it.
+    #[must_use]
+    pub const fn gate(&self) -> Gate {
+        match self.state {
+            GateState::Open => Gate::Open,
+            GateState::Held | GateState::Settling { .. } => Gate::Held,
+        }
+    }
+
+    /// How much of the settle window remains, if one is running.
+    ///
+    /// For the UI, which owes the user a reason rather than an unexplained
+    /// wait: "a tunnel is back; transfer resumes in 6 s" is a status, "held"
+    /// is not.
+    #[must_use]
+    pub fn settling_for(&self, now: Instant) -> Option<Duration> {
+        match self.state {
+            GateState::Settling { since } => {
+                Some(self.settle.saturating_sub(now.duration_since(since)))
+            }
+            GateState::Open | GateState::Held => None,
+        }
+    }
+
+    /// Drops the settle window and opens immediately.
+    ///
+    /// For changes the *user* just made — switching the guard off, or editing
+    /// the pinned interface. Someone who has just retyped an interface name is
+    /// watching the window, and making them wait ten seconds to find out
+    /// whether they got it right turns a settling period into a bug report.
+    pub const fn release_now(&mut self) {
+        self.state = GateState::Open;
+    }
+
+    /// Returns to held and forgets any settle progress.
+    ///
+    /// For a policy change that could only make things stricter — switching
+    /// *into* Hold, or pinning an interface — where carrying over a window
+    /// that started under the old policy would let transfer through on the
+    /// strength of a verdict nobody judged against the new one.
+    pub const fn hold_now(&mut self) {
+        self.state = GateState::Held;
+    }
+}
+
+/// Everything the UI needs to explain the guard, and the engine loop needs to
+/// act on it.
+///
+/// Published once per tick by the guard loop, which is the *only* thing that
+/// probes. A second prober would read the routing table at a different instant
+/// and disagree with the first, and a guard that contradicts itself on screen
+/// is worse than no guard.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuardStatus {
+    /// The mode the user chose.
+    pub guard: EgressGuard,
+    /// Where traffic leaves, and what Flume makes of it.
+    pub report: EgressReport,
+    /// Whether transfer is being held right now.
+    ///
+    /// Always `false` unless the guard is [`EgressGuard::Hold`]: `Warn` says
+    /// so and stops nothing.
+    pub held: bool,
+    /// Seconds until transfer resumes, while a settle window is running.
+    ///
+    /// `None` when transfer is running, and when it is held with no prospect
+    /// of resuming. The UI owes the user the difference between "held, and
+    /// counting down" and "held, and waiting for you" — an unexplained pause
+    /// is the thing that gets a privacy feature switched off.
+    pub resumes_in_seconds: Option<u64>,
 }
 
 /// Repeated probing without repeated interface enumeration.
@@ -1038,6 +1217,131 @@ mod tests {
             classify("Ethernet", Some("001C42A6858B"), false),
             InterfaceKind::Ordinary
         );
+    }
+
+    // --- The hysteresis gate ---------------------------------------------
+
+    /// A fixed origin plus offsets, so the hysteresis is tested without
+    /// sleeping and without a real clock.
+    fn at(base: Instant, seconds: u64) -> Instant {
+        base + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn a_gate_starts_held_rather_than_open() {
+        // A gate that began open would permit transfer for the first tick of
+        // its life, which is the launch window this feature exists to close.
+        assert_eq!(TransferGate::default().gate(), Gate::Held);
+    }
+
+    #[test]
+    fn a_failing_verdict_holds_on_the_very_first_tick() {
+        // No hysteresis on the way in. Protection is never delayed.
+        let base = Instant::now();
+        let mut gate = TransferGate::default();
+        gate.release_now();
+        assert_eq!(gate.gate(), Gate::Open);
+
+        assert_eq!(gate.observe(false, base), Gate::Held);
+    }
+
+    #[test]
+    fn recovery_waits_for_the_settle_window() {
+        let base = Instant::now();
+        let mut gate = TransferGate::new(Duration::from_secs(10));
+
+        assert_eq!(gate.observe(false, at(base, 0)), Gate::Held);
+        // Permission starts here, but the window has not run.
+        assert_eq!(gate.observe(true, at(base, 1)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 5)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 10)), Gate::Held);
+        // t=1 plus ten seconds.
+        assert_eq!(gate.observe(true, at(base, 11)), Gate::Open);
+    }
+
+    #[test]
+    fn a_flap_during_the_settle_window_resets_it_rather_than_shortening_it() {
+        // The case the window exists for: a VPN reconnecting onto a new
+        // interface, or a laptop waking. Releasing into the middle of one
+        // costs a full re-announce to every tracker, per torrent.
+        let base = Instant::now();
+        let mut gate = TransferGate::new(Duration::from_secs(10));
+
+        assert_eq!(gate.observe(true, at(base, 0)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 8)), Gate::Held);
+        // Nine seconds in, it drops again.
+        assert_eq!(gate.observe(false, at(base, 9)), Gate::Held);
+        // Back, but the clock restarts from here rather than resuming at 9.
+        assert_eq!(gate.observe(true, at(base, 10)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 19)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 20)), Gate::Open);
+    }
+
+    #[test]
+    fn an_open_gate_stays_open_without_re_settling() {
+        // Once open, a continuing permission must not restart the window --
+        // that would hold transfer for ten seconds out of every ten.
+        let base = Instant::now();
+        let mut gate = TransferGate::new(Duration::from_secs(10));
+        gate.release_now();
+
+        for second in 0..30 {
+            assert_eq!(
+                gate.observe(true, at(base, second)),
+                Gate::Open,
+                "second {second} should stay open"
+            );
+        }
+    }
+
+    #[test]
+    fn the_remaining_wait_is_reportable_so_the_ui_can_say_why() {
+        // "Held" is not a status. "A tunnel is back; transfer resumes in 6 s"
+        // is one.
+        let base = Instant::now();
+        let mut gate = TransferGate::new(Duration::from_secs(10));
+
+        gate.observe(false, at(base, 0));
+        assert_eq!(gate.settling_for(at(base, 0)), None, "not settling yet");
+
+        gate.observe(true, at(base, 4));
+        assert_eq!(
+            gate.settling_for(at(base, 4)),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(gate.settling_for(at(base, 8)), Some(Duration::from_secs(6)));
+
+        gate.observe(true, at(base, 15));
+        assert_eq!(gate.settling_for(at(base, 15)), None, "open, not settling");
+    }
+
+    #[test]
+    fn a_user_edit_releases_without_waiting_out_the_window() {
+        // Someone who has just retyped an interface name is watching the
+        // window. Ten seconds of nothing is how a settle period becomes a bug
+        // report.
+        let base = Instant::now();
+        let mut gate = TransferGate::default();
+        gate.observe(false, at(base, 0));
+
+        gate.release_now();
+        assert_eq!(gate.gate(), Gate::Open);
+        assert_eq!(gate.observe(true, at(base, 1)), Gate::Open);
+    }
+
+    #[test]
+    fn switching_into_hold_while_already_failing_trips_at_once() {
+        // Carrying over a settle window that started under the old policy
+        // would let transfer through on the strength of a verdict nobody
+        // judged against the new one.
+        let base = Instant::now();
+        let mut gate = TransferGate::default();
+        gate.release_now();
+
+        gate.hold_now();
+        assert_eq!(gate.gate(), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 1)), Gate::Held);
+        assert_eq!(gate.observe(true, at(base, 20)), Gate::Open);
     }
 
     // --- The watcher's cache --------------------------------------------

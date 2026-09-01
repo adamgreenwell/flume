@@ -29,7 +29,7 @@
 
 use flume_lib::{
     commands::CommandError,
-    egress::{EgressPath, EgressReport, Hop, InterfaceKind, Verdict},
+    egress::{EgressGuard, EgressPath, EgressReport, GuardStatus, Hop, InterfaceKind, Verdict},
     engine::{
         Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
         PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
@@ -231,6 +231,33 @@ fn the_egress_report_matches_the_typescript_mirror() {
         &["path", "verdict"],
         "EgressReport",
     );
+}
+
+#[test]
+fn the_guard_status_matches_the_typescript_mirror() {
+    assert_keys(
+        &GuardStatus {
+            guard: EgressGuard::Hold,
+            report: EgressReport {
+                path: EgressPath::default(),
+                verdict: Verdict::Unknown,
+            },
+            held: true,
+            resumes_in_seconds: Some(6),
+        },
+        &["guard", "report", "held", "resumesInSeconds"],
+        "GuardStatus",
+    );
+
+    // The guard mode is a camelCase string on the wire, like every other enum
+    // that crosses this boundary.
+    for (mode, expected) in [
+        (EgressGuard::Off, "off"),
+        (EgressGuard::Warn, "warn"),
+        (EgressGuard::Hold, "hold"),
+    ] {
+        assert_eq!(json(&mode), expected, "EgressGuard::{mode:?}");
+    }
 }
 
 #[test]
