@@ -61,8 +61,8 @@ pub fn spawn(app: AppHandle) {
 
             if seeded {
                 for (info_hash, name) in finished {
-                    if announced.insert(info_hash) {
-                        notify_complete(&app, &name);
+                    if announced.insert(info_hash.clone()) {
+                        notify_complete(&app, &info_hash, &name);
                     }
                 }
             } else {
@@ -84,8 +84,15 @@ pub fn spawn(app: AppHandle) {
 ///
 /// Failures are logged rather than propagated: the user may have denied
 /// notification permission, and that must not disturb the telemetry loop.
-fn notify_complete(app: &AppHandle, name: &str) {
-    log::info!("torrent finished: {name}");
+fn notify_complete(app: &AppHandle, info_hash: &str, name: &str) {
+    // The id, never the name, and never the info hash either. This line lands
+    // in a log file that `crate::diagnostics` ships in a bundle the UI tells
+    // people is safe to paste in public, and redaction cannot recover a name
+    // once the torrent is gone: it matches literally against the library, so a
+    // completed-and-removed torrent leaves its name in the log for weeks. A
+    // short prefix is enough to correlate two lines in one log and identifies
+    // nothing on its own.
+    log::info!("torrent {} finished", &info_hash[..info_hash.len().min(6)]);
     if let Err(err) = app
         .notification()
         .builder()
