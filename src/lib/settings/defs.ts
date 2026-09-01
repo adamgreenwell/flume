@@ -72,7 +72,16 @@ export type Control =
   | {
       kind: "segment";
       options: ReadonlyArray<{ value: string; label: string }>;
-    };
+    }
+  /**
+   * A picker over the machine's real network interfaces.
+   *
+   * The options are not in the definition because they are not knowable at
+   * build time — they are the interfaces this machine has right now, which on
+   * macOS changes every time a VPN reconnects. {@link SettingsDialog} loads
+   * them and hands them down.
+   */
+  | { kind: "interface" };
 
 /** One setting, bound to the field it edits. */
 export interface SettingDef<K extends keyof Settings = keyof Settings> {
@@ -227,6 +236,53 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
       url === null || url === ""
         ? "Peer connections go out directly from this machine, so peers see your real address."
         : `Outgoing peer connections go through ${url}. The DHT and tracker announces do not — a proxy here is not the same as a VPN.`,
+  },
+  {
+    id: "egressGuard",
+    section: "network",
+    label: "Only transfer while traffic leaves through a tunnel",
+    key: "net.egressGuard",
+    control: {
+      kind: "segment",
+      options: [
+        { value: "off", label: "Off" },
+        { value: "warn", label: "Warn" },
+        { value: "hold", label: "Hold" },
+      ],
+    },
+    keywords: [
+      "vpn",
+      "wireguard",
+      "openvpn",
+      "kill switch",
+      "killswitch",
+      "tunnel",
+      "leak",
+      "privacy",
+      "torguard",
+    ],
+    consequence: (mode) => {
+      if (mode === "off") {
+        return "Flume does not look at which interface your traffic leaves by. Nothing is checked and nothing is blocked.";
+      }
+      const checked =
+        "Flume checks which network interface traffic would actually leave by — the route, not just whether a tunnel exists on the machine. It reads this locally and sends nothing to do it.";
+      return mode === "hold"
+        ? `${checked} While traffic is leaving by anything it does not accept, Flume runs no torrent session at all — no transfers, no peer connections, no DHT and no listening port — and starts one again about ten seconds after a tunnel is back. Your torrents are not paused and no files are touched; each comes back in the state it was in. An interface you pin below counts as accepted even where Flume cannot confirm it is a tunnel.`
+        : `${checked} You are told when traffic is leaving outside a tunnel, and nothing is stopped.`;
+    },
+  },
+  {
+    id: "egressInterface",
+    section: "network",
+    label: "Accept only this interface",
+    key: "net.egressInterface",
+    control: { kind: "interface" },
+    keywords: ["interface", "utun", "wg0", "adapter", "pin", "device"],
+    consequence: (name) =>
+      name === null || name === ""
+        ? "Any tunnel interface is accepted. This survives a VPN reconnecting onto a different interface, which macOS does routinely."
+        : `Only ${name} is accepted; any other interface counts as untunnelled, even another tunnel. Stricter, and on macOS it will trip: a new utun appears on every connect and the old ones stay, so the number you pin today is not the one carrying traffic tomorrow. Windows and Linux name the adapter after the VPN config and stay put.`,
   },
   {
     id: "theme",

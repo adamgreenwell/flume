@@ -2,9 +2,10 @@
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
+    egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError},
     settings::Settings,
     usage::{EventKind, Recorder},
@@ -31,6 +32,19 @@ pub struct AppState {
     usage: Arc<Recorder>,
     /// When this process started, for the session-length bucket.
     started_at: Instant,
+    /// Cached egress probing.
+    ///
+    /// Behind a mutex rather than an `RwLock` because every read mutates the
+    /// cache: the watcher only avoids a 3.2 ms interface enumeration by
+    /// remembering what it saw last time. See [`EgressWatcher`].
+    egress: Mutex<EgressWatcher>,
+    /// The hysteresis between a verdict and acting on it.
+    gate: Mutex<TransferGate>,
+    /// The last status the guard loop published.
+    ///
+    /// Read by `check_egress` rather than re-probing, so the UI and the engine
+    /// loop can never disagree about what the routing table said.
+    status: RwLock<GuardStatus>,
 }
 
 impl AppState {
@@ -41,6 +55,22 @@ impl AppState {
             settings.usage_reporting,
             env!("CARGO_PKG_VERSION").to_owned(),
         ));
+
+        // Probed once here, synchronously, so no command can ever observe a
+        // status that does not exist yet. It costs one uncached probe -- about
+        // 3.3 ms -- against a window in which `check_egress` would have to
+        // answer "unknown" for reasons that have nothing to do with the
+        // network.
+        let mut watcher = EgressWatcher::default();
+        let report = watcher.report(settings.egress_interface.as_deref());
+        let status = GuardStatus {
+            guard: settings.egress_guard,
+            report,
+            // Held until the first real tick says otherwise: a guard that
+            // starts by reporting "not held" would be believed for a second.
+            held: settings.egress_guard == EgressGuard::Hold,
+            resumes_in_seconds: None,
+        };
         Self {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
@@ -48,7 +78,68 @@ impl AppState {
             first_run,
             usage,
             started_at: Instant::now(),
+            egress: Mutex::new(watcher),
+            gate: Mutex::new(TransferGate::default()),
+            status: RwLock::new(status),
         }
+    }
+
+    /// The status the guard loop last published.
+    ///
+    /// Never probes. A command that probed independently would read the
+    /// routing table at a different instant from the loop that acts on it, and
+    /// the two would disagree on screen during exactly the transitions the
+    /// user is watching.
+    pub async fn egress_status(&self) -> GuardStatus {
+        self.status.read().await.clone()
+    }
+
+    /// Probes, folds the verdict through the hysteresis gate, and publishes.
+    ///
+    /// The only place in Flume that probes. `now` is a parameter so the
+    /// hysteresis is driven by the caller's clock rather than a hidden one.
+    pub async fn observe_egress(&self, now: Instant) -> GuardStatus {
+        // Both fields copied out so the settings lock is released before the
+        // egress and gate locks are taken; they are never held together.
+        let (guard, pinned) = {
+            let settings = self.settings.read().await;
+            (settings.egress_guard, settings.egress_interface.clone())
+        };
+
+        let report = self.egress.lock().await.report(pinned.as_deref());
+        let permitted = report.verdict.allows_transfer();
+
+        let (held, resumes_in_seconds) = if guard.holds_transfer() {
+            let mut gate = self.gate.lock().await;
+            let decision = gate.observe(permitted, now);
+            let remaining = gate.settling_for(now).map(|left| left.as_secs());
+            (decision == Gate::Held, remaining)
+        } else {
+            // Not holding. The gate is released rather than left to drift, so
+            // that switching into Hold later starts from a clean state instead
+            // of inheriting a settle window nobody was watching.
+            self.gate.lock().await.release_now();
+            (false, None)
+        };
+
+        let status = GuardStatus {
+            guard,
+            report,
+            held,
+            resumes_in_seconds,
+        };
+        *self.status.write().await = status.clone();
+        status
+    }
+
+    /// Drops the settle window so a user-initiated change takes effect at once.
+    ///
+    /// Called when the guard mode or the pinned interface changes. Someone who
+    /// has just retyped an interface name is watching for the result; making
+    /// them wait out a window that started under the previous setting reads as
+    /// the change not having worked.
+    pub async fn release_egress_settle(&self) {
+        self.gate.lock().await.release_now();
     }
 
     /// The usage recorder. Records nothing unless the user consented.

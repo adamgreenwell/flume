@@ -16,14 +16,17 @@ import { ConfirmRemoveDialog } from "@/components/ConfirmRemoveDialog";
 import { ContextMenu, type ContextMenuItem } from "@/components/ContextMenu";
 import { Dock } from "@/components/Dock";
 import { EmptyState } from "@/components/EmptyState";
+import { describeGuard } from "@/lib/egress";
 import { FirstRun } from "@/components/FirstRun";
 import { ExpandedRow } from "@/components/ExpandedRow";
 import { LibraryToolbar, type SortId } from "@/components/LibraryToolbar";
 import { Rail } from "@/components/Rail";
+import { NoteCard } from "@/components/NoteCard";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
 import { TorrentRow } from "@/components/TorrentRow";
+import { useEgressGuard } from "@/hooks/useEgressGuard";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { useThroughputHistory } from "@/hooks/useThroughputHistory";
 import { useTorrentDetail } from "@/hooks/useTorrentDetail";
@@ -64,7 +67,12 @@ import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
  */
 export default function Home() {
   const { telemetry, error, isLoading } = useTelemetry();
-  const history = useThroughputHistory(telemetry);
+  const { status: guardStatus, held } = useEgressGuard();
+  const collected = useThroughputHistory(telemetry);
+  // Cleared with everything else while held. Telemetry stops when the engine
+  // does, so the samples would otherwise sit in the chart describing a session
+  // that no longer exists.
+  const history = useMemo(() => (held ? [] : collected), [held, collected]);
 
   // Mean download rate over the samples collected so far. The add sheet
   // estimates a finish time against it, and says which window it is using —
@@ -170,8 +178,23 @@ export default function Home() {
       });
   }, []);
 
-  const status = telemetry?.core ?? null;
-  const torrents = useMemo(() => telemetry?.torrents ?? [], [telemetry]);
+  // Cleared while held, for the same reason the torrent list is: there is no
+  // session, so the DHT count, the listening port and the uptime are the last
+  // reading taken before it stopped rather than facts about now. The rail
+  // renders a null status as "not listening", which is exactly true.
+  const status = held ? null : (telemetry?.core ?? null);
+  const guardNote = useMemo(() => describeGuard(guardStatus), [guardStatus]);
+
+  // Cleared while held rather than left frozen. Stopping the engine stops
+  // telemetry, and `useTelemetry` has no staleness path -- so the last
+  // snapshot would stay mounted showing live-looking rates, peer counts and a
+  // green listening port for a session that no longer exists. An empty list
+  // under a note that explains it is a true statement; frozen numbers are a
+  // confident wrong one.
+  const torrents = useMemo(
+    () => (held ? [] : (telemetry?.torrents ?? [])),
+    [telemetry, held],
+  );
 
   const counts = useMemo(() => viewCounts(torrents), [torrents]);
 
@@ -323,6 +346,7 @@ export default function Home() {
         onQueryChange={setQuery}
         status={status}
         loading={isLoading}
+        guard={guardStatus}
         searchDisabled={anyDialogOpen}
       />
 
@@ -353,7 +377,27 @@ export default function Home() {
           onAdd={() => setIsAdding(true)}
         />
 
-        {error ? (
+        {/*
+          Suppressed while held, because the empty state below is already
+          showing this exact note -- holding clears the library, so the two
+          rendered the same title and body one above the other, which reads as
+          a bug rather than as emphasis. In Warn mode the library still has
+          rows, so the banner is the only place the note can go.
+        */}
+        {guardNote && !held ? (
+          <div className="border-line border-b px-[18px] py-2.5">
+            <NoteCard note={guardNote} />
+          </div>
+        ) : null}
+
+        {/*
+          Suppressed while the guard holds. `get_telemetry` rejects with
+          `engineNotReady`, whose message is "The torrent engine is still
+          starting." -- true during startup and false for the whole duration of
+          a hold, where Flume has deliberately refused to start it. Leaving it
+          up would have the app contradict the note directly above it.
+        */}
+        {error && !held ? (
           <div
             className="border-line bg-warn/10 text-warn border-b px-[18px] py-2.5 text-xs"
             role="alert"
@@ -387,6 +431,8 @@ export default function Home() {
               status={status}
               onAdd={() => setIsAdding(true)}
               filtered={torrents.length > 0}
+              guardNote={held ? guardNote : null}
+              onOpenSettings={() => setIsConfiguring(true)}
             />
           </div>
         ) : (
@@ -429,6 +475,7 @@ export default function Home() {
           torrents={torrents}
           history={history}
           limitBps={downloadLimitBps}
+          held={held}
         />
       </div>
 

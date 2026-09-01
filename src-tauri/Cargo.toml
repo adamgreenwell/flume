@@ -56,6 +56,18 @@ tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-notification = "2.3.3"
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 
+# --- Egress check ---------------------------------------------------------
+# Maps the source address of the default route back to the interface that owns
+# it, so `egress` can say which interface traffic actually leaves by rather
+# than guessing from interface names -- see the module docs for why the
+# difference is load-bearing. Already in `Cargo.lock` via
+# librqbit-dualstack-sockets and librqbit-upnp, so declaring it directly adds
+# no new crates to the tree.
+#
+# No `serde` feature: `egress` defines its own IPC types rather than putting a
+# third-party struct on the wire, for the same reason `engine::status` does.
+network-interface = { version = "2.0.5", default-features = false }
+
 # --- Diagnostics and usage reporting --------------------------------------
 # Every crate here is already in `Cargo.lock` transitively via librqbit, so
 # declaring them directly adds no new crates to the tree.

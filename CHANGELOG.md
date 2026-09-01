@@ -6,6 +6,28 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 [kac]: https://keepachangelog.com/en/1.1.0/
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+- **Only transfer through a tunnel.** An opt-in check that works out which
+  network interface your traffic would actually leave by, and can hold all
+  transfer while that is not a tunnel. It reads your own routing table and
+  sends nothing — no "what is my IP" request to a web service, which would mean
+  handing your address to a stranger in order to be told it is protected.
+
+  Holding does not pause your torrents: Flume runs no torrent session at all,
+  so there are no transfers, no peer connections, no DHT and no listening port.
+  Nothing is written to your torrents, so whatever you paused stays paused and
+  whatever was running comes back running. The check runs before the engine
+  starts, so nothing announces to a tracker from an address you did not intend.
+
+  A drop takes effect immediately; recovery waits about ten seconds of a steady
+  tunnel, so a reconnecting VPN does not re-announce your library to every
+  tracker. Off by default. See the User Guide for what the check cannot tell
+  you — a PPPoE line looks like a tunnel from here, and OpenVPN on Windows does
+  not.
+
 ## [1.0.0] — 2026-08-30
 
 First public release.

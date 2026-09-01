@@ -3,8 +3,13 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getSettings, updateSettings } from "@/lib/ipc/client";
-import { isCommandError, type Settings } from "@/lib/ipc/types";
+import {
+  checkEgress,
+  getSettings,
+  listEgressInterfaces,
+  updateSettings,
+} from "@/lib/ipc/client";
+import { isCommandError, type Hop, type Settings } from "@/lib/ipc/types";
 import {
   SECTIONS,
   SETTING_DEFS,
@@ -66,6 +71,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const [query, setQuery] = useState("");
   const [changes, setChanges] = useState<Change[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [interfaces, setInterfaces] = useState<readonly Hop[]>([]);
+  const [activeInterface, setActiveInterface] = useState<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -79,6 +86,24 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             : "Could not read your settings.",
         ),
       );
+  }, []);
+
+  // Loaded once when the dialog opens rather than on a timer. Enumerating
+  // interfaces costs ~3.2 ms, which is fine for a dialog and is exactly what
+  // the guard's per-tick path avoids.
+  useEffect(() => {
+    void listEgressInterfaces()
+      .then(setInterfaces)
+      .catch(() => {
+        // An empty list renders as "Any tunnel interface" alone, which is the
+        // default anyway. Failing to enumerate is not worth an error dialog
+        // over a setting most people never open.
+      });
+    void checkEgress()
+      .then((status) =>
+        setActiveInterface(status.report.path.v4?.interface ?? null),
+      )
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -314,6 +339,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           value={value}
                           label={def.label}
                           onChange={(next) => void change(def, next)}
+                          interfaces={interfaces}
+                          activeInterface={activeInterface}
                           onBrowse={async () => {
                             const picked = await open({
                               directory: true,

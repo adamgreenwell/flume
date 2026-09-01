@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreStatus,
   DetectedClient,
+  GuardStatus,
+  Hop,
   ImportOutcome,
   Settings,
   TorrentDetail,
@@ -208,6 +210,37 @@ export async function importClient(
   outputFolder: string | null,
 ): Promise<ImportOutcome> {
   return invoke<ImportOutcome>("import_client", { torrentsDir, outputFolder });
+}
+
+/**
+ * Reports which network interface traffic would actually leave by.
+ *
+ * Nothing is sent anywhere to answer this — it is two lookups against the
+ * local routing table, plus a walk of the interface list when an address has
+ * moved since the last call. Cheap enough to call on a timer.
+ *
+ * Independent of the guard setting: the answer is available even when the
+ * guard is off, since the guard decides what is *done* about it rather than
+ * whether it is known.
+ *
+ * @returns Where traffic leaves, the verdict on it, and whether the guard is
+ *   currently holding transfer.
+ */
+export async function checkEgress(): Promise<GuardStatus> {
+  return invoke<GuardStatus>("check_egress");
+}
+
+/**
+ * Lists the machine's network interfaces, classified, for the pin picker.
+ *
+ * Ordered tunnels first; loopback is excluded, since pinning it would hold
+ * transfer permanently. Costs a full interface enumeration, so it is called
+ * when the settings dialog opens rather than on a timer.
+ *
+ * @returns Every interface with what Flume makes of it.
+ */
+export async function listEgressInterfaces(): Promise<Hop[]> {
+  return invoke<Hop[]>("list_egress_interfaces");
 }
 
 /**

@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::egress::EgressGuard;
 use crate::engine::{DEFAULT_LISTEN_PORT, EngineConfig};
 
 /// Filename inside the app-data directory.
@@ -92,6 +93,26 @@ pub struct Settings {
     /// Row height in the library. Frontend-only, persisted for the same reason.
     pub density: Density,
 
+    /// Whether to require that traffic leaves through a tunnel, and what to
+    /// do when it does not.
+    ///
+    /// Defaults to [`EgressGuard::Off`]. Not because the check is expensive —
+    /// it sends nothing and costs a route lookup — but because a general-
+    /// purpose client that greets every new user with a warning about their
+    /// VPN has made an assumption about what they are downloading. Flume does
+    /// not make that assumption; see the project notes on use case.
+    pub egress_guard: EgressGuard,
+
+    /// The one interface the user will accept traffic leaving by, or `None` to
+    /// accept any tunnel.
+    ///
+    /// Pinning is the stricter setting and the more brittle one: macOS hands
+    /// out `utun` numbers dynamically, so a VPN client that reconnects can
+    /// land on a different interface and trip the guard. That is a real
+    /// trade-off the user is making knowingly, which is why the default is
+    /// `None` and the settings copy says so.
+    pub egress_interface: Option<String>,
+
     /// Whether anonymous usage counts may be sent.
     ///
     /// Three states, not two. `None` means *not yet asked*, which is what the
@@ -117,6 +138,8 @@ impl Default for Settings {
             proxy_url: None,
             theme: Theme::System,
             density: Density::Comfortable,
+            egress_guard: EgressGuard::Off,
+            egress_interface: None,
             // Not asked yet. Never defaults to `Some(true)`: consent that the
             // user did not give is not consent.
             usage_reporting: None,
@@ -188,14 +211,40 @@ impl Settings {
         let path = dir.join(SETTINGS_FILE);
         let defaults = Self::with_os_defaults().unwrap_or_default();
 
+        /// Defaults, except that the tunnel guard fails *closed*.
+        ///
+        /// Every other setting can fall back to its default harmlessly: a lost
+        /// rate limit is an uncapped download, a lost theme is the system
+        /// theme. The guard is the one field whose default is the unsafe
+        /// value. A user who set `Hold`, whose settings file then became
+        /// unreadable, would silently start transferring outside their tunnel
+        /// — the exact outcome they turned it on to prevent, arrived at by a
+        /// mechanism they cannot see.
+        ///
+        /// So a settings file that *exists* and cannot be used means Hold. The
+        /// cost is that someone who never enabled the guard and whose file
+        /// corrupts finds transfer held; that is visible, recoverable in one
+        /// click, and safe, which is the right way round for this trade.
+        fn failing_closed(defaults: &Settings) -> Settings {
+            Settings {
+                egress_guard: EgressGuard::Hold,
+                ..defaults.clone()
+            }
+        }
+
         let raw = match std::fs::read_to_string(&path) {
             Ok(raw) => raw,
-            // Missing file on first run is expected, not a problem.
+            // Missing file on first run is expected, not a problem — and not a
+            // reason to hold, since there is no prior choice to protect.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (defaults, None),
             Err(e) => {
                 return (
-                    defaults,
-                    Some(format!("could not read {}: {e}", path.display())),
+                    failing_closed(&defaults),
+                    Some(format!(
+                        "could not read {}: {e}. Transfer is held until you \
+                         confirm how the tunnel check should behave.",
+                        path.display()
+                    )),
                 );
             }
         };
@@ -203,11 +252,24 @@ impl Settings {
         match serde_json::from_str::<Self>(&raw) {
             Ok(settings) => match settings.validate() {
                 Ok(()) => (settings, None),
-                Err(e) => (defaults, Some(format!("settings were invalid: {e}"))),
+                // Parsing succeeded, so the user's guard choice is known even
+                // though something else in the file is unusable. Honour it
+                // rather than overriding a decision that was read correctly.
+                Err(e) => (
+                    Settings {
+                        egress_guard: settings.egress_guard,
+                        egress_interface: settings.egress_interface,
+                        ..defaults
+                    },
+                    Some(format!("settings were invalid: {e}")),
+                ),
             },
             Err(e) => (
-                defaults,
-                Some(format!("settings file was not valid JSON: {e}")),
+                failing_closed(&defaults),
+                Some(format!(
+                    "settings file was not valid JSON: {e}. Transfer is held \
+                     until you confirm how the tunnel check should behave."
+                )),
             ),
         }
     }
@@ -291,6 +353,20 @@ impl Settings {
                     "the proxy URL is missing a host and port".into(),
                 ));
             }
+        }
+        if let Some(interface) = self.egress_interface.as_deref() {
+            // Same reasoning as the proxy: `None` means "any tunnel", and
+            // silently treating a half-cleared field as `None` would hide a
+            // typo behind a guard that then accepts anything.
+            if interface.trim().is_empty() {
+                return Err(SettingsError::Invalid(
+                    "leave the interface empty to accept any tunnel, or name one".into(),
+                ));
+            }
+            // Not checked for existence. An interface that is absent right now
+            // is the normal state of a VPN that is not connected yet, and
+            // refusing to save the setting until the tunnel is up would make
+            // it impossible to configure the guard before travelling.
         }
         Ok(())
     }
@@ -469,6 +545,114 @@ mod tests {
             ..valid()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn a_corrupt_settings_file_holds_transfer_rather_than_releasing_it() {
+        // The guard is the one setting whose default is the unsafe value, so
+        // it is the one setting that must not simply fall back to it.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(tmp.path().join(SETTINGS_FILE), "{ not json").expect("write");
+
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert_eq!(
+            loaded.egress_guard,
+            EgressGuard::Hold,
+            "a settings file that exists and cannot be read must fail closed"
+        );
+        let problem = problem.expect("corruption is reported");
+        assert!(
+            problem.contains("held"),
+            "the message has to say transfer is held, or the hold is inexplicable: {problem}"
+        );
+    }
+
+    #[test]
+    fn a_first_run_does_not_hold_transfer() {
+        // No file is not a corrupt file. There is no prior choice to protect,
+        // and greeting a new user with a held library would be absurd.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert_eq!(loaded.egress_guard, EgressGuard::Off);
+        assert!(problem.is_none());
+    }
+
+    #[test]
+    fn a_file_that_parses_but_fails_validation_keeps_the_users_guard_choice() {
+        // Parsing succeeded, so what the user chose is known. Overriding a
+        // decision that was read correctly would be failing closed for its own
+        // sake.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(
+            tmp.path().join(SETTINGS_FILE),
+            r#"{"downloadDir":"/tmp/x","listenPort":0,"egressGuard":"warn","egressInterface":"utun6"}"#,
+        )
+        .expect("write");
+
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert!(problem.is_some(), "port 0 is invalid and must be reported");
+        assert_eq!(loaded.egress_guard, EgressGuard::Warn);
+        assert_eq!(loaded.egress_interface.as_deref(), Some("utun6"));
+        assert_eq!(
+            loaded.listen_port, DEFAULT_LISTEN_PORT,
+            "the invalid field still falls back"
+        );
+    }
+
+    #[test]
+    fn the_egress_guard_is_off_until_the_user_asks_for_it() {
+        // A general-purpose client does not open with a warning about someone
+        // else's network.
+        assert_eq!(Settings::default().egress_guard, EgressGuard::Off);
+        assert_eq!(Settings::default().egress_interface, None);
+    }
+
+    #[test]
+    fn rejects_a_blank_pinned_interface() {
+        let settings = Settings {
+            egress_interface: Some("   ".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_a_pinned_interface_that_is_not_up_right_now() {
+        // Configuring the guard before connecting the VPN has to work, or the
+        // setting can only be changed from the one state it is meant to guard.
+        let settings = Settings {
+            egress_guard: EgressGuard::Hold,
+            egress_interface: Some("utun99".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn the_egress_guard_applies_without_a_session_restart() {
+        // The check reads the routing table live. Restarting librqbit to
+        // change a policy it knows nothing about would drop every peer
+        // connection for no reason.
+        let before = valid();
+        for after in [
+            Settings {
+                egress_guard: EgressGuard::Hold,
+                ..valid()
+            },
+            Settings {
+                egress_guard: EgressGuard::Warn,
+                egress_interface: Some("utun6".into()),
+                ..valid()
+            },
+        ] {
+            assert!(
+                !before.requires_restart(&after),
+                "expected no restart for {after:?}"
+            );
+        }
     }
 
     #[test]

@@ -488,6 +488,131 @@ export interface ImportOutcome {
   failed: number;
 }
 
+/**
+ * What Flume does when traffic is not leaving through a tunnel. Mirrors Rust
+ * `EgressGuard`.
+ *
+ * Three states rather than a boolean, and the middle one is the point: wanting
+ * to know is not the same as wanting transfer stopped.
+ */
+export type EgressGuard = "off" | "warn" | "hold";
+
+/** What kind of interface something is. Mirrors Rust `InterfaceKind`. */
+export type InterfaceKind = "tunnel" | "ordinary" | "unknown";
+
+/** The interface one address family leaves by. Mirrors Rust `Hop`. */
+export interface Hop {
+  /**
+   * The interface name as the operating system gives it — `utun6`, `wg0`, or
+   * on Windows the adapter's friendly name.
+   */
+  interface: string;
+  /** What kind of interface that is. */
+  kind: InterfaceKind;
+}
+
+/**
+ * Where each address family would leave from. Mirrors Rust `EgressPath`.
+ *
+ * Either half may be `null`: a network with no working IPv6 has no IPv6 route,
+ * which is ordinary and not a fault.
+ */
+export interface EgressPath {
+  /** Where IPv4 leaves from. */
+  v4: Hop | null;
+  /** Where IPv6 leaves from. */
+  v6: Hop | null;
+}
+
+/**
+ * Whether transfer is allowed, and why not if not. Mirrors Rust `Verdict`.
+ *
+ * `tunnelled` and `pinned` permit transfer; nothing else does — a guard the
+ * user switched on to hold traffic has to fail closed, or it is decoration.
+ *
+ * The two are kept apart so the UI never overclaims. `tunnelled` is Flume's
+ * own finding. `pinned` means traffic leaves by the interface the user named
+ * and Flume could not confirm it is a tunnel — true, and weaker, and it must
+ * read that way on screen.
+ */
+export type Verdict =
+  | {
+      verdict: "tunnelled";
+      /** The interface traffic leaves by. */
+      interface: string;
+      /**
+       * Whether the *other* address family leaves outside that tunnel.
+       *
+       * Reported rather than enforced against: a v4-only tunnel beside a
+       * working IPv6 default route is still doing what the user asked for over
+       * v4, and they are entitled to be told rather than blocked.
+       */
+      otherFamilyOutside: boolean;
+    }
+  | {
+      verdict: "pinned";
+      /** The interface traffic leaves by, which the user named in settings. */
+      interface: string;
+      /** Whether the other address family leaves outside that interface. */
+      otherFamilyOutside: boolean;
+    }
+  | { verdict: "direct"; interface: string }
+  | {
+      verdict: "wrongTunnel";
+      /** The interface it actually leaves by. */
+      interface: string;
+      /** The interface pinned in settings. */
+      expected: string;
+    }
+  | { verdict: "unknown" };
+
+/**
+ * The current egress path and what Flume makes of it. Mirrors Rust
+ * `EgressReport`.
+ *
+ * Both halves travel together because the verdict is derived from the path
+ * *and* the user's pin, and deriving it here would put the decision in two
+ * places. The path comes along so the UI can name the interface without
+ * re-deriving anything.
+ */
+export interface EgressReport {
+  /** Where each address family leaves from. */
+  path: EgressPath;
+  /** Whether that permits transfer, and why not if not. */
+  verdict: Verdict;
+}
+
+/**
+ * Everything the UI needs to explain the guard. Mirrors Rust `GuardStatus`.
+ *
+ * Published once per second by the guard loop, which is the only thing that
+ * probes — a second prober would read the routing table at a different instant
+ * and disagree, and a guard that contradicts itself on screen is worse than no
+ * guard.
+ */
+export interface GuardStatus {
+  /** The mode the user chose. */
+  guard: EgressGuard;
+  /** Where traffic leaves, and what Flume makes of it. */
+  report: EgressReport;
+  /**
+   * Whether transfer is being held right now.
+   *
+   * Always `false` unless {@link GuardStatus.guard} is `"hold"` — `"warn"`
+   * says so and stops nothing.
+   */
+  held: boolean;
+  /**
+   * Seconds until transfer resumes, while a settle window is running.
+   *
+   * `null` when transfer is running, and when it is held with no prospect of
+   * resuming. The difference between "held, and counting down" and "held, and
+   * waiting for you" is the difference between a status and an unexplained
+   * pause.
+   */
+  resumesInSeconds: number | null;
+}
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */
@@ -517,6 +642,25 @@ export interface Settings {
    * reason: a preference the user re-sets on every launch is not a preference.
    */
   density: Density;
+  /**
+   * Whether to require that traffic leaves through a tunnel, and what to do
+   * when it does not.
+   *
+   * Defaults to `off`. Not because the check is expensive — it sends nothing —
+   * but because a general-purpose client that greets every new user with a
+   * warning about their VPN has made an assumption about what they are
+   * downloading.
+   */
+  egressGuard: EgressGuard;
+  /**
+   * The one interface the user will accept traffic leaving by, or `null` to
+   * accept any tunnel.
+   *
+   * Pinning is stricter and more brittle: macOS hands out `utun` numbers
+   * dynamically, so a VPN that reconnects can land elsewhere and trip the
+   * guard.
+   */
+  egressInterface: string | null;
   /**
    * Whether anonymous usage counts may be sent.
    *

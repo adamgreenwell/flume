@@ -52,6 +52,8 @@ flume.dev (a React node editor). Both verified unrelated.
 | Settings store     | `tauri-plugin-store` (JSON)                            | Sufficient for a flat settings object; no SQLite migration burden                                                                                                                                                                    |
 | Usage reporting    | Opt-in, asked once at first run                        | Opt-out telemetry in a BitTorrent client becomes the top comment in every thread about it, permanently. qBittorrent ships none; that is the baseline. Opt-in costs sample rate, opt-out costs the audience                           |
 | Usage collector    | Cloudflare Worker + D1, in `collector/`                | The Worker validates against the wire format, so it must move in the same commit as the Rust enum — a schema split across two repos drifts                                                                                           |
+| Tunnel guard       | Stops the engine; never pauses torrents                | `Session::pause` writes `is_paused` to `session.json` synchronously and librqbit stores one paused bit with no reason, so a guard pause is indistinguishable from the user's and quitting while held would strand the library        |
+| Guard hysteresis   | Hold on the first failing probe, release after 10 s    | Asymmetric on purpose: protection is never delayed, only recovery. A laptop waking or a VPN reconnecting resolves in seconds, and releasing into one costs a re-announce to every tracker plus a DHT announce, per torrent           |
 
 ## Architecture rules (violating one is a design defect)
 
@@ -79,6 +81,40 @@ flume.dev (a React node editor). Both verified unrelated.
     error strings, because librqbit's errors embed tracker URLs and paths, so
     reported failures are a closed enum (`usage::FailureKind`) rather than a
     message.
+12. **The egress guard fails closed, everywhere.** `Verdict::Unknown` does not
+    permit transfer; a settings file that exists and cannot be parsed forces
+    `Hold`; the gate starts held rather than open; and the status published
+    before the first probe says held. Each of those is a place where the
+    obvious default is the unsafe one, and a guard that fails open in any of
+    them is decoration. The one deliberate exception is a settings file that
+    parses but fails validation, where the user's actual choice is known and is
+    honoured.
+
+## The egress guard holds by stopping the engine
+
+Worth stating separately because the obvious implementation is wrong and looks
+right.
+
+Pausing every torrent when the tunnel drops cannot work: `Session::pause` writes
+`is_paused` into `session.json` synchronously, and librqbit stores exactly one
+paused bit with no reason attached. A guard pause is therefore indistinguishable
+from a user pause, on disk and in memory, so quitting while held brings the
+library back paused with the tunnel up — the exact stranding the feature exists
+to prevent. Recovering from that needs Flume's own ledger, keyed by info hash
+because ids are reused, persisted against a crash, and reconciled every launch.
+
+Stopping the engine deletes that problem rather than solving it. The guard never
+touches the torrents, so nothing it does reaches `session.json`, so whatever the
+user paused stays paused and whatever was running comes back running. It is also
+strictly stronger: pausing leaves the DHT, the TCP listener and the UPnP mapping
+running, so a "paused" Flume still announces itself from the address being
+protected.
+
+It is what closes the launch window too. librqbit restores _and starts_ every
+persisted torrent inside `Session::new_with_opts`, with no hook between
+construction and the first tracker announce — so a session built before the
+check has already transferred. The guard's first tick runs before any engine
+exists.
 
 ## Telemetry is not usage reporting
 

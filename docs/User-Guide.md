@@ -57,6 +57,57 @@ by accident is a bad afternoon.
 | UPnP                | Automatic router port forwarding         |
 | DHT                 | Required for magnet links                |
 | Theme               | Light, dark, or follow system            |
+| Tunnel check        | Off, warn, or hold transfer — see below  |
+
+## Only transfer through a tunnel
+
+**Settings → Network.** Off unless you turn it on.
+
+Flume works out which network interface your traffic would actually leave by,
+and can hold everything while that is not a tunnel. It reads this from your own
+routing table and sends nothing to do it — there is no "what is my IP" request
+to a web service, which would mean handing your address to a stranger in order
+to be told it is protected.
+
+Three modes:
+
+| Mode     | What it does                                                      |
+| -------- | ----------------------------------------------------------------- |
+| **Off**  | Flume does not look. Nothing is checked and nothing is stopped    |
+| **Warn** | Tells you when traffic is leaving outside a tunnel; stops nothing |
+| **Hold** | Runs no torrent session at all while traffic is outside a tunnel  |
+
+**Hold does not pause your torrents — it stops the engine.** While held there
+are no transfers, no peer connections, no DHT and no listening port. Nothing is
+written to your torrents, which is why the ones you paused yourself stay paused
+and the ones that were running come back running. A drop takes effect
+immediately; recovery waits about ten seconds of a steady tunnel, so a VPN
+reconnecting does not make your library flap and re-announce to every tracker.
+
+**Accept only one interface.** Leave the picker on _Any tunnel interface_ unless
+you have a reason not to. Pinning is stricter and more brittle: on macOS a new
+`utun` appears on every VPN connect and the old ones stay, so the number you pin
+today is not the one carrying traffic tomorrow. Windows and Linux name the
+adapter after the VPN config and stay put.
+
+If you pin an interface Flume cannot identify as a tunnel, it is accepted
+anyway — that is your word for it, and Flume says so rather than claiming it
+found a tunnel.
+
+### What this check cannot tell you
+
+It sees which interface traffic leaves by and whether it looks like a tunnel. It
+cannot see where the tunnel goes or who runs it:
+
+- A **PPPoE connection or USB cellular modem** looks exactly like a VPN tunnel
+  from here. If your machine dials the connection itself rather than going
+  through a router, the check may call your ordinary internet connection a
+  tunnel.
+- On **Windows with OpenVPN**, the adapter is named `Local Area Connection` and
+  cannot be told apart from an Ethernet card. Transfer will be held even though
+  you are protected — pin that interface to get through.
+
+See [[Privacy]] for the full contract.
 
 ## Looking at one torrent
 

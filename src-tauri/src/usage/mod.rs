@@ -196,6 +196,12 @@ pub enum SettingKey {
     /// Proxy configured or cleared.
     #[serde(rename = "net.proxy")]
     NetProxy,
+    /// The tunnel guard's mode.
+    #[serde(rename = "net.egressGuard")]
+    NetEgressGuard,
+    /// Whether a specific interface is pinned.
+    #[serde(rename = "net.egressInterface")]
+    NetEgressInterface,
     /// Colour scheme.
     #[serde(rename = "ui.theme")]
     UiTheme,
@@ -245,6 +251,17 @@ impl SettingKey {
         );
         note(previous.enable_upnp != next.enable_upnp, Self::NetUpnp);
         note(previous.proxy_url != next.proxy_url, Self::NetProxy);
+        note(
+            previous.egress_guard != next.egress_guard,
+            Self::NetEgressGuard,
+        );
+        // The key only, as everywhere here. That someone pins an interface is
+        // the signal; which one they pinned is a fact about their machine and
+        // never leaves it.
+        note(
+            previous.egress_interface != next.egress_interface,
+            Self::NetEgressInterface,
+        );
         note(previous.theme != next.theme, Self::UiTheme);
         note(previous.density != next.density, Self::UiDensity);
         note(

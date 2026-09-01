@@ -17,6 +17,15 @@ export interface DockProps {
   history: readonly ThroughputSample[];
   /** Configured download limit in bytes/sec, or `null` for unlimited. */
   limitBps: number | null;
+  /**
+   * Whether the egress guard is holding transfer.
+   *
+   * Every figure reads as a dash while it is. Zeros would be as wrong as stale
+   * numbers and wrong in a more believable way: "0 connected peers" is a
+   * measurement, and nothing is being measured — there is no torrent session
+   * at all. A dash says that; a zero claims the opposite.
+   */
+  held?: boolean;
 }
 
 /**
@@ -33,7 +42,16 @@ export interface DockProps {
  * @param props - See {@link DockProps}.
  * @returns The rendered dock.
  */
-export function Dock({ status, torrents, history, limitBps }: DockProps) {
+export function Dock({
+  status,
+  torrents,
+  history,
+  limitBps,
+  held = false,
+}: DockProps) {
+  /** A dash while held, since nothing is being measured. */
+  const measured = (value: string | number) => (held ? "—" : String(value));
+
   const active = torrents.filter(
     (t) => t.state === "downloading" || t.state === "seeding",
   ).length;
@@ -75,12 +93,18 @@ export function Dock({ status, torrents, history, limitBps }: DockProps) {
         falsify; growing is always better than clipping.
       */}
       <div className="border-line grid grow grid-cols-[repeat(auto-fit,minmax(88px,1fr))] content-center gap-x-[18px] gap-y-2.5 border-l px-[22px] py-3.5 lg:grow-0 lg:basis-[460px]">
-        <StatCard label="Active" value={`${active} of ${torrents.length}`} />
-        <StatCard label="Session down" value={formatBytes(downloaded)} />
-        <StatCard label="Session up" value={formatBytes(uploaded)} />
-        <StatCard label="Share ratio" value={ratio.toFixed(2)} />
-        <StatCard label="Connected peers" value={livePeers} />
-        <StatCard label="Known peers" value={knownPeers} />
+        <StatCard
+          label="Active"
+          value={held ? "—" : `${active} of ${torrents.length}`}
+        />
+        <StatCard
+          label="Session down"
+          value={measured(formatBytes(downloaded))}
+        />
+        <StatCard label="Session up" value={measured(formatBytes(uploaded))} />
+        <StatCard label="Share ratio" value={measured(ratio.toFixed(2))} />
+        <StatCard label="Connected peers" value={measured(livePeers)} />
+        <StatCard label="Known peers" value={measured(knownPeers)} />
         <StatCard
           label="DHT nodes"
           value={
