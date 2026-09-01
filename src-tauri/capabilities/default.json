@@ -9,6 +9,7 @@
     "dialog:allow-open",
     "opener:allow-reveal-item-in-dir",
     "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text",
     "notification:default",
     "deep-link:default"
   ]

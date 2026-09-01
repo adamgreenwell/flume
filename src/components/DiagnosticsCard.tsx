@@ -52,7 +52,9 @@ export function DiagnosticsCard() {
       await writeText(bundle);
       setCopied(true);
     } catch {
-      setError("Could not write to the clipboard.");
+      setError(
+        "Could not write to the clipboard. Select the report above and copy it manually.",
+      );
     }
   }
 
@@ -75,6 +77,18 @@ export function DiagnosticsCard() {
           anywhere; you copy it yourself.
         </p>
 
+        {/*
+          Above the report, not below it. The report is long and scrolls, so an
+          error rendered after it sits off-screen — which is how a Copy button
+          that could not work at all went unnoticed: the click did nothing, the
+          catch set an error, and nobody could see it.
+        */}
+        {error !== null ? (
+          <p className="text-err mt-2 text-[11.5px]" role="alert">
+            {error}
+          </p>
+        ) : null}
+
         {bundle !== null ? (
           <>
             <p className="text-fg-2 mt-2.5 max-w-[620px] text-[11.5px] leading-[1.5]">
@@ -86,12 +100,6 @@ export function DiagnosticsCard() {
               {bundle}
             </pre>
           </>
-        ) : null}
-
-        {error !== null ? (
-          <p className="text-err mt-2 text-[11.5px]" role="alert">
-            {error}
-          </p>
         ) : null}
       </div>
 

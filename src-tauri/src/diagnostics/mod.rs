@@ -62,6 +62,13 @@ fn compile(pattern: &str) -> Regex {
 /// temporaries cannot hold.
 static RULES: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     vec![
+        // Flume's own completion line used to carry the torrent's name, and
+        // logs already on disk still do -- for weeks, since the file spans
+        // many sessions. Redaction by literal cannot catch those: it matches
+        // against the *current* library, and a torrent that finished and was
+        // removed has nothing left to match. `telemetry.rs` no longer writes
+        // the name, and this catches what it wrote before.
+        (compile(r"(?m)^(.*torrent finished:).*$"), "$1 <torrent>"),
         // Carries the info hash in `xt=` and very often the torrent name in `dn=`.
         (compile(r"(?i)magnet:\?[^\s\x22'<>]*"), "<magnet>"),
         // Tracker announces, the proxy, anything else with a scheme.
@@ -518,6 +525,18 @@ mod tests {
 
         let windows = Redactor::patterns_only().apply(r"found C:\Users\Someone\AppData");
         assert_eq!(windows, r"found <home>\AppData");
+    }
+
+    #[test]
+    fn removes_a_torrent_name_from_a_completion_line_it_does_not_know() {
+        // The leak this caught in a real report: a torrent that finished and
+        // was later removed leaves its name in the log, and the literal
+        // matcher has nothing to match it against.
+        let out = Redactor::patterns_only().apply(
+            "[2026-08-30][13:41:44][flume_lib::telemetry][INFO] torrent finished: Some Private Thing.dmg",
+        );
+        assert!(out.ends_with("torrent finished: <torrent>"), "{out}");
+        assert!(!out.contains("Some Private Thing"), "{out}");
     }
 
     #[test]

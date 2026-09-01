@@ -50,10 +50,15 @@ not distinguishable from inside Flume, and claiming to know which would be a
 verdict the data cannot support.
 
 **One honest limitation.** Redaction removes torrent names by matching them
-against the torrents currently in your library. A log line naming a torrent
-you have already removed has nothing to match against and can survive. That is
-why the report is shown before it is copied: you are the only person who can
-recognise it. Read it before you paste it.
+against the torrents currently in your library, so a log line naming a torrent
+you have already removed has nothing to match against. Flume no longer writes
+torrent names into its log at all, and the one line that used to is redacted
+by shape as well — but librqbit, the engine underneath, is not under the same
+discipline, and a name reaching the log by some other route would survive.
+
+That is why the report is shown before it is copied rather than after: you are
+the only person who can recognise a name that got through. Read it before you
+paste it.
 
 ### Usage counts — opt-in, off unless you say yes
 
