@@ -33,41 +33,54 @@
 //! `usage::sender`, and a privacy feature that phoned home to work would be a
 //! poor joke.
 //!
-//! # Why the classifier looks only at the name
+//! # The MAC is a signal on two platforms out of three
 //!
-//! A point-to-point tunnel has no link-layer address, so "no MAC" reads like a
-//! free corroborating signal. It is not one, at least not through this crate:
-//! on macOS `network-interface` 2.0.5 reports `en7` — a real Ethernet adapter
-//! `ifconfig` gives as `80:6d:97:63:a2:67` — as `02:00:00:00:00:00`, and every
-//! `utun` and `lo0` as `00:00:00:00:00:00`. It reads the address out of
-//! `sockaddr_dl` at what appears to be the wrong offset and hands back a
-//! placeholder. There is an accidental `02:` versus `00:` split in those
-//! values, and it is a byte from a wrong offset rather than a fact about the
-//! interface; a guard someone trusts is not the place for it.
+//! A point-to-point tunnel has no link-layer address, so "no MAC" looks like
+//! free corroboration. Measured through this crate it is worth exactly what
+//! the platform's code path is worth, and the three paths are not equal:
 //!
-//! # The name is not equally trustworthy on all three platforms
+//! * **Windows** — correct. `make_mac_address` returns `None` when
+//!   `PhysicalAddressLength` is 0, and TorGuard's `wg-torguard` adapter
+//!   reports no physical address while `Ethernet` reports
+//!   `00-1C-42-A6-85-8B`.
+//! * **Linux** — correct by construction: the address comes from an
+//!   `AF_PACKET` entry's `sockaddr_ll`, and a tunnel has no such entry.
+//! * **macOS** — useless. It reports `en7`, which `ifconfig` gives as
+//!   `80:6d:97:63:a2:67`, as `02:00:00:00:00:00`, and every `utun` and `lo0`
+//!   as `00:00:00:00:00:00` — a placeholder read from what looks like the
+//!   wrong offset in `sockaddr_dl`.
+//!
+//! That asymmetry is survivable because of *which* direction each path fails
+//! in. macOS never returns `None`, so a rule of the form "no MAC suggests a
+//! tunnel" simply never fires there — inert rather than wrong — and macOS
+//! names its own tunnels `utun`, so the name carries it. Read an absent MAC
+//! as evidence *for* a tunnel, never a present one as evidence *against*,
+//! and all three platforms stay honest.
+//!
+//! # The name is not equally trustworthy either
 //!
 //! macOS and Linux name tunnel interfaces themselves — `utun6`, `wg0`, `tun0`
 //! — and the prefix is the operating system's, not an application's. Windows
 //! is different: the friendly name of a WireGuard adapter is the *config
 //! file's* name, so TorGuard's reads `wg-torguard` only because TorGuard
-//! writes the config. Its OpenVPN adapter is worse — a TAP-Windows Adapter V9
-//! whose friendly name is `Local Area Connection`, sitting in the list beside
-//! `Local Area Connection* 6`, a WAN Miniport that is not a tunnel. Nothing in
-//! either name separates them.
+//! writes the config.
 //!
-//! The consequence is deliberate and worth knowing before someone tries to
-//! make the classifier cleverer: on Windows it will sometimes fail to
-//! recognise a tunnel that is genuinely up. That is the cheap direction — the
-//! guard holds transfer that was in fact protected, the user notices
-//! immediately, and the interface pin exists for exactly this. Widening the
-//! name match to catch `Local Area Connection` would trade it for the
-//! expensive failure: telling someone a WAN Miniport is a tunnel.
+//! Its OpenVPN adapter is the hard case. It is a TAP-Windows Adapter V9 whose
+//! friendly name is `Local Area Connection` — sitting in the list beside
+//! `Local Area Connection* 6`, a WAN Miniport that is not a tunnel — it *has*
+//! a MAC (`00-FF-FD-61-9F-3D`), and its media type is 802.3. Neither the name
+//! nor the MAC separates it from a real Ethernet adapter. The one field that
+//! does is `IP_ADAPTER_ADDRESSES.IfType`: 53 (`propVirtual`) for both TorGuard
+//! adapters against 6 (`ethernetCsmacd`) for Ethernet. This crate reads that
+//! field — `windows.rs` derives `internal` from it — and does not expose it,
+//! and Flume forbids `unsafe_code`, so there is no route to it from here.
 //!
-//! So [`classify`] takes the name and the platform's own `internal` flag,
-//! both of which this crate reports correctly. Do not reintroduce the MAC
-//! check without first re-running `show_this_machines_interfaces` on all three
-//! platforms and finding different values there.
+//! The consequence is deliberate: with TorGuard in OpenVPN mode on Windows the
+//! guard will not recognise the tunnel. That is a false negative — it holds
+//! transfer that was in fact protected, the user notices at once, and
+//! [`Verdict::Pinned`] is the way out. Widening the name match to catch
+//! `Local Area Connection` would trade it for calling a WAN Miniport a
+//! tunnel, which is the failure that actually costs someone something.
 //!
 //! Like [`crate::engine`], this module imports no Tauri types and runs under a
 //! plain `cargo test`.
@@ -84,6 +97,12 @@ use serde::{Deserialize, Serialize};
 /// address, which is the whole point — peer traffic goes to arbitrary internet
 /// addresses, so the default route is what decides where it leaves from.
 /// Nothing is sent to it.
+///
+/// Checked rather than assumed, since a reserved range is plausibly the sort
+/// of thing a VPN's leak protection blackholes. With TorGuard connected on
+/// Windows, `192.0.2.1`, `1.1.1.1` and `8.8.8.8` all resolve to the tunnel:
+/// WireGuard covers the space with four `/2` routes that beat its own `/1`
+/// blackholes, and no reserved prefix is singled out.
 const PROBE_V4: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9);
 
 /// Destination used to provoke an IPv6 route lookup.
@@ -210,6 +229,27 @@ pub enum Verdict {
         other_family_outside: bool,
     },
 
+    /// Traffic leaves through the interface the user pinned, which Flume
+    /// could not itself identify as a tunnel.
+    ///
+    /// Transfer is allowed: the user naming an interface outranks a name
+    /// heuristic, and without this the pin would be unable to rescue anything
+    /// the classifier failed on — which is precisely what it is for. TorGuard
+    /// in OpenVPN mode on Windows presents as `Local Area Connection` with a
+    /// MAC and an 802.3 media type, indistinguishable from Ethernet through
+    /// what this crate exposes, and no amount of classifier work reaches it.
+    ///
+    /// Kept separate from [`Self::Tunnelled`] so the UI never claims more than
+    /// it knows. "Traffic leaves through the interface you pinned" is true;
+    /// "traffic leaves through a tunnel" would be the user's assertion
+    /// repeated back to them as Flume's finding.
+    Pinned {
+        /// The interface it leaves by, which the user named.
+        interface: String,
+        /// Whether the other address family leaves outside that interface.
+        other_family_outside: bool,
+    },
+
     /// Traffic leaves through an ordinary adapter.
     Direct {
         /// The interface it leaves by.
@@ -244,7 +284,7 @@ impl Verdict {
     /// traffic must fail closed, or it is decoration.
     #[must_use]
     pub const fn allows_transfer(&self) -> bool {
-        matches!(self, Self::Tunnelled { .. })
+        matches!(self, Self::Tunnelled { .. } | Self::Pinned { .. })
     }
 }
 
@@ -289,23 +329,26 @@ pub fn source_address(destination: SocketAddr) -> Option<IpAddr> {
 /// * `name` — exactly as the platform gives it. `utun6` on macOS,
 ///   `wg0`/`tun0`/`ppp0` on Linux, and on Windows the adapter's *friendly
 ///   name*, which the user can rename to anything and whose case is not
-///   guaranteed.
+///   guaranteed. Measured examples: `wg-torguard`, `Local Area Connection`,
+///   `Ethernet`, `en7`, `lo0`.
+/// * `mac_addr` — absent for a tunnel on Windows and Linux, and *never*
+///   absent on macOS, where this crate reports a placeholder for every
+///   interface. Usable in one direction only: absence is evidence for a
+///   tunnel, presence is not evidence against one. The module docs carry the
+///   measurements.
 /// * `internal` — the platform's own "loopback or otherwise not remotely
-///   reachable" flag. Correct on every platform checked, and the only thing
-///   separating `lo0` from a tunnel here.
-///
-/// The MAC address is deliberately absent; see the module docs for the
-/// measurements that ruled it out.
+///   reachable" flag. Correct everywhere checked, and the only thing
+///   separating `lo0` from a tunnel.
 ///
 /// Returning [`InterfaceKind::Unknown`] is a legitimate answer and is treated
 /// as "not a tunnel" downstream, so it is the safe thing to return when the
 /// evidence genuinely does not settle it.
 #[must_use]
-pub fn classify(name: &str, internal: bool) -> InterfaceKind {
+pub fn classify(name: &str, mac_addr: Option<&str>, internal: bool) -> InterfaceKind {
     // TODO(adam): implement. See `classification_*` tests below for the cases
     // this has to satisfy — they are the specification, and they fail until
     // this is written.
-    let _ = (name, internal);
+    let _ = (name, mac_addr, internal);
     InterfaceKind::Unknown
 }
 
@@ -320,7 +363,11 @@ fn hop_for(address: IpAddr, interfaces: &[NetworkInterface]) -> Option<Hop> {
         .find(|candidate| candidate.addr.iter().any(|addr| addr.ip() == address))?;
 
     Some(Hop {
-        kind: classify(&interface.name, interface.internal),
+        kind: classify(
+            &interface.name,
+            interface.mac_addr.as_deref(),
+            interface.internal,
+        ),
         interface: interface.name.clone(),
     })
 }
@@ -365,30 +412,48 @@ impl EgressPath {
             (None, None) => return Verdict::Unknown,
         };
 
-        if deciding.kind != InterfaceKind::Tunnel {
-            return match deciding.kind {
-                InterfaceKind::Ordinary => Verdict::Direct {
+        let other_family_outside = other.is_some_and(|hop| hop.interface != deciding.interface);
+
+        // The pin is answered before the classifier, because it outranks it.
+        // A user who names an interface is asserting something the classifier
+        // cannot see -- and on Windows in OpenVPN mode there is nothing for
+        // the classifier to see, so a pin that could not override it would be
+        // a setting that rescues nothing.
+        if let Some(expected) = pinned {
+            if expected != deciding.interface {
+                return Verdict::WrongTunnel {
                     interface: deciding.interface.clone(),
-                },
-                // An interface Flume could not classify is not a tunnel, and
-                // saying "direct" about it would be a claim of the same
-                // confidence in the other direction.
-                InterfaceKind::Tunnel | InterfaceKind::Unknown => Verdict::Unknown,
+                    expected: expected.to_owned(),
+                };
+            }
+            return if deciding.kind == InterfaceKind::Tunnel {
+                Verdict::Tunnelled {
+                    interface: deciding.interface.clone(),
+                    other_family_outside,
+                }
+            } else {
+                // Allowed, but reported as the user's assertion rather than
+                // as Flume's finding. Rule 9: the stronger claim is not
+                // available, so the stronger claim is not made.
+                Verdict::Pinned {
+                    interface: deciding.interface.clone(),
+                    other_family_outside,
+                }
             };
         }
 
-        if let Some(expected) = pinned
-            && expected != deciding.interface
-        {
-            return Verdict::WrongTunnel {
+        match deciding.kind {
+            InterfaceKind::Tunnel => Verdict::Tunnelled {
                 interface: deciding.interface.clone(),
-                expected: expected.to_owned(),
-            };
-        }
-
-        Verdict::Tunnelled {
-            other_family_outside: other.is_some_and(|hop| hop.interface != deciding.interface),
-            interface: deciding.interface.clone(),
+                other_family_outside,
+            },
+            InterfaceKind::Ordinary => Verdict::Direct {
+                interface: deciding.interface.clone(),
+            },
+            // An interface Flume could not classify is not a tunnel, and
+            // saying "direct" about it would be a claim of the same
+            // confidence in the other direction.
+            InterfaceKind::Unknown => Verdict::Unknown,
         }
     }
 }
@@ -477,7 +542,7 @@ mod tests {
 
         println!(
             "{:<4} {:<34} {:<19} {:<9} {:?}",
-            "", "name (as the crate reports it)", "mac_addr (unused)", "internal", "classify()"
+            "", "name (as the crate reports it)", "mac_addr", "internal", "classify()"
         );
         for interface in NetworkInterface::show().unwrap_or_default() {
             println!(
@@ -490,7 +555,11 @@ mod tests {
                 interface.name,
                 interface.mac_addr.as_deref().unwrap_or("(none)"),
                 interface.internal,
-                classify(&interface.name, interface.internal)
+                classify(
+                    &interface.name,
+                    interface.mac_addr.as_deref(),
+                    interface.internal
+                )
             );
         }
         println!("\n--> marks an interface currently carrying traffic.\n");
@@ -504,14 +573,14 @@ mod tests {
     #[test]
     fn classification_recognises_a_macos_tunnel() {
         // The shape every `utun` has: point-to-point, so no MAC at all.
-        assert_eq!(classify("utun6", false), InterfaceKind::Tunnel);
+        assert_eq!(classify("utun6", None, false), InterfaceKind::Tunnel);
     }
 
     #[test]
     fn classification_recognises_linux_tunnels() {
         for name in ["wg0", "tun0", "ppp0"] {
             assert_eq!(
-                classify(name, false),
+                classify(name, None, false),
                 InterfaceKind::Tunnel,
                 "{name} should read as a tunnel"
             );
@@ -530,7 +599,7 @@ mod tests {
         // of config name and not a vendor string. It holds for TorGuard users
         // because TorGuard generates the config, and it would not hold for a
         // hand-rolled one.
-        assert_eq!(classify("wg-torguard", false), InterfaceKind::Tunnel);
+        assert_eq!(classify("wg-torguard", None, false), InterfaceKind::Tunnel);
     }
 
     #[test]
@@ -546,9 +615,14 @@ mod tests {
         // which is the cheap direction to be wrong in and what the interface
         // pin exists to fix. Matching "Local Area Connection" would trade that
         // for a false positive on a WAN Miniport, which is the expensive one.
-        for name in ["Local Area Connection", "Local Area Connection* 6"] {
+        // Both carry a MAC as well, so neither signal reaches them: the TAP
+        // adapter measured 00-FF-FD-61-9F-3D.
+        for (name, mac) in [
+            ("Local Area Connection", Some("00FFFD619F3D")),
+            ("Local Area Connection* 6", Some("00FFFD619F3E")),
+        ] {
             assert_ne!(
-                classify(name, false),
+                classify(name, mac, false),
                 InterfaceKind::Tunnel,
                 "{name} must not read as a tunnel; nothing in it says tunnel"
             );
@@ -558,11 +632,19 @@ mod tests {
     #[test]
     fn classification_does_not_mistake_ethernet_or_wifi_for_a_tunnel() {
         // The failure that matters most: telling someone they are covered.
-        // "Ethernet" is measured: it is the Parallels VirtIO adapter carrying
-        // traffic on the Windows VM.
-        for name in ["en7", "eth0", "Wi-Fi", "Ethernet", "enp3s0", "wlan0"] {
+        // Measured pairs. "Ethernet" is the Parallels VirtIO adapter carrying
+        // traffic on the Windows VM; its MAC is real and so is en7's, though
+        // macOS reports a placeholder rather than that value.
+        for (name, mac) in [
+            ("en7", Some("02:00:00:00:00:00")),
+            ("Ethernet", Some("001C42A6858B")),
+            ("eth0", Some("02:42:ac:11:00:02")),
+            ("Wi-Fi", Some("a4:83:e7:00:11:22")),
+            ("enp3s0", Some("00:15:5d:01:02:03")),
+            ("wlan0", Some("00:15:5d:01:02:04")),
+        ] {
             assert_eq!(
-                classify(name, false),
+                classify(name, mac, false),
                 InterfaceKind::Ordinary,
                 "{name} must not read as a tunnel"
             );
@@ -573,16 +655,46 @@ mod tests {
     fn classification_does_not_mistake_loopback_for_a_tunnel() {
         // `internal` is the only thing separating loopback from a tunnel now
         // that the MAC is out, and `lo` is a prefix of nothing useful.
-        assert_ne!(classify("lo0", true), InterfaceKind::Tunnel);
-        assert_ne!(classify("lo", true), InterfaceKind::Tunnel);
+        assert_ne!(classify("lo0", None, true), InterfaceKind::Tunnel);
+        assert_ne!(classify("lo", None, true), InterfaceKind::Tunnel);
+    }
+
+    #[test]
+    fn an_absent_mac_reads_as_a_tunnel_even_under_an_unfamiliar_name() {
+        // The case that makes the MAC worth taking: WireGuard for Windows
+        // names the adapter after the config file, so a user whose config is
+        // "TorGuard-US-East.conf" gets an adapter no name rule will match.
+        // It still reports no physical address.
+        assert_eq!(
+            classify("TorGuard-US-East", None, false),
+            InterfaceKind::Tunnel
+        );
+    }
+
+    #[test]
+    fn a_present_mac_is_never_evidence_against_a_tunnel() {
+        // macOS reports a placeholder MAC for every interface including every
+        // utun, so a rule that read a present MAC as "ordinary" would classify
+        // the entire platform wrong.
+        assert_eq!(
+            classify("utun6", Some("00:00:00:00:00:00"), false),
+            InterfaceKind::Tunnel
+        );
+        assert_eq!(
+            classify("wg0", Some("02:00:00:00:00:00"), false),
+            InterfaceKind::Tunnel
+        );
     }
 
     #[test]
     fn classification_is_not_confused_by_case() {
         // macOS and Linux are lower case; Windows friendly names are whatever
         // the vendor typed.
-        assert_eq!(classify("UTUN6", false), InterfaceKind::Tunnel);
-        assert_eq!(classify("wireguard tunnel", false), InterfaceKind::Tunnel);
+        assert_eq!(classify("UTUN6", None, false), InterfaceKind::Tunnel);
+        assert_eq!(
+            classify("wireguard tunnel", None, false),
+            InterfaceKind::Tunnel
+        );
     }
 
     // --- The verdict ----------------------------------------------------
@@ -691,6 +803,57 @@ mod tests {
             v6: None,
         };
         assert!(path.verdict(Some("utun6")).allows_transfer());
+    }
+
+    #[test]
+    fn a_pin_rescues_an_interface_the_classifier_cannot_identify() {
+        // TorGuard in OpenVPN mode on Windows: "Local Area Connection", with a
+        // MAC and an 802.3 media type, unreachable by any signal this crate
+        // exposes. Without this the pin would rescue nothing.
+        let path = EgressPath {
+            v4: Some(hop("Local Area Connection", InterfaceKind::Ordinary)),
+            v6: None,
+        };
+
+        let verdict = path.verdict(Some("Local Area Connection"));
+        assert_eq!(
+            verdict,
+            Verdict::Pinned {
+                interface: "Local Area Connection".into(),
+                other_family_outside: false,
+            }
+        );
+        assert!(verdict.allows_transfer());
+    }
+
+    #[test]
+    fn a_pinned_interface_that_is_a_tunnel_still_reports_as_tunnelled() {
+        // The stronger claim is available here, so it is the one made.
+        let path = EgressPath {
+            v4: Some(hop("wg-torguard", InterfaceKind::Tunnel)),
+            v6: None,
+        };
+        assert!(matches!(
+            path.verdict(Some("wg-torguard")),
+            Verdict::Tunnelled { .. }
+        ));
+    }
+
+    #[test]
+    fn traffic_dying_at_the_wireguard_kill_switch_holds_rather_than_passes() {
+        // A real observed state, not a hypothetical. WireGuard for Windows
+        // installs 0.0.0.0/1 and 128.0.0.0/1 blackholes pointing at loopback,
+        // beaten by four /2 routes on the tunnel while it is up. In the window
+        // where the adapter exists but its routes do not, the route to the
+        // internet resolves to "Loopback Pseudo-Interface 1" -- which is
+        // traffic going nowhere, and must not read as either tunnelled or
+        // direct.
+        let path = EgressPath {
+            v4: Some(hop("Loopback Pseudo-Interface 1", InterfaceKind::Unknown)),
+            v6: None,
+        };
+        assert_eq!(path.verdict(None), Verdict::Unknown);
+        assert!(!path.verdict(None).allows_transfer());
     }
 
     #[test]

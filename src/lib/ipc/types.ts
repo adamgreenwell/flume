@@ -527,8 +527,13 @@ export interface EgressPath {
 /**
  * Whether transfer is allowed, and why not if not. Mirrors Rust `Verdict`.
  *
- * Only `tunnelled` permits transfer. `unknown` does not — a guard the user
- * switched on to hold traffic has to fail closed, or it is decoration.
+ * `tunnelled` and `pinned` permit transfer; nothing else does — a guard the
+ * user switched on to hold traffic has to fail closed, or it is decoration.
+ *
+ * The two are kept apart so the UI never overclaims. `tunnelled` is Flume's
+ * own finding. `pinned` means traffic leaves by the interface the user named
+ * and Flume could not confirm it is a tunnel — true, and weaker, and it must
+ * read that way on screen.
  */
 export type Verdict =
   | {
@@ -542,6 +547,13 @@ export type Verdict =
        * working IPv6 default route is still doing what the user asked for over
        * v4, and they are entitled to be told rather than blocked.
        */
+      otherFamilyOutside: boolean;
+    }
+  | {
+      verdict: "pinned";
+      /** The interface traffic leaves by, which the user named in settings. */
+      interface: string;
+      /** Whether the other address family leaves outside that interface. */
       otherFamilyOutside: boolean;
     }
   | { verdict: "direct"; interface: string }
