@@ -59,11 +59,24 @@
 //!
 //! # The name is not equally trustworthy either
 //!
-//! macOS and Linux name tunnel interfaces themselves — `utun6`, `wg0`, `tun0`
-//! — and the prefix is the operating system's, not an application's. Windows
-//! is different: the friendly name of a WireGuard adapter is the *config
-//! file's* name, so TorGuard's reads `wg-torguard` only because TorGuard
-//! writes the config.
+//! macOS names tunnel interfaces itself — `utun6` — and that prefix is the
+//! operating system's. Everywhere WireGuard is involved the name belongs to
+//! whoever wrote the config, and TorGuard measurably does not write the same
+//! one twice:
+//!
+//! | Platform | Interface     |
+//! | -------- | ------------- |
+//! | Windows  | `wg-torguard` |
+//! | Linux    | `torguard-wg` |
+//!
+//! One vendor, two platforms, the components reversed, and neither is `wg0`.
+//! A `starts_with("wg")` rule catches the first and misses the second, and
+//! nothing about the second is unusual — `wg-quick` names the interface after
+//! the config file on Linux exactly as the Windows client does.
+//!
+//! This is what makes the MAC load-bearing rather than decorative: on the
+//! Linux box `torguard-wg` reports no address at all while `eth0` reports
+//! `00:15:5d:7f:f7:07`, so the tunnel is identifiable when its name is not.
 //!
 //! Its OpenVPN adapter is the hard case. It is a TAP-Windows Adapter V9 whose
 //! friendly name is `Local Area Connection` — sitting in the list beside
@@ -578,7 +591,15 @@ mod tests {
 
     #[test]
     fn classification_recognises_linux_tunnels() {
-        for name in ["wg0", "tun0", "ppp0"] {
+        // `torguard-wg` is measured on Fedora with TorGuard connected; it
+        // reported no MAC while `eth0` reported 00:15:5d:7f:f7:07. The rest
+        // are the conventional names.
+        //
+        // Note what `torguard-wg` costs: it is the same vendor as Windows'
+        // `wg-torguard` with the components reversed, so no prefix rule
+        // catches both and no rule at all catches this one by name. The
+        // absent MAC is what identifies it.
+        for name in ["torguard-wg", "wg0", "tun0", "ppp0"] {
             assert_eq!(
                 classify(name, None, false),
                 InterfaceKind::Tunnel,
@@ -638,7 +659,7 @@ mod tests {
         for (name, mac) in [
             ("en7", Some("02:00:00:00:00:00")),
             ("Ethernet", Some("001C42A6858B")),
-            ("eth0", Some("02:42:ac:11:00:02")),
+            ("eth0", Some("00:15:5d:7f:f7:07")),
             ("Wi-Fi", Some("a4:83:e7:00:11:22")),
             ("enp3s0", Some("00:15:5d:01:02:03")),
             ("wlan0", Some("00:15:5d:01:02:04")),
@@ -653,10 +674,19 @@ mod tests {
 
     #[test]
     fn classification_does_not_mistake_loopback_for_a_tunnel() {
-        // `internal` is the only thing separating loopback from a tunnel now
-        // that the MAC is out, and `lo` is a prefix of nothing useful.
-        assert_ne!(classify("lo0", None, true), InterfaceKind::Tunnel);
-        assert_ne!(classify("lo", None, true), InterfaceKind::Tunnel);
+        // Measured: loopback reports an all-zero MAC rather than no MAC, on
+        // both macOS (`lo0`) and Linux (`lo`). So a rule that normalised
+        // "00:00:00:00:00:00" to absent would land loopback in the tunnel
+        // bucket, and `internal` is what keeps it out. It is set on exactly
+        // these two and nothing else on any platform measured.
+        assert_ne!(
+            classify("lo0", Some("00:00:00:00:00:00"), true),
+            InterfaceKind::Tunnel
+        );
+        assert_ne!(
+            classify("lo", Some("00:00:00:00:00:00"), true),
+            InterfaceKind::Tunnel
+        );
     }
 
     #[test]
