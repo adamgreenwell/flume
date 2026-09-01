@@ -185,9 +185,18 @@ describe("guardRailLabel", () => {
     expect(guardRailLabel(status(direct, { guard: "warn" }))).toBe(
       "Leaves by en7 · not a tunnel",
     );
+    // The rail is the one place the user looks to see what the network is
+    // doing, so "held" alone -- effect without cause -- is not enough there
+    // either.
     expect(guardRailLabel(status(direct, { held: true }))).toBe(
-      "Transfer held",
+      "Held · en7 is not a tunnel",
     );
+    expect(guardRailLabel(status({ verdict: "unknown" }, { held: true }))).toBe(
+      "Held · no route Flume can identify",
+    );
+    expect(
+      guardRailLabel(status(tunnelled, { held: true, resumesInSeconds: 6 })),
+    ).toBe("Held · resumes in 6 s");
   });
 
   it("does not call a pinned interface a tunnel in the rail either", () => {

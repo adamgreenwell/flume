@@ -68,7 +68,11 @@ import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
 export default function Home() {
   const { telemetry, error, isLoading } = useTelemetry();
   const { status: guardStatus, held } = useEgressGuard();
-  const history = useThroughputHistory(telemetry);
+  const collected = useThroughputHistory(telemetry);
+  // Cleared with everything else while held. Telemetry stops when the engine
+  // does, so the samples would otherwise sit in the chart describing a session
+  // that no longer exists.
+  const history = useMemo(() => (held ? [] : collected), [held, collected]);
 
   // Mean download rate over the samples collected so far. The add sheet
   // estimates a finish time against it, and says which window it is using —
@@ -373,7 +377,14 @@ export default function Home() {
           onAdd={() => setIsAdding(true)}
         />
 
-        {guardNote ? (
+        {/*
+          Suppressed while held, because the empty state below is already
+          showing this exact note -- holding clears the library, so the two
+          rendered the same title and body one above the other, which reads as
+          a bug rather than as emphasis. In Warn mode the library still has
+          rows, so the banner is the only place the note can go.
+        */}
+        {guardNote && !held ? (
           <div className="border-line border-b px-[18px] py-2.5">
             <NoteCard note={guardNote} />
           </div>

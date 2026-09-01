@@ -190,9 +190,28 @@ function warning(verdict: Verdict): Note {
  */
 export function guardRailLabel(status: GuardStatus | null): string | null {
   if (status === null || status.guard === "off") return null;
-  if (status.held) return "Transfer held";
-
   const verdict = status.report.verdict;
+
+  if (status.held) {
+    // "Transfer held" alone is the bare adjective the design rules forbid: it
+    // states the effect and hides the cause, in the one place the user looks
+    // to find out what the network is doing. Every branch names the reason.
+    if (status.resumesInSeconds !== null) {
+      return `Held · resumes in ${status.resumesInSeconds} s`;
+    }
+    switch (verdict.verdict) {
+      case "direct":
+        return `Held · ${verdict.interface} is not a tunnel`;
+      case "wrongTunnel":
+        return `Held · not the pinned ${verdict.expected}`;
+      case "unknown":
+        return "Held · no route Flume can identify";
+      case "tunnelled":
+      case "pinned":
+        return "Held · resuming";
+    }
+  }
+
   switch (verdict.verdict) {
     case "tunnelled":
       return `Leaves by ${verdict.interface} · tunnel`;
