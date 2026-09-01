@@ -105,6 +105,7 @@ pub fn run() {
             commands::get_torrent_detail,
             commands::get_diagnostics,
             commands::check_egress,
+            commands::list_egress_interfaces,
             commands::get_settings,
             commands::update_settings,
             commands::is_first_run,

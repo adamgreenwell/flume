@@ -829,6 +829,55 @@ pub fn interfaces() -> Vec<NetworkInterface> {
     NetworkInterface::show().unwrap_or_default()
 }
 
+/// Every interface on the machine, classified and ordered for a picker.
+///
+/// Exists because the interface pin is otherwise unusable. A user whose pin has
+/// gone stale — which on macOS happens on every VPN reconnect, since each one
+/// lands on a fresh `utun` — has a held library and a text field, and the
+/// remedy is retyping a name the application already knows and will not show
+/// them.
+///
+/// Ordered tunnels first, then ordinary adapters, then whatever could not be
+/// classified, alphabetically within each group. Someone opening this list is
+/// looking for their VPN, so it is at the top.
+///
+/// Loopback is excluded. Pinning it would hold transfer permanently, which is
+/// not a choice worth offering.
+#[must_use]
+pub fn candidates() -> Vec<Hop> {
+    /// Sort key: tunnels first, then ordinary, then unclassifiable.
+    const fn rank(kind: InterfaceKind) -> u8 {
+        match kind {
+            InterfaceKind::Tunnel => 0,
+            InterfaceKind::Ordinary => 1,
+            InterfaceKind::Unknown => 2,
+        }
+    }
+
+    let mut hops: Vec<Hop> = interfaces()
+        .into_iter()
+        .filter(|interface| !interface.internal)
+        .map(|interface| Hop {
+            kind: classify(
+                &interface.name,
+                interface.mac_addr.as_deref(),
+                interface.internal,
+            ),
+            interface: interface.name,
+        })
+        .collect();
+
+    // The platform can list one interface once per address family; the picker
+    // wants it once.
+    hops.sort_by(|a, b| {
+        rank(a.kind)
+            .cmp(&rank(b.kind))
+            .then_with(|| a.interface.cmp(&b.interface))
+    });
+    hops.dedup_by(|a, b| a.interface == b.interface);
+    hops
+}
+
 /// Reads the current egress path for both address families.
 ///
 /// Two route lookups and one interface enumeration. Nothing is sent and
@@ -1032,6 +1081,10 @@ mod tests {
             );
         }
         println!("\n--> marks an interface currently carrying traffic.\n");
+        println!("pin picker would offer, in order:");
+        for hop in candidates() {
+            println!("  {:<20} {:?}", hop.interface, hop.kind);
+        }
     }
 
     // --- Classification -------------------------------------------------
@@ -1217,6 +1270,45 @@ mod tests {
             classify("Ethernet", Some("001C42A6858B"), false),
             InterfaceKind::Ordinary
         );
+    }
+
+    // --- The picker list --------------------------------------------------
+
+    #[test]
+    fn the_candidate_list_puts_tunnels_first_and_leaves_loopback_out() {
+        let hops = candidates();
+
+        assert!(
+            !hops
+                .iter()
+                .any(|hop| hop.interface == "lo0" || hop.interface == "lo"),
+            "pinning loopback would hold transfer permanently: {hops:?}"
+        );
+
+        let ranks: Vec<u8> = hops
+            .iter()
+            .map(|hop| match hop.kind {
+                InterfaceKind::Tunnel => 0,
+                InterfaceKind::Ordinary => 1,
+                InterfaceKind::Unknown => 2,
+            })
+            .collect();
+        assert!(
+            ranks.windows(2).all(|pair| pair[0] <= pair[1]),
+            "someone opening this list is looking for their VPN: {hops:?}"
+        );
+    }
+
+    #[test]
+    fn the_candidate_list_names_each_interface_once() {
+        // The platform lists an interface once per address family; a picker
+        // showing en7 twice is a picker nobody trusts.
+        let hops = candidates();
+        let mut names: Vec<&str> = hops.iter().map(|hop| hop.interface.as_str()).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicate interfaces in {hops:?}");
     }
 
     // --- The hysteresis gate ---------------------------------------------

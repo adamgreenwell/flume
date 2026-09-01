@@ -10,7 +10,7 @@ use tauri::{Manager, State};
 
 use crate::{
     diagnostics::{self, LOG_TAIL_LINES},
-    egress::GuardStatus,
+    egress::{GuardStatus, Hop},
     engine::{
         CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
         TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
@@ -214,6 +214,25 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, Comman
 #[tauri::command]
 pub async fn check_egress(state: State<'_, AppState>) -> Result<GuardStatus, CommandError> {
     Ok(state.egress_status().await)
+}
+
+/// Lists the machine's network interfaces, classified, for the pin picker.
+///
+/// Ordered tunnels first. Loopback is excluded, since pinning it would hold
+/// transfer permanently.
+///
+/// Probes directly rather than reading the guard's published status: this is a
+/// full interface enumeration (~3.2 ms) that the guard deliberately avoids on
+/// its per-tick path, and it is called when a settings dialog opens rather
+/// than every second.
+///
+/// # Errors
+///
+/// Never fails; an unreadable interface list comes back empty, which the picker
+/// renders as "no interfaces found" rather than as an error dialog.
+#[tauri::command]
+pub async fn list_egress_interfaces() -> Result<Vec<Hop>, CommandError> {
+    Ok(crate::egress::candidates())
 }
 
 /// Validates, persists, and applies new settings.
