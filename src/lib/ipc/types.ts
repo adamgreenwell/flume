@@ -566,6 +566,22 @@ export type Verdict =
     }
   | { verdict: "unknown" };
 
+/**
+ * The current egress path and what Flume makes of it. Mirrors Rust
+ * `EgressReport`.
+ *
+ * Both halves travel together because the verdict is derived from the path
+ * *and* the user's pin, and deriving it here would put the decision in two
+ * places. The path comes along so the UI can name the interface without
+ * re-deriving anything.
+ */
+export interface EgressReport {
+  /** Where each address family leaves from. */
+  path: EgressPath;
+  /** Whether that permits transfer, and why not if not. */
+  verdict: Verdict;
+}
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */

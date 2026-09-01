@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CoreStatus,
   DetectedClient,
+  EgressReport,
   ImportOutcome,
   Settings,
   TorrentDetail,
@@ -208,6 +209,23 @@ export async function importClient(
   outputFolder: string | null,
 ): Promise<ImportOutcome> {
   return invoke<ImportOutcome>("import_client", { torrentsDir, outputFolder });
+}
+
+/**
+ * Reports which network interface traffic would actually leave by.
+ *
+ * Nothing is sent anywhere to answer this — it is two lookups against the
+ * local routing table, plus a walk of the interface list when an address has
+ * moved since the last call. Cheap enough to call on a timer.
+ *
+ * Independent of the guard setting: the answer is available even when the
+ * guard is off, since the guard decides what is *done* about it rather than
+ * whether it is known.
+ *
+ * @returns Where each address family leaves from, and the verdict on it.
+ */
+export async function checkEgress(): Promise<EgressReport> {
+  return invoke<EgressReport>("check_egress");
 }
 
 /**

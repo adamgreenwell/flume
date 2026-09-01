@@ -29,7 +29,7 @@
 
 use flume_lib::{
     commands::CommandError,
-    egress::{EgressPath, Hop, InterfaceKind, Verdict},
+    egress::{EgressPath, EgressReport, Hop, InterfaceKind, Verdict},
     engine::{
         Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
         PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
@@ -219,6 +219,18 @@ fn the_egress_path_matches_the_typescript_mirror() {
     });
     assert_eq!(hop["interface"], "wg-torguard");
     assert_eq!(hop["kind"], "tunnel");
+}
+
+#[test]
+fn the_egress_report_matches_the_typescript_mirror() {
+    assert_keys(
+        &EgressReport {
+            path: EgressPath::default(),
+            verdict: Verdict::Unknown,
+        },
+        &["path", "verdict"],
+        "EgressReport",
+    );
 }
 
 #[test]

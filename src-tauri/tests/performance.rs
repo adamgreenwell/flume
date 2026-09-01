@@ -38,6 +38,15 @@ const TORRENT_COUNT: usize = 15;
 /// leaves two orders of magnitude of headroom.
 const TELEMETRY_BUDGET: Duration = Duration::from_millis(10);
 
+/// The egress probe's share of a tick.
+///
+/// Deliberately a tenth of [`TELEMETRY_BUDGET`]: the probe is one part of a
+/// tick that also has to serialise every torrent, and a guard that made the UI
+/// stutter would be switched off by the people who most want it on. This is the
+/// figure that decides whether the tick can probe inline or has to cache, so it
+/// is asserted rather than assumed.
+const EGRESS_BUDGET: Duration = Duration::from_millis(1);
+
 fn test_config(tmp: &TempDir) -> EngineConfig {
     EngineConfig {
         download_dir: tmp.path().join("downloads"),
@@ -168,4 +177,79 @@ async fn detail_queries_stay_bounded() {
     );
 
     engine.shutdown().await;
+}
+
+/// The egress probe is cheap enough to sit inside a telemetry tick.
+///
+/// Two route lookups and one interface enumeration. Neither sends anything, but
+/// `getifaddrs` walks every interface on the machine and the development Mac
+/// has thirty-four of them, so "obviously cheap" is worth checking rather than
+/// asserting -- especially since the answer decides whether the 1 Hz tick can
+/// call this directly or has to cache behind it.
+#[test]
+#[ignore = "timing assertions are unreliable on shared CI runners"]
+fn the_egress_probe_stays_within_its_share_of_a_tick() {
+    use flume_lib::egress::EgressReport;
+
+    // One untimed pass first: the first `getifaddrs` on a process pays for
+    // whatever the platform lazily initialises, and charging that to the
+    // steady-state figure would overstate it several times over.
+    let _ = EgressReport::current(None);
+
+    const ROUNDS: u32 = 50;
+
+    // Decomposed, because the two halves want different treatment: a route
+    // lookup is a syscall against a table, while enumerating interfaces walks
+    // every one on the machine.
+    let start = Instant::now();
+    for _ in 0..ROUNDS {
+        let _ =
+            flume_lib::egress::source_address("192.0.2.1:9".parse().expect("a literal address"));
+    }
+    let per_route = start.elapsed() / ROUNDS;
+
+    let start = Instant::now();
+    for _ in 0..ROUNDS {
+        let _ = flume_lib::egress::interfaces();
+    }
+    let per_enumeration = start.elapsed() / ROUNDS;
+
+    let start = Instant::now();
+    for _ in 0..ROUNDS {
+        let report = EgressReport::current(None);
+        // Consume the result so the loop cannot be optimised away.
+        assert!(report.path.v4.is_some() || report.path.v6.is_some() || true);
+    }
+    let uncached = start.elapsed() / ROUNDS;
+
+    // What the telemetry tick will actually run: the same probe behind
+    // `EgressWatcher`, which re-enumerates only when a source address moves.
+    let mut watcher = flume_lib::egress::EgressWatcher::default();
+    let _ = watcher.path();
+
+    let start = Instant::now();
+    for _ in 0..ROUNDS {
+        let path = watcher.path();
+        assert!(path.v4.is_some() || path.v6.is_some() || true);
+    }
+    let steady = start.elapsed() / ROUNDS;
+
+    println!("  one route lookup:      {per_route:?}");
+    println!("  one enumeration:       {per_enumeration:?}");
+    println!("  uncached probe:        {uncached:?}");
+    println!("  watcher, steady state: {steady:?}   budget {EGRESS_BUDGET:?}");
+
+    assert!(
+        steady < EGRESS_BUDGET,
+        "the watcher took {steady:?} per tick, over its {EGRESS_BUDGET:?} share"
+    );
+
+    // The point of the watcher, stated as a ratio so a regression that
+    // reintroduced per-tick enumeration fails here rather than merely getting
+    // slower. Ten is a wide margin around a measured 100x.
+    assert!(
+        steady * 10 < uncached,
+        "the watcher ({steady:?}) should be far cheaper than an uncached probe \
+         ({uncached:?}); if it is not, it has stopped caching"
+    );
 }

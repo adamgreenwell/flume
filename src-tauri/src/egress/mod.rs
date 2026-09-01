@@ -508,6 +508,148 @@ fn hop_for(address: IpAddr, interfaces: &[NetworkInterface]) -> Option<Hop> {
     })
 }
 
+/// Repeated probing without repeated interface enumeration.
+///
+/// # Why this exists
+///
+/// The two halves of [`probe`] cost wildly different amounts. Measured on the
+/// development Mac, in release, over fifty rounds:
+///
+/// | Step                     | Cost      |
+/// | ------------------------ | --------- |
+/// | one route lookup         | 27.7 µs   |
+/// | one interface enumeration| 3223.3 µs |
+///
+/// The enumeration is 116x the lookup and 99% of the total, which puts a naive
+/// probe at 3.3 ms — a third of the whole 1 Hz telemetry budget, for an answer
+/// that changes when someone connects a VPN and at no other time.
+///
+/// So the route lookup runs every time and the enumeration does not. If the
+/// source address for a family is the one seen last time, the interface that
+/// owns it is the one seen last time, and the cached [`Hop`] still stands.
+///
+/// That assumption is worth stating plainly: an address could in principle be
+/// moved between interfaces without changing, in a failover arrangement that
+/// keeps the address and swaps the hardware under it. Flume would keep the
+/// stale interface name until the address next changed. The alternative is
+/// paying 3.2 ms every second on every machine to cover a case that does not
+/// arise on a laptop, which is the wrong trade.
+///
+/// Note what this is *not*: it is not a time-based cache, so there is no
+/// staleness window. A VPN dropping changes the source address, which misses
+/// the cache, which re-enumerates on that very tick.
+#[derive(Debug, Default)]
+pub struct EgressWatcher {
+    /// The IPv4 source address last seen, and the hop it resolved to.
+    v4: Option<(IpAddr, Hop)>,
+    /// The IPv6 source address last seen, and the hop it resolved to.
+    v6: Option<(IpAddr, Hop)>,
+}
+
+impl EgressWatcher {
+    /// Reads the current path, enumerating interfaces only if an address moved.
+    pub fn path(&mut self) -> EgressPath {
+        self.resolve(
+            source_address(PROBE_V4),
+            source_address(PROBE_V6),
+            interfaces,
+        )
+    }
+
+    /// Reads the current path and judges it against `pinned`.
+    pub fn report(&mut self, pinned: Option<&str>) -> EgressReport {
+        let path = self.path();
+        let verdict = path.verdict(pinned);
+        EgressReport { path, verdict }
+    }
+
+    /// The cache decision, separated from the syscalls so it can be tested.
+    ///
+    /// `enumerate` is called at most once per invocation even when both
+    /// families miss, because one walk of the interface list answers both.
+    fn resolve<F>(
+        &mut self,
+        v4_source: Option<IpAddr>,
+        v6_source: Option<IpAddr>,
+        enumerate: F,
+    ) -> EgressPath
+    where
+        F: FnOnce() -> Vec<NetworkInterface>,
+    {
+        /// Whether this family needs the interface list to answer.
+        fn stale(source: Option<IpAddr>, cached: Option<&(IpAddr, Hop)>) -> bool {
+            match (source, cached) {
+                // No route: nothing to resolve, and nothing to enumerate for.
+                (None, _) => false,
+                (Some(source), Some((seen, _))) => source != *seen,
+                (Some(_), None) => true,
+            }
+        }
+
+        if stale(v4_source, self.v4.as_ref()) || stale(v6_source, self.v6.as_ref()) {
+            let interfaces = enumerate();
+            for (source, slot) in [(v4_source, &mut self.v4), (v6_source, &mut self.v6)] {
+                if let Some(source) = source
+                    && slot.as_ref().is_none_or(|(seen, _)| *seen != source)
+                {
+                    *slot = hop_for(source, &interfaces).map(|hop| (source, hop));
+                }
+            }
+        }
+
+        // A family that lost its route loses its cache entry too, or the path
+        // would keep reporting an interface nothing is leaving by.
+        if v4_source.is_none() {
+            self.v4 = None;
+        }
+        if v6_source.is_none() {
+            self.v6 = None;
+        }
+
+        EgressPath {
+            v4: self.v4.as_ref().map(|(_, hop)| hop.clone()),
+            v6: self.v6.as_ref().map(|(_, hop)| hop.clone()),
+        }
+    }
+}
+
+/// The current egress path and what Flume makes of it.
+///
+/// Both halves cross the IPC boundary together because the verdict is derived
+/// from the path *and* the user's pin, and deriving it in the frontend would
+/// put the decision in two places — the one thing architecture rule 3 exists to
+/// prevent. The path travels alongside it so the UI can name the interface
+/// without re-deriving anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EgressReport {
+    /// Where each address family leaves from.
+    pub path: EgressPath,
+    /// Whether that permits transfer, and why not if not.
+    pub verdict: Verdict,
+}
+
+impl EgressReport {
+    /// Probes the machine and judges the result against `pinned`.
+    #[must_use]
+    pub fn current(pinned: Option<&str>) -> Self {
+        let path = probe();
+        let verdict = path.verdict(pinned);
+        Self { path, verdict }
+    }
+}
+
+/// Every interface the platform reports.
+///
+/// Exposed so callers that probe repeatedly can measure and cache it
+/// separately: this is the expensive half of [`probe`] by a wide margin, and
+/// unlike a route lookup its answer changes only when an interface appears or
+/// disappears.
+#[must_use]
+pub fn interfaces() -> Vec<NetworkInterface> {
+    NetworkInterface::show().unwrap_or_default()
+}
+
 /// Reads the current egress path for both address families.
 ///
 /// Two route lookups and one interface enumeration. Nothing is sent and
@@ -515,7 +657,7 @@ fn hop_for(address: IpAddr, interfaces: &[NetworkInterface]) -> Option<Hop> {
 /// [`crate::telemetry`] does not ask every tick.
 #[must_use]
 pub fn probe() -> EgressPath {
-    let interfaces = NetworkInterface::show().unwrap_or_default();
+    let interfaces = interfaces();
 
     EgressPath {
         v4: source_address(PROBE_V4).and_then(|ip| hop_for(ip, &interfaces)),
@@ -598,6 +740,8 @@ impl EgressPath {
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
     use super::*;
+    // Only the tests build interfaces by hand; the module itself reads them.
+    use network_interface::{Addr, V6IfAddr};
 
     fn hop(interface: &str, kind: InterfaceKind) -> Hop {
         Hop {
@@ -883,6 +1027,198 @@ mod tests {
         assert_eq!(
             classify("Ethernet", Some("001C42A6858B"), false),
             InterfaceKind::Ordinary
+        );
+    }
+
+    // --- The watcher's cache --------------------------------------------
+
+    /// An interface owning one IPv4 address, built the way the crate does.
+    fn iface(name: &str, ip: [u8; 4], index: u32) -> NetworkInterface {
+        NetworkInterface::new_afinet(name, std::net::Ipv4Addr::from(ip), None, None, index, false)
+    }
+
+    /// Counts how many times the watcher asked for the interface list.
+    struct Counter(std::cell::Cell<usize>);
+
+    impl Counter {
+        fn new() -> Self {
+            Self(std::cell::Cell::new(0))
+        }
+        fn count(&self) -> usize {
+            self.0.get()
+        }
+        /// Counts on **call**, not on construction.
+        ///
+        /// Getting this backwards is easy and silently defeats the test: the
+        /// watcher builds a closure every round and calls it only on a miss,
+        /// so a counter that ticked at build time would count rounds and
+        /// assert nothing about caching at all.
+        fn enumerate(
+            &self,
+            interfaces: Vec<NetworkInterface>,
+        ) -> impl FnOnce() -> Vec<NetworkInterface> + '_ {
+            move || {
+                self.0.set(self.0.get() + 1);
+                interfaces
+            }
+        }
+    }
+
+    #[test]
+    fn an_unchanged_source_address_does_not_re_enumerate() {
+        // The entire reason the watcher exists. An enumeration is 3.2 ms
+        // against a 27.7 µs route lookup, and it is asked for once here rather
+        // than once a second.
+        let mut watcher = EgressWatcher::default();
+        let source = Some(IpAddr::from([192, 168, 1, 10]));
+        let counter = Counter::new();
+        let list = || vec![iface("en7", [192, 168, 1, 10], 1)];
+
+        let first = watcher.resolve(source, None, counter.enumerate(list()));
+        assert_eq!(counter.count(), 1, "the first read has nothing cached");
+        assert_eq!(first.v4.as_ref().map(|h| h.interface.as_str()), Some("en7"));
+
+        for _ in 0..10 {
+            let again = watcher.resolve(source, None, counter.enumerate(list()));
+            assert_eq!(again, first, "the cached answer must not drift");
+        }
+        assert_eq!(
+            counter.count(),
+            1,
+            "eleven reads of an unchanged address must cost one enumeration"
+        );
+    }
+
+    #[test]
+    fn a_changed_source_address_re_enumerates_on_that_very_tick() {
+        // This is what makes the cache safe for a kill switch: it is keyed on
+        // the address rather than on a clock, so a VPN dropping is noticed on
+        // the tick it happens rather than after a staleness window.
+        let mut watcher = EgressWatcher::default();
+        let counter = Counter::new();
+
+        let tunnelled = Some(IpAddr::from([10, 13, 57, 109]));
+        let direct = Some(IpAddr::from([192, 168, 1, 10]));
+        let list = || {
+            vec![
+                iface("utun12", [10, 13, 57, 109], 20),
+                iface("en7", [192, 168, 1, 10], 1),
+            ]
+        };
+
+        let before = watcher.resolve(tunnelled, None, counter.enumerate(list()));
+        assert_eq!(
+            before.v4.as_ref().map(|h| h.interface.as_str()),
+            Some("utun12")
+        );
+
+        assert_eq!(counter.count(), 1);
+
+        let after = watcher.resolve(direct, None, counter.enumerate(list()));
+        assert_eq!(after.v4.as_ref().map(|h| h.interface.as_str()), Some("en7"));
+        assert_eq!(
+            after.verdict(None),
+            Verdict::Direct {
+                interface: "en7".into()
+            }
+        );
+        assert_eq!(
+            counter.count(),
+            2,
+            "an address that moved must be resolved again, not served from cache"
+        );
+    }
+
+    #[test]
+    fn losing_a_route_clears_that_family_rather_than_reporting_a_stale_one() {
+        // Measured behaviour: TorGuard removes the IPv6 route entirely while
+        // connected. Keeping the last interface would have the UI naming
+        // something nothing is leaving by.
+        let mut watcher = EgressWatcher::default();
+        let counter = Counter::new();
+        let v6 = Some(IpAddr::from([0x2603, 0, 0, 0, 0, 0, 0, 1]));
+
+        let list = || {
+            let mut en7 = NetworkInterface::new_afinet6(
+                "en7",
+                std::net::Ipv6Addr::new(0x2603, 0, 0, 0, 0, 0, 0, 1),
+                None,
+                None,
+                1,
+                false,
+            );
+            en7.mac_addr = Some("02:00:00:00:00:00".into());
+            vec![en7]
+        };
+
+        let before = watcher.resolve(None, v6, counter.enumerate(list()));
+        assert!(before.v6.is_some(), "the v6 hop should resolve");
+
+        let after = watcher.resolve(None, None, counter.enumerate(list()));
+        assert_eq!(
+            after,
+            EgressPath::default(),
+            "a lost route leaves nothing behind"
+        );
+    }
+
+    #[test]
+    fn a_family_with_no_route_never_costs_an_enumeration() {
+        // A v4-only network must not pay 3.2 ms every tick for an IPv6 lookup
+        // that has nothing to resolve.
+        let mut watcher = EgressWatcher::default();
+        let counter = Counter::new();
+        let source = Some(IpAddr::from([192, 168, 1, 10]));
+        let list = || vec![iface("en7", [192, 168, 1, 10], 1)];
+
+        watcher.resolve(source, None, counter.enumerate(list()));
+        assert_eq!(counter.count(), 1, "the first read resolves v4");
+
+        for _ in 0..5 {
+            watcher.resolve(source, None, counter.enumerate(list()));
+        }
+        assert_eq!(
+            counter.count(),
+            1,
+            "an absent IPv6 route must never force an enumeration of its own"
+        );
+    }
+
+    #[test]
+    fn both_families_missing_together_enumerate_only_once() {
+        // One walk of the interface list answers both, and the walk is the
+        // entire cost.
+        let mut watcher = EgressWatcher::default();
+        let v4 = Some(IpAddr::from([10, 13, 57, 109]));
+        let v6 = Some(IpAddr::from([0x2603, 0, 0, 0, 0, 0, 0, 1]));
+
+        let calls = std::cell::Cell::new(0);
+        let path = watcher.resolve(v4, v6, || {
+            calls.set(calls.get() + 1);
+            let mut utun = NetworkInterface::new_afinet(
+                "utun12",
+                std::net::Ipv4Addr::new(10, 13, 57, 109),
+                None,
+                None,
+                20,
+                false,
+            );
+            utun.addr.push(Addr::V6(V6IfAddr {
+                ip: std::net::Ipv6Addr::new(0x2603, 0, 0, 0, 0, 0, 0, 1),
+                broadcast: None,
+                netmask: None,
+            }));
+            vec![utun]
+        });
+
+        assert_eq!(calls.get(), 1, "two misses, one walk");
+        assert_eq!(
+            path.v4.as_ref().map(|h| h.interface.as_str()),
+            Some("utun12")
+        );
+        assert_eq!(
+            path.v6.as_ref().map(|h| h.interface.as_str()),
+            Some("utun12")
         );
     }
 

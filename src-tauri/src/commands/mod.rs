@@ -10,6 +10,7 @@ use tauri::{Manager, State};
 
 use crate::{
     diagnostics::{self, LOG_TAIL_LINES},
+    egress::EgressReport,
     engine::{
         CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
         TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
@@ -191,6 +192,28 @@ pub async fn import_client(
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, CommandError> {
     Ok(state.settings().await)
+}
+
+/// Reports which interface traffic would leave by, and what Flume makes of it.
+///
+/// Sends nothing: two route lookups against the local table plus, when an
+/// address has moved since the last call, one walk of the interface list. See
+/// [`crate::egress`] for why this is a route question rather than an
+/// interface-list question.
+///
+/// Independent of [`crate::settings::Settings::egress_guard`] on purpose — the
+/// UI can show where traffic is going even when the guard is `Off`, and the
+/// guard only decides what is *done* about the answer.
+///
+/// # Errors
+///
+/// Never fails; the `Result` keeps the signature uniform with the other
+/// commands. An unreadable interface list surfaces as `Verdict::Unknown`
+/// rather than as an error, because "Flume could not tell" is a thing the UI
+/// has to render anyway.
+#[tauri::command]
+pub async fn check_egress(state: State<'_, AppState>) -> Result<EgressReport, CommandError> {
+    Ok(state.egress_report().await)
 }
 
 /// Validates, persists, and applies new settings.
