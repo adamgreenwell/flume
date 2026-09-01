@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::egress::EgressGuard;
 use crate::engine::{DEFAULT_LISTEN_PORT, EngineConfig};
 
 /// Filename inside the app-data directory.
@@ -92,6 +93,26 @@ pub struct Settings {
     /// Row height in the library. Frontend-only, persisted for the same reason.
     pub density: Density,
 
+    /// Whether to require that traffic leaves through a tunnel, and what to
+    /// do when it does not.
+    ///
+    /// Defaults to [`EgressGuard::Off`]. Not because the check is expensive —
+    /// it sends nothing and costs a route lookup — but because a general-
+    /// purpose client that greets every new user with a warning about their
+    /// VPN has made an assumption about what they are downloading. Flume does
+    /// not make that assumption; see the project notes on use case.
+    pub egress_guard: EgressGuard,
+
+    /// The one interface the user will accept traffic leaving by, or `None` to
+    /// accept any tunnel.
+    ///
+    /// Pinning is the stricter setting and the more brittle one: macOS hands
+    /// out `utun` numbers dynamically, so a VPN client that reconnects can
+    /// land on a different interface and trip the guard. That is a real
+    /// trade-off the user is making knowingly, which is why the default is
+    /// `None` and the settings copy says so.
+    pub egress_interface: Option<String>,
+
     /// Whether anonymous usage counts may be sent.
     ///
     /// Three states, not two. `None` means *not yet asked*, which is what the
@@ -117,6 +138,8 @@ impl Default for Settings {
             proxy_url: None,
             theme: Theme::System,
             density: Density::Comfortable,
+            egress_guard: EgressGuard::Off,
+            egress_interface: None,
             // Not asked yet. Never defaults to `Some(true)`: consent that the
             // user did not give is not consent.
             usage_reporting: None,
@@ -291,6 +314,20 @@ impl Settings {
                     "the proxy URL is missing a host and port".into(),
                 ));
             }
+        }
+        if let Some(interface) = self.egress_interface.as_deref() {
+            // Same reasoning as the proxy: `None` means "any tunnel", and
+            // silently treating a half-cleared field as `None` would hide a
+            // typo behind a guard that then accepts anything.
+            if interface.trim().is_empty() {
+                return Err(SettingsError::Invalid(
+                    "leave the interface empty to accept any tunnel, or name one".into(),
+                ));
+            }
+            // Not checked for existence. An interface that is absent right now
+            // is the normal state of a VPN that is not connected yet, and
+            // refusing to save the setting until the tunnel is up would make
+            // it impossible to configure the guard before travelling.
         }
         Ok(())
     }
@@ -469,6 +506,59 @@ mod tests {
             ..valid()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn the_egress_guard_is_off_until_the_user_asks_for_it() {
+        // A general-purpose client does not open with a warning about someone
+        // else's network.
+        assert_eq!(Settings::default().egress_guard, EgressGuard::Off);
+        assert_eq!(Settings::default().egress_interface, None);
+    }
+
+    #[test]
+    fn rejects_a_blank_pinned_interface() {
+        let settings = Settings {
+            egress_interface: Some("   ".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_a_pinned_interface_that_is_not_up_right_now() {
+        // Configuring the guard before connecting the VPN has to work, or the
+        // setting can only be changed from the one state it is meant to guard.
+        let settings = Settings {
+            egress_guard: EgressGuard::Hold,
+            egress_interface: Some("utun99".into()),
+            ..valid()
+        };
+        assert!(settings.validate().is_ok());
+    }
+
+    #[test]
+    fn the_egress_guard_applies_without_a_session_restart() {
+        // The check reads the routing table live. Restarting librqbit to
+        // change a policy it knows nothing about would drop every peer
+        // connection for no reason.
+        let before = valid();
+        for after in [
+            Settings {
+                egress_guard: EgressGuard::Hold,
+                ..valid()
+            },
+            Settings {
+                egress_guard: EgressGuard::Warn,
+                egress_interface: Some("utun6".into()),
+                ..valid()
+            },
+        ] {
+            assert!(
+                !before.requires_restart(&after),
+                "expected no restart for {after:?}"
+            );
+        }
     }
 
     #[test]

@@ -1444,6 +1444,7 @@ dependencies = [
  "fs4",
  "librqbit",
  "log",
+ "network-interface",
  "rand 0.9.5",
  "regex",
  "reqwest",

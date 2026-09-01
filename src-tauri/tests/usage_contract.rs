@@ -72,6 +72,8 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::NetListenPort,
         SettingKey::NetUpnp,
         SettingKey::NetProxy,
+        SettingKey::NetEgressGuard,
+        SettingKey::NetEgressInterface,
         SettingKey::UiTheme,
         SettingKey::UiDensity,
         SettingKey::PrivacyUsage,

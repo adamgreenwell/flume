@@ -229,6 +229,56 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
         : `Outgoing peer connections go through ${url}. The DHT and tracker announces do not — a proxy here is not the same as a VPN.`,
   },
   {
+    id: "egressGuard",
+    section: "network",
+    label: "Only transfer while traffic leaves through a tunnel",
+    key: "net.egressGuard",
+    control: {
+      kind: "segment",
+      options: [
+        { value: "off", label: "Off" },
+        { value: "warn", label: "Warn" },
+        { value: "hold", label: "Hold" },
+      ],
+    },
+    keywords: [
+      "vpn",
+      "wireguard",
+      "openvpn",
+      "kill switch",
+      "killswitch",
+      "tunnel",
+      "leak",
+      "privacy",
+      "torguard",
+    ],
+    consequence: (mode) => {
+      if (mode === "off") {
+        return "Flume does not look at which interface your traffic leaves by. Nothing is checked and nothing is blocked.";
+      }
+      const checked =
+        "Flume checks which network interface traffic would actually leave by — the route, not just whether a tunnel exists on the machine. It reads this locally and sends nothing to do it.";
+      return mode === "hold"
+        ? `${checked} While the answer is anything other than a tunnel, all transfer is held, and resumes on its own when a tunnel is back.`
+        : `${checked} You are told when the answer is anything other than a tunnel, and nothing is stopped.`;
+    },
+  },
+  {
+    id: "egressInterface",
+    section: "network",
+    label: "Accept only this interface",
+    key: "net.egressInterface",
+    control: {
+      kind: "text",
+      placeholder: "any tunnel",
+    },
+    keywords: ["interface", "utun", "wg0", "adapter", "pin", "device"],
+    consequence: (name) =>
+      name === null || name === ""
+        ? "Any tunnel interface is accepted. This survives a VPN reconnecting onto a different interface, which macOS does routinely."
+        : `Only ${name} is accepted; any other interface counts as untunnelled, even another tunnel. Stricter, and it trips if your VPN reconnects onto a different interface — macOS hands out utun numbers as it pleases.`,
+  },
+  {
     id: "theme",
     section: "ui",
     label: "Colour scheme",

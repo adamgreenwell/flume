@@ -25,6 +25,7 @@
 pub mod commands;
 pub mod deeplink;
 pub mod diagnostics;
+pub mod egress;
 pub mod engine;
 mod menu;
 pub mod settings;

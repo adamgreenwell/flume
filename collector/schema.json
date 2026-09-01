@@ -34,6 +34,8 @@
         "net.listenPort",
         "net.upnp",
         "net.proxy",
+        "net.egressGuard",
+        "net.egressInterface",
         "ui.theme",
         "ui.density",
         "privacy.usage"
