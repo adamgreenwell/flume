@@ -95,6 +95,30 @@
 //! `Local Area Connection` would trade it for calling a WAN Miniport a
 //! tunnel, which is the failure that actually costs someone something.
 //!
+//! # Measured behaviour worth keeping
+//!
+//! **macOS renumbers on every connect.** The development machine went from
+//! `utun0`–`utun8` to `utun0`–`utun11` to `utun0`–`utun12` across two TorGuard
+//! connect cycles in one afternoon, and the old interfaces persist after
+//! disconnect. A pin naming `utun12` is wrong the next time the VPN
+//! reconnects, which is why the default accepts any tunnel and the settings
+//! copy warns about pinning on macOS specifically. Windows and Linux name the
+//! adapter after the config and are stable.
+//!
+//! **`other_family_outside` has never been observed firing.** TorGuard removes
+//! IPv6 entirely rather than leaving it outside the tunnel — measured on Linux
+//! with WireGuard and macOS with OpenConnect, both of which report no IPv6
+//! route at all while connected, against an `en7`/`eth0` that carries a global
+//! v6 address when disconnected. The flag is still right to compute and report
+//! — a v4-only tunnel beside a live v6 default route is a real configuration —
+//! but no UI copy written for it has been checked against a machine actually
+//! in that state.
+//!
+//! **All three TorGuard tunnel types land on `utun` on macOS.** OpenConnect is
+//! measured (`utun12`); WireGuard is measured. macOS gives unprivileged
+//! tunnels no other option since kexts were blocked on Apple Silicon, so the
+//! `utun` prefix covers the protocol choice rather than any one protocol.
+//!
 //! # What this cannot tell apart
 //!
 //! A point-to-point link with no link-layer address is what a VPN tunnel looks

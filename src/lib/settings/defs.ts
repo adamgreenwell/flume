@@ -276,7 +276,7 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     consequence: (name) =>
       name === null || name === ""
         ? "Any tunnel interface is accepted. This survives a VPN reconnecting onto a different interface, which macOS does routinely."
-        : `Only ${name} is accepted; any other interface counts as untunnelled, even another tunnel. Stricter, and it trips if your VPN reconnects onto a different interface — macOS hands out utun numbers as it pleases.`,
+        : `Only ${name} is accepted; any other interface counts as untunnelled, even another tunnel. Stricter, and on macOS it will trip: a new utun appears on every connect and the old ones stay, so the number you pin today is not the one carrying traffic tomorrow. Windows and Linux name the adapter after the VPN config and stay put.`,
   },
   {
     id: "theme",
