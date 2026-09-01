@@ -95,6 +95,24 @@
 //! `Local Area Connection` would trade it for calling a WAN Miniport a
 //! tunnel, which is the failure that actually costs someone something.
 //!
+//! # What this cannot tell apart
+//!
+//! A point-to-point link with no link-layer address is what a VPN tunnel looks
+//! like from here, and it is also what a USB cellular modem and a direct PPPoE
+//! DSL connection look like. Both present as `ppp0` with no MAC, and both are
+//! ordinary internet connections carrying no privacy at all. `ppp` is
+//! deliberately kept out of the tunnel *name* list for that reason, but the
+//! MAC rule reaches them anyway, so someone whose machine dials PPPoE directly
+//! rather than through a router would be told they are on a tunnel.
+//!
+//! There is no signal here that separates the two: they are the same kind of
+//! link, differing only in where the far end is, which is exactly what Flume
+//! cannot see. `IP_ADAPTER_ADDRESSES.IfType` distinguishes them on Windows
+//! (23, `ppp`) and is not exposed; Linux offers no equivalent through this
+//! crate. Recorded rather than papered over — it is the one false positive
+//! left in the classifier, and a user on PPPoE should know the guard is
+//! telling them something it cannot actually establish.
+//!
 //! Like [`crate::engine`], this module imports no Tauri types and runs under a
 //! plain `cargo test`.
 
@@ -358,10 +376,76 @@ pub fn source_address(destination: SocketAddr) -> Option<IpAddr> {
 /// evidence genuinely does not settle it.
 #[must_use]
 pub fn classify(name: &str, mac_addr: Option<&str>, internal: bool) -> InterfaceKind {
-    // TODO(adam): implement. See `classification_*` tests below for the cases
-    // this has to satisfy — they are the specification, and they fail until
-    // this is written.
-    let _ = (name, mac_addr, internal);
+    // Loopback first, and it must not reach the MAC rule below. Windows
+    // loopback reports no physical address at all, so "absent means tunnel"
+    // would call it a tunnel -- and loopback is exactly where traffic lands
+    // while WireGuard's /1 blackholes are in force and its /2 routes are not.
+    // That is a VPN *dropping*, and reading it as a tunnel would allow
+    // transfer at the one moment the guard exists to stop it.
+    if internal {
+        return InterfaceKind::Unknown;
+    }
+
+    let name = name.to_ascii_lowercase();
+
+    // Names the operating system assigns to tunnel devices. macOS is carried
+    // entirely by this: it names every tunnel `utun`, and its MAC is a
+    // placeholder that never reads as absent.
+    //
+    // `ppp` is deliberately absent. It is a point-to-point link, not
+    // necessarily a private one -- a USB cellular modem and a direct PPPoE
+    // DSL connection are both `ppp0` and both perfectly ordinary. The MAC
+    // rule below reaches it anyway, which is a limitation rather than a save;
+    // see the module docs.
+    // Tunnels in the networking sense that carry no privacy whatever. 6to4,
+    // IPIP and GRE are transition and routing mechanisms, plaintext to
+    // everyone on the path -- so calling one a tunnel would tell a user they
+    // are protected at a moment when they are measurably not, which is the
+    // expensive direction. Checked before the tunnel prefixes so that `tunl0`
+    // (IPIP) does not match on `tun`.
+    //
+    // macOS hides this by accident: `gif0` and `stf0` report a placeholder MAC
+    // rather than none, so they never reach the MAC rule. Linux's `sit0` and
+    // `gre0` report a genuine `None` and would otherwise read as tunnels.
+    const PLAINTEXT_TUNNEL_PREFIXES: [&str; 6] = ["gif", "stf", "sit", "gre", "tunl", "ip6tnl"];
+    if PLAINTEXT_TUNNEL_PREFIXES
+        .iter()
+        .any(|p| name.starts_with(p))
+    {
+        return InterfaceKind::Unknown;
+    }
+
+    const TUNNEL_PREFIXES: [&str; 5] = ["utun", "tun", "tap", "wg", "ipsec"];
+    if TUNNEL_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        return InterfaceKind::Tunnel;
+    }
+
+    // Ordinary adapters, checked before the MAC rule rather than after it.
+    // Windows' "Ethernet (Kernel Debugger)" reports no physical address while
+    // being an `ethernetCsmacd` interface, so the MAC rule alone would call it
+    // a tunnel.
+    const ORDINARY_PREFIXES: [&str; 12] = [
+        // macOS: en0..en8, plus Apple's own link types.
+        "en", "bridge", "vmenet", "awdl", "llw", "anpi", "nan", "ap",
+        // Linux: eth0, enp3s0, wlan0, wlp2s0.
+        "eth", "wlan", "wlp", // Windows, whose friendly names are words.
+        "wi-fi",
+    ];
+    if ORDINARY_PREFIXES.iter().any(|p| name.starts_with(p)) {
+        return InterfaceKind::Ordinary;
+    }
+
+    // Evidence for a tunnel, never against one. This is what identifies
+    // `torguard-wg`, which no name rule reaches, and any WireGuard adapter
+    // named after a config file rather than after a convention.
+    if mac_addr.is_none() {
+        return InterfaceKind::Tunnel;
+    }
+
+    // A name that matched nothing and an address that says nothing. The guard
+    // treats this as "not a tunnel" and the UI says Flume could not tell,
+    // which is the true statement -- claiming an ordinary adapter here would
+    // be the same invention in the opposite direction.
     InterfaceKind::Unknown
 }
 
@@ -717,13 +801,49 @@ mod tests {
     }
 
     #[test]
+    fn a_tunnel_that_carries_no_privacy_is_not_reported_as_one() {
+        // 6to4, IPIP and GRE are tunnels in the networking sense and plaintext
+        // to everyone on the path. Reporting one as a tunnel would tell a user
+        // they are protected at a moment when they are not.
+        //
+        // `sit0` and `gre0` are given no MAC here because that is what Linux
+        // reports for them -- without this rule the MAC would carry them
+        // straight to Tunnel.
+        for (name, mac) in [
+            ("gif0", Some("00:00:00:00:00:00")),
+            ("stf0", Some("00:00:00:00:00:00")),
+            ("sit0", None),
+            ("gre0", None),
+            ("tunl0", None),
+        ] {
+            assert_eq!(
+                classify(name, mac, false),
+                InterfaceKind::Unknown,
+                "{name} carries no privacy and must not read as a tunnel"
+            );
+        }
+
+        // The neighbouring name that *is* a real tunnel still is one.
+        assert_eq!(classify("tun0", None, false), InterfaceKind::Tunnel);
+    }
+
+    #[test]
     fn classification_is_not_confused_by_case() {
         // macOS and Linux are lower case; Windows friendly names are whatever
         // the vendor typed.
-        assert_eq!(classify("UTUN6", None, false), InterfaceKind::Tunnel);
+        // These carry a MAC, so they can only pass through the name rule --
+        // otherwise they would succeed for the wrong reason.
         assert_eq!(
-            classify("wireguard tunnel", None, false),
+            classify("UTUN6", Some("00:00:00:00:00:00"), false),
             InterfaceKind::Tunnel
+        );
+        assert_eq!(
+            classify("WG0", Some("02:00:00:00:00:00"), false),
+            InterfaceKind::Tunnel
+        );
+        assert_eq!(
+            classify("Ethernet", Some("001C42A6858B"), false),
+            InterfaceKind::Ordinary
         );
     }
 

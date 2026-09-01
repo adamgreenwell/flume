@@ -29,6 +29,7 @@
 
 use flume_lib::{
     commands::CommandError,
+    egress::{EgressPath, Hop, InterfaceKind, Verdict},
     engine::{
         Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
         PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
@@ -190,10 +191,89 @@ fn settings_match_the_typescript_mirror() {
             "proxyUrl",
             "theme",
             "density",
+            "egressGuard",
+            "egressInterface",
             "usageReporting",
         ],
         "Settings",
     );
+}
+
+#[test]
+fn the_egress_path_matches_the_typescript_mirror() {
+    assert_keys(
+        &EgressPath {
+            v4: Some(Hop {
+                interface: "utun6".into(),
+                kind: InterfaceKind::Tunnel,
+            }),
+            v6: None,
+        },
+        &["v4", "v6"],
+        "EgressPath",
+    );
+
+    let hop = json(&Hop {
+        interface: "wg-torguard".into(),
+        kind: InterfaceKind::Tunnel,
+    });
+    assert_eq!(hop["interface"], "wg-torguard");
+    assert_eq!(hop["kind"], "tunnel");
+}
+
+#[test]
+fn every_verdict_matches_the_typescript_mirror() {
+    // The tag and the field names both, because `rename_all` renames only the
+    // variants: a field arriving as `other_family_outside` would read as
+    // `undefined` in the mirror and the IPv6 leak warning would never render.
+    let cases = [
+        (
+            json(&Verdict::Tunnelled {
+                interface: "utun6".into(),
+                other_family_outside: true,
+            }),
+            "tunnelled",
+            vec!["verdict", "interface", "otherFamilyOutside"],
+        ),
+        (
+            json(&Verdict::Pinned {
+                interface: "Local Area Connection".into(),
+                other_family_outside: false,
+            }),
+            "pinned",
+            vec!["verdict", "interface", "otherFamilyOutside"],
+        ),
+        (
+            json(&Verdict::Direct {
+                interface: "en7".into(),
+            }),
+            "direct",
+            vec!["verdict", "interface"],
+        ),
+        (
+            json(&Verdict::WrongTunnel {
+                interface: "utun7".into(),
+                expected: "utun6".into(),
+            }),
+            "wrongTunnel",
+            vec!["verdict", "interface", "expected"],
+        ),
+        (json(&Verdict::Unknown), "unknown", vec!["verdict"]),
+    ];
+
+    for (value, tag, mut want) in cases {
+        assert_eq!(value["verdict"], tag, "verdict tag for {tag}");
+
+        let mut actual: Vec<&str> = value
+            .as_object()
+            .expect("a verdict is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        actual.sort_unstable();
+        want.sort_unstable();
+        assert_eq!(actual, want, "fields of the {tag} verdict");
+    }
 }
 
 #[test]
