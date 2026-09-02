@@ -182,9 +182,20 @@ pub async fn import_client(
     output_folder: Option<String>,
 ) -> Result<ImportOutcome, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    let outcome = engine
+    let (outcome, added) = engine
         .import_from(std::path::Path::new(&torrents_dir), output_folder)
         .await?;
+
+    // An import is the one add path that does not go through `confirm_add`,
+    // and Flume knows exactly when it added each of these. Left to
+    // reconciliation they would all get `added_at: None`, which is the rule
+    // for torrents whose arrival moment is genuinely unrecoverable -- not for
+    // ones added a second ago. Insert-if-absent, so a torrent the user already
+    // had keeps its original time.
+    for info_hash in &added {
+        state.note_torrent_added(info_hash).await;
+    }
+
     state.note(EventKind::LibraryImported {
         added: CountBucket::of(outcome.added),
     });
@@ -374,7 +385,7 @@ pub async fn confirm_add(
     // self-healing, because the insert-if-absent finds it on the re-add and
     // keeps this timestamp. That is only safe because reconciliation never
     // deletes on absence. See #145.
-    state.note_torrent_added(&info_hash).await;
+    let noted = state.note_torrent_added(&info_hash).await;
 
     match engine
         .confirm_add(&info_hash, only_files)
@@ -386,6 +397,14 @@ pub async fn confirm_add(
             Ok(id)
         }
         Err(err) => {
+            // Withdrawn, and only if this call created it. A kill inside
+            // `add_torrent` leaves a record whose timestamp is right to within
+            // seconds, which is why record-first is safe -- but a returned
+            // `Err` is knowledge that the add did *not* happen. Left in place,
+            // the real add months later would silently adopt this timestamp,
+            // and nothing could ever correct it: reconciliation never deletes,
+            // and `forget` needs a session id the torrent never got.
+            state.withdraw_torrent_added(&info_hash, noted).await;
             state.note_failure(&err);
             Err(err)
         }

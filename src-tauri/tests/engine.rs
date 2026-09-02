@@ -227,6 +227,51 @@ async fn sample_torrent_file(dir: &std::path::Path) -> String {
     path.display().to_string()
 }
 
+/// The `session.json` reader is pinned against a file librqbit actually wrote.
+///
+/// The unit tests in `library::session_file` hand-author their JSON, so they
+/// can only fail if *Flume's reader* changes — they are structurally incapable
+/// of noticing librqbit's format moving, which is the one thing they were
+/// claimed to guard. This test closes that: it drives a real `Engine`, lets
+/// librqbit write its own `session.json`, and asserts the reader finds the
+/// torrent that is really in it.
+///
+/// It fails on a rev bump that renames the top level, renames `info_hash`,
+/// changes its encoding, or changes the map shape — each of which would
+/// otherwise degrade silently, because an unreadable file reconciles nothing
+/// and a re-encoded hash reconciles *junk records that nothing can remove*.
+#[tokio::test]
+async fn the_session_file_reader_matches_what_librqbit_writes() {
+    use flume_lib::library::persisted_info_hashes;
+
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    let config = test_config(&tmp, false);
+    let session_dir = config.session_dir.clone();
+
+    let engine = Engine::start(config).await.expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { path })
+        .await
+        .expect("preview succeeds");
+    let expected = preview.info_hash.clone();
+    engine
+        .confirm_add(&expected, None)
+        .await
+        .expect("confirm add");
+
+    // librqbit flushes session.json inside `add_torrent`, before it returns.
+    let hashes = persisted_info_hashes(&session_dir)
+        .expect("session.json is readable; a format change would land here");
+
+    assert!(
+        hashes.contains(&expected),
+        "the reader found {hashes:?}, which does not contain the torrent \
+         librqbit just persisted ({expected}). librqbit's session.json format \
+         has probably moved -- see src-tauri/src/library/session_file.rs"
+    );
+}
+
 #[tokio::test]
 async fn preview_lists_files_without_starting_a_download() {
     let tmp = TempDir::new().expect("temp dir");

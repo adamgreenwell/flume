@@ -935,8 +935,12 @@ impl Engine {
         &self,
         torrents_dir: &std::path::Path,
         output_folder: Option<String>,
-    ) -> Result<ImportOutcome, EngineError> {
+    ) -> Result<(ImportOutcome, Vec<String>), EngineError> {
         let mut outcome = ImportOutcome::default();
+        // The hashes of what was actually added, for the library record. Kept
+        // out of `ImportOutcome` because that crosses IPC and the frontend has
+        // no use for them -- the counts are the whole of what it renders.
+        let mut added = Vec::new();
 
         for path in import::torrent_files(torrents_dir) {
             let Ok(bytes) = std::fs::read(&path) else {
@@ -957,7 +961,10 @@ impl Engine {
                 .await;
 
             match response {
-                Ok(AddTorrentResponse::Added(..)) => outcome.added += 1,
+                Ok(AddTorrentResponse::Added(_, handle)) => {
+                    outcome.added += 1;
+                    added.push(handle.info_hash().as_string());
+                }
                 // Already in the session, e.g. a second run of the import or a
                 // torrent the user had added by hand. Not a failure.
                 Ok(AddTorrentResponse::AlreadyManaged(..)) => outcome.skipped += 1,
@@ -965,7 +972,7 @@ impl Engine {
             }
         }
 
-        Ok(outcome)
+        Ok((outcome, added))
     }
 
     /// Applies global transfer limits to the running session.

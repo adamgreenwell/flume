@@ -14,10 +14,26 @@
 //! `Session::persistence` has no accessor. So this is a pinned mirror of
 //! someone else's wire format, treated exactly as `collector/schema.json` is:
 //! the rev is pinned in `Cargo.toml`, so the shape cannot move without a
-//! deliberate bump, and [`tests`] fails loudly if it does anyway.
+//! deliberate bump, and an integration test pins it against a file librqbit
+//! really wrote (see below).
 //!
 //! Only the fields Flume needs are mirrored. Unknown ones are ignored, so an
 //! upstream addition is not a parse failure.
+//!
+//! The tests in this module hand-author their JSON, so they can only fail if
+//! *this reader* changes — they cannot notice librqbit's format moving, which
+//! is what a pin is for. The real pin is
+//! `the_session_file_reader_matches_what_librqbit_writes` in
+//! `tests/engine.rs`: it drives an `Engine`, lets librqbit write its own
+//! `session.json`, and asserts this reader finds the torrent that is really in
+//! it. Verified to fail on a simulated field rename.
+//!
+//! The info hash is lower-cased on the way out. Not because librqbit varies the
+//! case -- it does not, `serialize_info_hash` goes through `Id20::as_string`
+//! which is `hex::encode`, the lower-case variant -- but because the failure if
+//! it ever did would be silent: every record would look absent, reconciliation
+//! would recreate the lot, and every arrival time would read as null with no
+//! error anywhere.
 
 use std::{collections::HashMap, path::Path};
 
@@ -103,10 +119,17 @@ mod tests {
     }
 
     #[test]
-    fn lower_cases_the_hash_so_it_matches_what_the_engine_reports() {
-        // librqbit serialises the hash in upper case here and Flume's
-        // `TorrentSummary::info_hash` is lower case. A mismatch would make
-        // every record look absent and reconciliation would recreate the lot.
+    fn normalises_case_even_though_librqbit_does_not_vary_it() {
+        // Both sides are lower-case today: `serialize_info_hash` calls
+        // `Id20::as_string`, which is `hex::encode`, which is the lower-case
+        // variant -- `hex::encode_upper` exists separately. So this
+        // normalisation fixes no observed mismatch.
+        //
+        // It is kept because the cost of being wrong is asymmetric. If the
+        // case ever diverged, every record would look absent, reconciliation
+        // would recreate the lot, and every `added_at` would silently read as
+        // null -- a failure with no error and no symptom except data quietly
+        // going missing. One `to_ascii_lowercase` against that is cheap.
         let tmp = tempfile::tempdir().expect("temp dir");
         write(
             tmp.path(),

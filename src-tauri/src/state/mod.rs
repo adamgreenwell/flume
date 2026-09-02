@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError},
-    library::{Library, persisted_info_hashes},
+    library::{Library, Noted, persisted_info_hashes, write_atomically},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -233,13 +233,19 @@ impl AppState {
 
         let engine = Engine::start(settings.to_engine_config(self.session_dir.clone())).await?;
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
-        *self.engine.write().await = Some(engine);
-
+        // Reconciled *before* the engine is published. Every command gates on
+        // `engine()`, so publishing first opens a window in which a
+        // `remove_torrent` can delete a record between this pass reading
+        // session.json and taking the library lock -- and reconciliation
+        // would then put it straight back.
+        //
         // Gated on the start having succeeded, and run here rather than at
         // startup because there is no single launch: a session is constructed
         // from the first guard tick, from every guard release, and from any
         // settings change that requires a restart.
         self.reconcile_library().await;
+
+        *self.engine.write().await = Some(engine);
         Ok(())
     }
 
@@ -260,34 +266,88 @@ impl AppState {
             return;
         };
 
-        let mut library = self.library.write().await;
-        if library.reconcile(present)
-            && let Err(err) = library.save(&self.session_dir)
-        {
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.reconcile(present) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// Writes a serialised record, with no lock held.
+    ///
+    /// The write is blocking file I/O. Serialising happens under the lock --
+    /// it is in-memory and fast -- and the write happens outside it, because
+    /// holding a `tokio` write guard across a blocking syscall parks the
+    /// runtime worker and blocks `added_times`, which takes a read lock on
+    /// every telemetry tick. `Settings` reaches the same arrangement from the
+    /// other direction: `update_settings` saves a local value before taking
+    /// the lock at all.
+    fn persist_library(&self, json: Option<String>) {
+        let Some(json) = json else {
+            return;
+        };
+        if let Err(err) = write_atomically(&self.session_dir, &json) {
             log::warn!("could not save the library record: {err}");
         }
     }
 
     /// Records a torrent's arrival, before it is added.
     ///
-    /// Insert-if-absent, so a re-add keeps the original timestamp.
-    pub async fn note_torrent_added(&self, info_hash: &str) {
-        let mut library = self.library.write().await;
-        if library.note_added(info_hash, crate::library::now_seconds())
-            && let Err(err) = library.save(&self.session_dir)
-        {
-            log::warn!("could not save the library record: {err}");
+    /// Insert-if-absent, so a re-add keeps the original timestamp. Returns
+    /// what it did, so a caller that then learns the add failed can withdraw
+    /// a record this call invented — see [`Self::withdraw_torrent_added`].
+    pub async fn note_torrent_added(&self, info_hash: &str) -> Noted {
+        let (noted, json) = {
+            let mut library = self.library.write().await;
+            let noted = library.note_added(info_hash, crate::library::now_seconds());
+            if !noted.changed() {
+                return noted;
+            }
+            (noted, library.to_json())
+        };
+        self.persist_library(json);
+        noted
+    }
+
+    /// Undoes a record written for an add that then failed.
+    ///
+    /// Only withdraws a record the matching [`Self::note_torrent_added`]
+    /// *created*. Record-first is justified by the kill window inside
+    /// librqbit's `add_torrent`, where the retained timestamp is right to
+    /// within seconds — but a returned `Err` is different in kind. It is
+    /// positive knowledge that the add did not happen, and leaving the record
+    /// means the real add months later silently adopts a timestamp from the
+    /// failed attempt, with no path that can ever correct it.
+    ///
+    /// This does not weaken the never-delete-on-absence rule: an absence is
+    /// not knowledge, and this is.
+    pub async fn withdraw_torrent_added(&self, info_hash: &str, noted: Noted) {
+        if noted != Noted::Created {
+            return;
         }
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.forget(info_hash) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
     }
 
     /// Drops a record for a torrent that was definitely removed.
     pub async fn forget_torrent(&self, info_hash: &str) {
-        let mut library = self.library.write().await;
-        if library.forget(info_hash)
-            && let Err(err) = library.save(&self.session_dir)
-        {
-            log::warn!("could not save the library record: {err}");
-        }
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.forget(info_hash) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
     }
 
     /// When each torrent was added, keyed by info hash.

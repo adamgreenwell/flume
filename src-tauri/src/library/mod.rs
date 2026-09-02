@@ -76,8 +76,31 @@ pub struct Record {
     pub added_at: Option<u64>,
 }
 
+/// What [`Library::note_added`] did.
+///
+/// The distinction between `Created` and `Filled` exists for one caller: an
+/// add that then *fails* should withdraw a record it invented, and must not
+/// withdraw one that reconciliation or an earlier add had already put there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Noted {
+    /// There was no record, and one was created.
+    Created,
+    /// A record existed without a timestamp, and now has one.
+    Filled,
+    /// A timestamp was already held and was kept.
+    Unchanged,
+}
+
+impl Noted {
+    /// Whether anything changed, so the caller can skip a write.
+    #[must_use]
+    pub const fn changed(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
+}
+
 /// Every record, keyed by lower-case hex info hash.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Library {
     records: HashMap<String, Record>,
     /// Whether the file on disk was readable.
@@ -119,6 +142,23 @@ pub fn now_seconds() -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
+impl Default for Library {
+    /// An empty library that will write itself.
+    ///
+    /// Manual rather than derived, because the derive would produce
+    /// `healthy: false` — the *disabled* state, in which `reconcile` returns
+    /// immediately, `save` writes nothing and every mutation is dropped, all
+    /// without an error or a log line. A type whose `Default` silently does
+    /// nothing is a trap, and the tests needed a private helper to work around
+    /// it, which was the tell.
+    fn default() -> Self {
+        Self {
+            records: HashMap::new(),
+            healthy: true,
+        }
+    }
+}
+
 impl Library {
     /// Loads the record from `dir`.
     ///
@@ -147,13 +187,7 @@ impl Library {
             // A first run has no file, which is not a problem and not
             // unhealthy — an empty library is exactly right.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return (
-                    Self {
-                        records: HashMap::new(),
-                        healthy: true,
-                    },
-                    None,
-                );
+                return (Self::default(), None);
             }
             Err(e) => {
                 return (
@@ -164,9 +198,20 @@ impl Library {
         };
 
         match serde_json::from_str::<Persisted>(&raw) {
+            // Keys normalised on the way in, so the invariant in this
+            // struct's doc holds by construction rather than by every
+            // mutation site remembering. `load` was the hole: `get`,
+            // `note_added`, `reconcile` and `forget` all lower-case their
+            // argument, but a file holding a mixed-case key would keep it,
+            // and `added_times` clones stored keys while the engine looks up
+            // `as_string()`, which is always lower-case.
             Ok(persisted) => (
                 Self {
-                    records: persisted.torrents,
+                    records: persisted
+                        .torrents
+                        .into_iter()
+                        .map(|(hash, record)| (hash.to_ascii_lowercase(), record))
+                        .collect(),
                     healthy: true,
                 },
                 None,
@@ -228,14 +273,20 @@ impl Library {
     /// the one thing this record exists to hold, and `already_added` on the
     /// preview exists precisely because re-adding is a normal thing to do.
     ///
-    /// Returns whether anything changed, so the caller can skip a write.
-    pub fn note_added(&mut self, info_hash: &str, at: Option<u64>) -> bool {
+    /// Returns what it did, so the caller can skip a write — and so a caller
+    /// that later learns the add failed can withdraw only a record this call
+    /// created.
+    pub fn note_added(&mut self, info_hash: &str, at: Option<u64>) -> Noted {
         let key = info_hash.to_ascii_lowercase();
         match self.records.get(&key) {
-            Some(existing) if existing.added_at.is_some() => false,
-            Some(_) | None => {
+            Some(existing) if existing.added_at.is_some() => Noted::Unchanged,
+            Some(_) => {
                 self.records.entry(key).or_default().added_at = at;
-                true
+                Noted::Filled
+            }
+            None => {
+                self.records.entry(key).or_default().added_at = at;
+                Noted::Created
             }
         }
     }
@@ -302,6 +353,24 @@ impl Library {
             .is_some()
     }
 
+    /// The record as JSON, or `None` when it must not be written back.
+    ///
+    /// Split from [`Self::save`] so a caller holding a lock can serialise
+    /// under it and do the blocking write outside — see
+    /// [`crate::state::AppState`]. `Settings` reaches the same shape by a
+    /// different route: `update_settings` saves a local value and takes the
+    /// lock separately.
+    #[must_use]
+    pub fn to_json(&self) -> Option<String> {
+        if !self.healthy {
+            return None;
+        }
+        serde_json::to_string_pretty(&Persisted {
+            torrents: self.records.clone(),
+        })
+        .ok()
+    }
+
     /// Writes the record to `dir`, atomically.
     ///
     /// Temp file plus rename, which is a convention this repo does not
@@ -317,25 +386,35 @@ impl Library {
     ///
     /// [`LibraryError::Save`] if the directory or file cannot be written.
     pub fn save(&self, dir: &Path) -> Result<(), LibraryError> {
-        if !self.healthy {
+        let Some(json) = self.to_json() else {
             return Ok(());
-        }
+        };
+        write_atomically(dir, &json)
+    }
 
+    /// Where the atomic write stages.
+    fn temp_path(dir: &Path) -> PathBuf {
+        dir.join(format!("{LIBRARY_FILE}.tmp"))
+    }
+}
+
+/// Writes `json` to the record file in `dir`, atomically.
+///
+/// Free-standing so it can run without a `Library` in hand, and therefore
+/// without whatever lock the caller is holding over one.
+///
+/// # Errors
+///
+/// [`LibraryError::Save`] if the directory or file cannot be written.
+pub fn write_atomically(dir: &Path, json: &str) -> Result<(), LibraryError> {
+    {
         std::fs::create_dir_all(dir).map_err(|source| LibraryError::Save {
             path: dir.display().to_string(),
             source,
         })?;
 
         let path = dir.join(LIBRARY_FILE);
-        let temp = Self::temp_path(dir);
-
-        let json = serde_json::to_string_pretty(&Persisted {
-            torrents: self.records.clone(),
-        })
-        .map_err(|e| LibraryError::Save {
-            path: path.display().to_string(),
-            source: std::io::Error::other(e),
-        })?;
+        let temp = Library::temp_path(dir);
 
         std::fs::write(&temp, json).map_err(|source| LibraryError::Save {
             path: temp.display().to_string(),
@@ -354,11 +433,6 @@ impl Library {
             }
         })
     }
-
-    /// Where the atomic write stages.
-    fn temp_path(dir: &Path) -> PathBuf {
-        dir.join(format!("{LIBRARY_FILE}.tmp"))
-    }
 }
 
 #[cfg(test)]
@@ -376,8 +450,8 @@ mod tests {
     #[test]
     fn round_trips_through_disk() {
         let tmp = tempfile::tempdir().expect("temp dir");
-        let mut library = Library::default_healthy();
-        library.note_added(A, Some(1_700_000_000));
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1_700_000_000));
         library.save(tmp.path()).expect("save");
 
         let (reloaded, problem) = Library::load(tmp.path());
@@ -472,8 +546,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut library = loaded(tmp.path());
 
-        assert!(library.note_added(A, Some(1_000)));
-        assert!(!library.note_added(A, Some(9_999)), "nothing changed");
+        assert_eq!(library.note_added(A, Some(1_000)), Noted::Created);
+        assert_eq!(
+            library.note_added(A, Some(9_999)),
+            Noted::Unchanged,
+            "a re-add keeps the original"
+        );
         assert_eq!(library.get(A).and_then(|r| r.added_at), Some(1_000));
     }
 
@@ -486,15 +564,20 @@ mod tests {
         let mut library = loaded(tmp.path());
         library.reconcile([A]);
 
-        assert!(library.note_added(A, Some(555)));
+        assert_eq!(
+            library.note_added(A, Some(555)),
+            Noted::Filled,
+            "a reconciled seat accepts its first real timestamp"
+        );
         assert_eq!(library.get(A).and_then(|r| r.added_at), Some(555));
     }
 
     #[test]
     fn hashes_match_whatever_case_they_arrive_in() {
-        // librqbit serialises the hash upper-case in session.json while
-        // `TorrentSummary::info_hash` is lower-case. A mismatch would make
-        // every record look absent.
+        // Every hash Flume handles is lower-case today -- `Id20::as_string`
+        // is `hex::encode`. This normalisation is defensive rather than
+        // corrective: the module's API takes `&str` from callers, and a
+        // mismatch would make every record look absent with no error.
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut library = loaded(tmp.path());
         library.note_added(&A.to_ascii_uppercase(), Some(7));
@@ -582,15 +665,5 @@ mod tests {
 
         let reloaded = loaded(tmp.path());
         assert_eq!(reloaded.len(), 2);
-    }
-
-    impl Library {
-        /// An empty, healthy library, for tests that do not touch disk first.
-        fn default_healthy() -> Self {
-            Self {
-                records: HashMap::new(),
-                healthy: true,
-            }
-        }
     }
 }
