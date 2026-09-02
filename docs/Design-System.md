@@ -211,8 +211,18 @@ third question is light-or-dark instead.
 
 ## The library window
 
-The main screen is a two-column, two-row grid: a `248px` rail beside `1fr`,
-under a `44px` title bar. The main column stacks a `56px` toolbar, a `28px`
+The main screen is a two-column, two-row grid: the rail beside `1fr`, under a
+`44px` title bar. The rail is `248px` expanded and `56px` collapsed, held in
+`--flume-rail-w` and switched by a `data-rail` attribute on `<html>` — the same
+mechanism as density below, for the same reason.
+
+**It collapses to an icon rail, never to zero.** The network footer is where a
+held tunnel check is reported, and a rail that can disappear turns a deliberate
+hold into unexplained silence. Collapsed, the footer becomes a glyph and a
+one-word caption rather than a coloured dot: `--flume-ok` against
+`--flume-warn` is 1.09:1, so hue alone carries nothing on a greyscale display
+or to a protanope — which would leave the icon rail exactly as useful as no
+rail for the people it was kept for. The main column stacks a `56px` toolbar, a `28px`
 column header, the scrolling list, and a `116px` dock.
 
 Row columns, in order and at these exact widths:
@@ -229,7 +239,8 @@ Row columns, in order and at these exact widths:
 
 Rows are `58px` comfortable, `40px` compact, `0 18px` padding, `16px` gap.
 Density is a `data-density` attribute on `<html>`, so one attribute re-lays the
-whole list rather than every row branching on a prop. Compact removes the meta
+whole list rather than every row branching on a prop. `data-rail` above works
+the same way. Compact removes the meta
 line rather than shrinking it — at 40px there is no room, and a squeezed
 sentence is the first thing to become unreadable.
 

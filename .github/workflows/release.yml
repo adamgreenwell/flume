@@ -141,6 +141,19 @@ jobs:
           # for that leg instead.
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
+      # The step above installs targets into *stable*, and `rust-toolchain.toml`
+      # pins this repo to 1.98.0 -- so cargo runs a toolchain that does not have
+      # them, and the universal build fails at the lipo step after a six-minute
+      # compile with "Target x86_64-apple-darwin is not installed".
+      #
+      # Only this leg is affected. Every other one builds for its own host,
+      # where the target is always present; macOS universal is the only leg
+      # that cross-compiles. Run inside the checkout so the pin selects the
+      # toolchain the targets land on.
+      - name: Add the universal targets to the pinned toolchain
+        if: matrix.target == 'universal-apple-darwin'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       # Deliberately no Rust build cache on release runs. A cached target
       # directory built with different features is exactly the state that
       # triggers the proc-macro resolution failure in #22, and a release build

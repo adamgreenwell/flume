@@ -325,6 +325,24 @@ impl Report<'_> {
         line(&mut out, "Proxy", &describe_proxy(&self.settings.proxy_url));
         line(&mut out, "Theme", &format!("{:?}", self.settings.theme));
         line(&mut out, "Density", &format!("{:?}", self.settings.density));
+        line(&mut out, "Sidebar", &format!("{:?}", self.settings.rail));
+        line(
+            &mut out,
+            "Tunnel check",
+            &format!("{:?}", self.settings.egress_guard),
+        );
+        // Described, not quoted. A pinned interface name is whatever the OS
+        // or the user called it -- "Local Area Connection" says nothing, and a
+        // Windows friendly name can be anything a person typed.
+        line(
+            &mut out,
+            "Pinned interface",
+            if self.settings.egress_interface.is_some() {
+                "pinned"
+            } else {
+                "any tunnel"
+            },
+        );
         line(
             &mut out,
             "Usage reporting",

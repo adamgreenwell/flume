@@ -191,6 +191,7 @@ fn settings_match_the_typescript_mirror() {
             "proxyUrl",
             "theme",
             "density",
+            "rail",
             "egressGuard",
             "egressInterface",
             "usageReporting",

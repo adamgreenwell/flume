@@ -76,6 +76,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::NetEgressInterface,
         SettingKey::UiTheme,
         SettingKey::UiDensity,
+        SettingKey::UiRail,
         SettingKey::PrivacyUsage,
     ] {
         events.push(EventKind::SettingChanged { key });

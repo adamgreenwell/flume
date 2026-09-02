@@ -17,7 +17,7 @@ import {
   type AnySettingDef,
   type SectionId,
 } from "@/lib/settings/defs";
-import { applyDensity, applyTheme } from "@/lib/theme";
+import { applyDensity, applyRail, applyTheme } from "@/lib/theme";
 
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
@@ -136,6 +136,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       // than waiting for the engine to acknowledge a write it does not act on.
       if (def.id === "theme") applyTheme(updated.theme);
       if (def.id === "density") applyDensity(updated.density);
+      // Without this the sidebar setting persists and does nothing until the
+      // next launch -- a control that appears to have no effect, which is
+      // worse than one that is missing.
+      if (def.id === "rail") applyRail(updated.rail);
 
       if (record) {
         setChanges((current) => [
@@ -152,6 +156,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         setSettings(settings);
         if (def.id === "theme") applyTheme(settings.theme);
         if (def.id === "density") applyDensity(settings.density);
+        if (def.id === "rail") applyRail(settings.rail);
         setChanges((current) => current.slice(0, -1));
         setError(
           isCommandError(caught)

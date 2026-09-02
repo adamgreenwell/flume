@@ -151,6 +151,8 @@
   /* Control heights. */
   --flume-h-chip: 28px;
   --flume-h-control: 30px;
+  /* Sidebar width. Collapsed is an icon rail, never 0: see RailState. */
+  --flume-rail-w: 248px;
   --flume-h-primary: 34px; /* dialog primary action; 36px in first-run */
 
   /* Row heights. */
@@ -169,6 +171,10 @@
   --flume-row-h: var(--flume-row-comfortable);
   --flume-meta-h: 16px;
   --flume-meta-op: 1;
+}
+
+:root[data-rail="collapsed"] {
+  --flume-rail-w: 56px;
 }
 
 :root[data-density="compact"] {

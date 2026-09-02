@@ -6,6 +6,18 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 [kac]: https://keepachangelog.com/en/1.1.0/
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+- **Collapsible sidebar.** The rail collapses to a 56px icon rail and back,
+  from a toggle beside the wordmark or from Settings → Appearance, and the
+  choice survives a relaunch. It never collapses to nothing: the network
+  footer is where a held tunnel check is reported, so collapsed it becomes one
+  status dot whose name carries all three lines. Pressing `/` on a collapsed
+  rail expands it and puts the caret in the search field rather than doing
+  nothing.
+
 ## [1.1.0] — 2026-09-01
 
 ### Added

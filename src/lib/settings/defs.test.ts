@@ -14,6 +14,7 @@ const SETTINGS: Settings = {
   proxyUrl: null,
   theme: "system",
   density: "comfortable",
+  rail: "expanded",
   egressGuard: "off",
   egressInterface: null,
   usageReporting: null,
