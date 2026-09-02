@@ -208,6 +208,9 @@ pub enum SettingKey {
     /// Row density.
     #[serde(rename = "ui.density")]
     UiDensity,
+    /// Sidebar expanded or collapsed.
+    #[serde(rename = "ui.rail")]
+    UiRail,
     /// Usage reporting itself.
     #[serde(rename = "privacy.usage")]
     PrivacyUsage,
@@ -264,6 +267,7 @@ impl SettingKey {
         );
         note(previous.theme != next.theme, Self::UiTheme);
         note(previous.density != next.density, Self::UiDensity);
+        note(previous.rail != next.rail, Self::UiRail);
         note(
             previous.usage_reporting != next.usage_reporting,
             Self::PrivacyUsage,

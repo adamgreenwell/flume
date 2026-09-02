@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -57,8 +58,12 @@ import {
   resumeTorrent,
   updateSettings,
 } from "@/lib/ipc/client";
-import { applyDensity, applyTheme } from "@/lib/theme";
-import { isCommandError, type TorrentSummary } from "@/lib/ipc/types";
+import { applyDensity, applyRail, applyTheme } from "@/lib/theme";
+import {
+  isCommandError,
+  type Settings,
+  type TorrentSummary,
+} from "@/lib/ipc/types";
 
 /**
  * The main window: session status and the torrent list.
@@ -106,6 +111,7 @@ export default function Home() {
   // Mirrors the persisted `ui.density` setting. Held here so the toolbar chip
   // stays instant, and written back so the choice survives a restart.
   const [compact, setCompact] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
   // Read through useSyncExternalStore rather than an effect: the value differs
   // between the static export and the client, and this is the one pattern that
@@ -126,6 +132,38 @@ export default function Home() {
   useEffect(() => {
     applyDensity(compact ? "compact" : "comfortable");
   }, [compact]);
+
+  // Same shape as density: the width lives on <html> as `--flume-rail-w`, so
+  // the grid below reads it and nothing in the tree re-renders to move.
+  useEffect(() => {
+    applyRail(railCollapsed ? "collapsed" : "expanded");
+  }, [railCollapsed]);
+
+  // `update_settings` takes the whole object, so every writer has to read
+  // first. Two of those interleaved lose one of the changes: toggle the rail
+  // and hit the density chip in the same second and whichever read happened
+  // first writes its stale copy last. Chaining them means the second read sees
+  // what the first wrote.
+  const settingsWrite = useRef<Promise<unknown>>(Promise.resolve());
+  const patchSettings = useCallback((patch: Partial<Settings>) => {
+    settingsWrite.current = settingsWrite.current
+      // A failed write must not poison the queue for every write after it.
+      .catch(() => {})
+      .then(() => getSettings())
+      .then((s) => updateSettings({ ...s, ...patch }))
+      .catch(() => {
+        // The change still took effect for this session; it just will not
+        // survive a relaunch. Not worth an error banner.
+      });
+    return settingsWrite.current;
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    const next = !railCollapsed;
+    // Applied to the layout on this render; persisted behind the queue.
+    setRailCollapsed(next);
+    void patchSettings({ rail: next ? "collapsed" : "expanded" });
+  }, [railCollapsed, patchSettings]);
 
   // A magnet clicked in a browser, or passed on the command line, opens the
   // add dialog prefilled rather than adding silently -- the file-selection
@@ -169,6 +207,7 @@ export default function Home() {
       .then((s) => {
         applyTheme(s.theme);
         setCompact(s.density === "compact");
+        setRailCollapsed(s.rail === "collapsed");
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
         setDownloadLimitBps(s.downloadLimitBps);
@@ -320,6 +359,7 @@ export default function Home() {
             .then((s) => {
               applyTheme(s.theme);
               setCompact(s.density === "compact");
+              setRailCollapsed(s.rail === "collapsed");
               setDownloadLimitBps(s.downloadLimitBps);
             })
             .catch(() => {
@@ -331,7 +371,7 @@ export default function Home() {
   }
 
   return (
-    <div className="grid h-full grid-cols-[248px_1fr] grid-rows-[44px_1fr] overflow-hidden">
+    <div className="grid h-full grid-cols-[var(--flume-rail-w)_1fr] grid-rows-[44px_1fr] overflow-hidden">
       <TitleBar
         controls={controls}
         downloadBps={status?.downloadBps ?? 0}
@@ -348,6 +388,8 @@ export default function Home() {
         loading={isLoading}
         guard={guardStatus}
         searchDisabled={anyDialogOpen}
+        collapsed={railCollapsed}
+        onToggleCollapsed={toggleRail}
       />
 
       <div className="row-start-2 flex min-h-0 min-w-0 flex-col">
@@ -362,17 +404,11 @@ export default function Home() {
             setCompact(next);
             // Persisted so the choice survives a restart, and so the settings
             // screen and this chip cannot disagree about what density is.
-            void getSettings()
-              .then((s) =>
-                updateSettings({
-                  ...s,
-                  density: next ? "compact" : "comfortable",
-                }),
-              )
-              .catch(() => {
-                // A density that failed to persist still applied locally;
-                // it is not worth an error banner over the list.
-              });
+            // Through the same queue as the rail toggle: both are whole-object
+            // writes, and interleaving them loses one of the two changes.
+            void patchSettings({
+              density: next ? "compact" : "comfortable",
+            });
           }}
           onAdd={() => setIsAdding(true)}
         />

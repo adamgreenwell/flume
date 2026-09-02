@@ -444,6 +444,15 @@ export type Theme = "system" | "light" | "dark";
  */
 export type Density = "comfortable" | "compact";
 
+/**
+ * How wide the sidebar is drawn. Mirrors Rust `RailState`.
+ *
+ * Two states and no third. `collapsed` is an icon rail, never zero width: the
+ * rail's network footer carries the egress guard's held state, and a rail that
+ * can hide it turns a deliberate hold into unexplained silence.
+ */
+export type RailState = "expanded" | "collapsed";
+
 /** A BitTorrent client Flume can import from. Mirrors Rust `ClientKind`. */
 export type ClientKind = "transmission" | "qBittorrent" | "deluge";
 
@@ -642,6 +651,8 @@ export interface Settings {
    * reason: a preference the user re-sets on every launch is not a preference.
    */
   density: Density;
+  /** Sidebar width. Frontend-only, persisted for the same reason as theme. */
+  rail: RailState;
   /**
    * Whether to require that traffic leaves through a tunnel, and what to do
    * when it does not.

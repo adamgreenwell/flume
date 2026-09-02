@@ -50,6 +50,26 @@ pub enum Density {
     Compact,
 }
 
+/// How wide the sidebar is drawn.
+///
+/// Frontend-only, like [`Theme`] and [`Density`], and persisted here for the
+/// same reason: a preference the user re-sets on every launch is not a
+/// preference.
+///
+/// Two states and no third. The rail collapses to an icon rail, never to zero
+/// width: its network footer carries the egress guard's held state, and a rail
+/// that can hide it turns a deliberate hold into unexplained silence. See the
+/// Phase 4 field notes in `docs/Roadmap.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RailState {
+    /// 248px, with the wordmark, search, view names and the network footer.
+    #[default]
+    Expanded,
+    /// 56px: view icons and one status dot.
+    Collapsed,
+}
+
 /// Everything the user can configure.
 ///
 /// Mirrored in `src/lib/ipc/types.ts`.
@@ -92,6 +112,9 @@ pub struct Settings {
 
     /// Row height in the library. Frontend-only, persisted for the same reason.
     pub density: Density,
+
+    /// Sidebar width. Frontend-only, persisted for the same reason.
+    pub rail: RailState,
 
     /// Whether to require that traffic leaves through a tunnel, and what to
     /// do when it does not.
@@ -138,6 +161,7 @@ impl Default for Settings {
             proxy_url: None,
             theme: Theme::System,
             density: Density::Comfortable,
+            rail: RailState::Expanded,
             egress_guard: EgressGuard::Off,
             egress_interface: None,
             // Not asked yet. Never defaults to `Some(true)`: consent that the
@@ -603,6 +627,24 @@ mod tests {
     }
 
     #[test]
+    fn the_rail_starts_expanded_and_round_trips_collapsed() {
+        // A collapsed rail that came back expanded on every launch would be
+        // the "preference the user re-sets every time" this field exists to
+        // prevent.
+        assert_eq!(Settings::default().rail, RailState::Expanded);
+
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let settings = Settings {
+            rail: RailState::Collapsed,
+            ..valid()
+        };
+        settings.save(tmp.path()).expect("save");
+        let (loaded, problem) = Settings::load(tmp.path());
+        assert!(problem.is_none());
+        assert_eq!(loaded.rail, RailState::Collapsed);
+    }
+
+    #[test]
     fn the_egress_guard_is_off_until_the_user_asks_for_it() {
         // A general-purpose client does not open with a warning about someone
         // else's network.
@@ -672,6 +714,7 @@ mod tests {
             upload_limit_bps: Some(2048),
             download_limit_bps: Some(4096),
             theme: Theme::Light,
+            rail: RailState::Collapsed,
             ..valid()
         };
         assert!(!before.requires_restart(&after));

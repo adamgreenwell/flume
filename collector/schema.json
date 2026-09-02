@@ -38,6 +38,7 @@
         "net.egressInterface",
         "ui.theme",
         "ui.density",
+        "ui.rail",
         "privacy.usage"
       ]
     },

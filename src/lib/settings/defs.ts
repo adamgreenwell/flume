@@ -345,6 +345,24 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
         ? "58px rows, each with a second line saying what that torrent is doing."
         : "40px rows. About 40% more fit on screen, and the explanation line under each name is hidden.",
   },
+  {
+    id: "rail",
+    section: "ui",
+    label: "Sidebar",
+    key: "ui.rail",
+    control: {
+      kind: "segment",
+      options: [
+        { value: "expanded", label: "Expanded" },
+        { value: "collapsed", label: "Collapsed" },
+      ],
+    },
+    keywords: ["sidebar", "collapse", "narrow", "icon rail", "views", "rail"],
+    consequence: (rail) =>
+      rail === "expanded"
+        ? "The full sidebar: search, view names with counts, and the network footer saying how many DHT nodes Flume knows, whether the port is open, and where traffic is leaving by."
+        : "An icon rail. The views become icons with their names on hover, the footer becomes one status dot, and pressing / expands it to search. It never collapses to nothing: the footer is where a held tunnel check is reported.",
+  },
 ];
 
 /**

@@ -1,4 +1,4 @@
-import type { Density, Theme } from "@/lib/ipc/types";
+import type { Density, RailState, Theme } from "@/lib/ipc/types";
 
 /**
  * Applies a theme by setting `data-theme` on the document root.
@@ -29,4 +29,20 @@ export function applyDensity(density: Density): void {
   const root = document.documentElement;
   if (density === "compact") root.setAttribute("data-density", "compact");
   else root.removeAttribute("data-density");
+}
+
+/**
+ * Applies the sidebar width by setting `data-rail` on the document root.
+ *
+ * Same shape as {@link applyDensity}: the expanded default lives in the
+ * `:root` block in `globals.css` and only the collapsed state is asserted from
+ * here. The page grid reads `--flume-rail-w`, so collapsing repaints the
+ * layout without every child re-rendering against a prop.
+ *
+ * @param rail - The state to apply.
+ */
+export function applyRail(rail: RailState): void {
+  const root = document.documentElement;
+  if (rail === "collapsed") root.setAttribute("data-rail", "collapsed");
+  else root.removeAttribute("data-rail");
 }
