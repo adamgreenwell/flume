@@ -8,6 +8,17 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Fixed
+
+- **A torrent whose `.torrent` file went missing could hang Flume's startup
+  indefinitely.** librqbit reads a missing sidecar as empty bytes rather than
+  as an error and restores the row as a magnet, and that path has no timeout —
+  so for a torrent nobody is seeding, the session never finished starting. In
+  1.1.0 that also meant the tunnel check's loop never started, leaving its
+  status frozen with no way to recover from inside the app. Starting the
+  session is now bounded, and the failure says your library has not been
+  deleted.
+
 ### Added
 
 - **Collapsible sidebar.** The rail collapses to a 56px icon rail and back,

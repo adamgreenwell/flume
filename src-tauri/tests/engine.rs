@@ -38,6 +38,68 @@ fn test_config(tmp: &TempDir, enable_dht: bool) -> EngineConfig {
     }
 }
 
+/// A persisted torrent whose `.torrent` file is gone must not hang the session.
+///
+/// The bug in #154, reproduced end to end. librqbit reads a missing
+/// `<hash>.torrent` sidecar as *empty bytes* rather than as an error, and
+/// `into_add_torrent` branches on the byte length -- so the row is restored as
+/// a **magnet**. Magnet resolution on that path has no timeout inside
+/// librqbit, and the restore loop is `while !added_all || !futs.is_empty()`,
+/// so one unresolvable row holds `Session::new_with_opts` open forever. That
+/// hangs `Engine::start`, which hangs `AppState::restart_engine`, which hangs
+/// the caller in `crate::guard` -- so the guard loop is never spawned and the
+/// egress status the UI shows never updates again.
+///
+/// The info hash below is random, so nobody is seeding it and the DHT will
+/// keep offering fresh peers to ask indefinitely. That is what makes this a
+/// hang rather than a slow failure, and it is why the test needs real network:
+/// with no DHT the peer stream completes and the add fails fast, which is the
+/// wrong code path.
+#[tokio::test]
+#[ignore = "needs working internet: without a live DHT the add fails fast instead of hanging"]
+async fn a_torrent_whose_dot_torrent_file_is_missing_cannot_hang_the_session() {
+    let tmp = TempDir::new().expect("temp dir");
+    let config = test_config(&tmp, true);
+    std::fs::create_dir_all(&config.session_dir).expect("session dir");
+    std::fs::create_dir_all(&config.download_dir).expect("download dir");
+
+    // One row, and deliberately no `<hash>.torrent` beside it -- which is what
+    // a disk-full moment or a kill mid-write leaves behind, since librqbit
+    // writes that sidecar best-effort and commits the row regardless.
+    let session_json = serde_json::json!({
+        "torrents": {
+            "0": {
+                // Random, so nobody is seeding it.
+                "info_hash": "b4c9a1f70e2d83a6157c0d4e9b2f8a1d3e6f7c05",
+                "trackers": [],
+                "output_folder": config.download_dir.to_str().expect("utf-8 path"),
+                "only_files": serde_json::Value::Null,
+                "is_paused": false,
+            }
+        }
+    });
+    std::fs::write(
+        config.session_dir.join("session.json"),
+        serde_json::to_string(&session_json).expect("serialize"),
+    )
+    .expect("write session.json");
+
+    let started = std::time::Instant::now();
+    let result = Engine::start_within(config, Duration::from_secs(5)).await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        matches!(result, Err(EngineError::SessionStartTimeout { .. })),
+        "a sidecar-less row should time out rather than hang, got {result:?}"
+    );
+    // The deadline has to be enforced rather than merely declared: before the
+    // fix this call never returned at all.
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "the deadline was not enforced; waited {elapsed:?}"
+    );
+}
+
 #[tokio::test]
 async fn starts_without_dht_and_reports_status() {
     let tmp = TempDir::new().expect("temp dir");

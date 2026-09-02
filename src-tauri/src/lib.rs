@@ -170,6 +170,12 @@ pub fn run() {
                 // first closes that window rather than shrinking it: if
                 // traffic is not leaving through a tunnel, no session is
                 // constructed at all.
+                // Bounded, and it has to stay that way: `guard::spawn` below
+                // is gated on this returning. An unbounded await here means no
+                // guard loop at all -- no further probes, and a UI frozen on
+                // the status `AppState::new` published before the first tick.
+                // That is #154, and `Engine::start` carries the deadline that
+                // prevents it.
                 let status = guard::tick(&handle).await;
                 if status.held {
                     log::info!(

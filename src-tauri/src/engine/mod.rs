@@ -45,6 +45,23 @@ pub use note::{Note, NoteSeverity};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
 pub use torrent::{SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
+/// How long `Session::new_with_opts` may take before Flume gives up on it.
+///
+/// Generous, because a legitimate start is not fast: librqbit rewrites the
+/// whole of `session.json` once per restored torrent, verifies fast-resume
+/// state, binds the listener and bootstraps the DHT before it returns. A
+/// library of a few hundred torrents on a slow disk is allowed to take a
+/// while.
+///
+/// It exists because the alternative is not "slow", it is "never". A row in
+/// `session.json` whose `<hash>.torrent` sidecar is missing is restored as a
+/// *magnet* — librqbit's `into_add_torrent` branches on the byte length and a
+/// missing sidecar reads as empty — and magnet resolution on that path has no
+/// timeout of its own. For an info hash nobody is seeding, the restore future
+/// never completes, and the restore loop cannot exit while a future is
+/// pending. See issue #154.
+pub const SESSION_START_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// How long a magnet may take to produce a file list before Flume gives up.
 ///
 /// A well-seeded magnet resolves in seconds — the live-DHT test does it in
@@ -72,6 +89,25 @@ pub enum EngineError {
     /// exists but is not writable.
     #[error("failed to start the torrent session: {0}")]
     SessionStart(#[source] anyhow::Error),
+
+    /// The session did not finish starting within
+    /// [`SESSION_START_TIMEOUT`].
+    ///
+    /// Distinct from [`Self::SessionStart`] because the cause and the remedy
+    /// are different: nothing refused, something never answered. The usual
+    /// reason is a persisted torrent whose `.torrent` file is missing, which
+    /// librqbit restores as a magnet and then waits on forever. See #154.
+    #[error(
+        "the torrent session did not finish starting within {seconds} seconds. \
+         This usually means a torrent in your library is missing its .torrent \
+         file and Flume is waiting for peers that will never answer. Nothing \
+         has been deleted; the diagnostics report in Settings → Privacy says \
+         which session directory to look at."
+    )]
+    SessionStartTimeout {
+        /// How long was waited, in seconds.
+        seconds: u64,
+    },
 
     /// The supplied magnet URI could not be parsed.
     #[error("that does not look like a valid magnet link")]
@@ -145,9 +181,26 @@ impl Engine {
     /// # Errors
     ///
     /// Returns [`EngineError::Directory`] if a required directory cannot be
-    /// created, or [`EngineError::SessionStart`] if librqbit fails to bind its
-    /// listener or restore persisted state.
+    /// created, [`EngineError::SessionStart`] if librqbit fails to bind its
+    /// listener or restore persisted state, or
+    /// [`EngineError::SessionStartTimeout`] if it never finishes.
     pub async fn start(config: EngineConfig) -> Result<Self, EngineError> {
+        Self::start_within(config, SESSION_START_TIMEOUT).await
+    }
+
+    /// [`Self::start`] with an explicit deadline.
+    ///
+    /// The seam exists for tests: reproducing the hang in #154 needs a real
+    /// session directory and a real DHT, and waiting out the production
+    /// deadline to observe it is not a test anyone runs twice.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::start`].
+    pub async fn start_within(
+        config: EngineConfig,
+        deadline: Duration,
+    ) -> Result<Self, EngineError> {
         for dir in [&config.download_dir, &config.session_dir] {
             std::fs::create_dir_all(dir).map_err(|source| EngineError::Directory {
                 path: dir.display().to_string(),
@@ -204,9 +257,23 @@ impl Engine {
             ..Default::default()
         };
 
-        let session = Session::new_with_opts(config.download_dir.clone(), opts)
-            .await
-            .map_err(EngineError::SessionStart)?;
+        // Bounded rather than awaited outright. librqbit's restore loop is
+        // `while !added_all || !futs.is_empty()`, so a single restore future
+        // that never completes holds the whole construction open -- and the
+        // magnet path it takes for a sidecar-less row has no timeout inside
+        // librqbit at all. Without this, `Engine::start` never returns, which
+        // means `AppState::restart_engine` never returns, which means the
+        // caller in `crate::guard` never returns and the guard loop is never
+        // spawned. See #154.
+        let session = tokio::time::timeout(
+            deadline,
+            Session::new_with_opts(config.download_dir.clone(), opts),
+        )
+        .await
+        .map_err(|_| EngineError::SessionStartTimeout {
+            seconds: deadline.as_secs(),
+        })?
+        .map_err(EngineError::SessionStart)?;
 
         Ok(Self {
             session,
