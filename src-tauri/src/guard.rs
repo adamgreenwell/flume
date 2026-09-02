@@ -87,6 +87,12 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
             settings.enable_dht,
             settings.enable_upnp
         );
+        // Logged and swallowed on purpose. A failed start must not stop the
+        // loop: the guard keeps probing, keeps publishing, and tries again on
+        // the next tick. Retries are self-limiting because the loop is
+        // sequential and `Engine::start` is bounded -- a start that times out
+        // takes its whole deadline, so the retry rate is one per attempt
+        // rather than one per second. See #154.
         if let Err(err) = state.restart_engine(&settings).await {
             log::error!("torrent engine failed to start: {err}");
         }

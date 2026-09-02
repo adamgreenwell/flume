@@ -63,6 +63,14 @@ impl From<EngineError> for CommandError {
             EngineError::NoPendingPreview => "noPendingPreview",
             EngineError::UnknownTorrent(_) => "unknownTorrent",
             EngineError::Directory { .. } | EngineError::SessionStart(_) => "engineFailed",
+            // Its own kind rather than `engineFailed`: nothing refused, the
+            // session never finished starting, and the message tells the user
+            // their library is intact. Deliberately NOT added to
+            // `usage::FailureKind` -- that would widen the wire format and
+            // require the collector to move in the same commit, which a bug
+            // fix should not drag along. `FailureKind::parse` drops unknown
+            // kinds by design, so this is inert there.
+            EngineError::SessionStartTimeout { .. } => "sessionStartTimeout",
             EngineError::Operation(_) => "operationFailed",
         };
         Self {
