@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError},
+    library::{Library, persisted_info_hashes},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -40,6 +41,14 @@ pub struct AppState {
     egress: Mutex<EgressWatcher>,
     /// The hysteresis between a verdict and acting on it.
     gate: Mutex<TransferGate>,
+    /// What Flume remembers about each torrent that librqbit does not.
+    ///
+    /// Settings-shaped rather than Recorder-shaped: the roadmap puts a label
+    /// (#58) and a per-torrent folder (#61) in this record, and silently
+    /// losing a label someone just typed is not acceptable the way a missed
+    /// usage count is. See [`crate::library`].
+    library: RwLock<Library>,
+
     /// The last status the guard loop published.
     ///
     /// Read by `check_egress` rather than re-probing, so the UI and the engine
@@ -55,6 +64,14 @@ impl AppState {
             settings.usage_reporting,
             env!("CARGO_PKG_VERSION").to_owned(),
         ));
+
+        // Loaded here rather than lazily: `restart_engine` reconciles against
+        // it on the very first session construction, which happens before any
+        // command runs.
+        let (library, problem) = Library::load(&session_dir);
+        if let Some(problem) = problem {
+            log::warn!("{problem}");
+        }
 
         // Probed once here, synchronously, so no command can ever observe a
         // status that does not exist yet. It costs one uncached probe -- about
@@ -78,6 +95,7 @@ impl AppState {
             first_run,
             usage,
             started_at: Instant::now(),
+            library: RwLock::new(library),
             egress: Mutex::new(watcher),
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
@@ -216,7 +234,66 @@ impl AppState {
         let engine = Engine::start(settings.to_engine_config(self.session_dir.clone())).await?;
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
         *self.engine.write().await = Some(engine);
+
+        // Gated on the start having succeeded, and run here rather than at
+        // startup because there is no single launch: a session is constructed
+        // from the first guard tick, from every guard release, and from any
+        // settings change that requires a restart.
+        self.reconcile_library().await;
         Ok(())
+    }
+
+    /// Creates records for torrents that have none. Deletes nothing.
+    ///
+    /// Reads librqbit's *persisted* rows rather than the live session. A
+    /// torrent that failed to restore -- an unmounted drive, a permissions
+    /// problem -- is absent from the session and present in the file, and
+    /// reconciling against the live reading would look like it had been
+    /// removed. `None` means the file could not be read at all, which is not
+    /// the same as no torrents and must not be treated as one.
+    async fn reconcile_library(&self) {
+        let Some(present) = persisted_info_hashes(&self.session_dir) else {
+            log::warn!(
+                "could not read librqbit's session file; \
+                 leaving the library record alone this session"
+            );
+            return;
+        };
+
+        let mut library = self.library.write().await;
+        if library.reconcile(present)
+            && let Err(err) = library.save(&self.session_dir)
+        {
+            log::warn!("could not save the library record: {err}");
+        }
+    }
+
+    /// Records a torrent's arrival, before it is added.
+    ///
+    /// Insert-if-absent, so a re-add keeps the original timestamp.
+    pub async fn note_torrent_added(&self, info_hash: &str) {
+        let mut library = self.library.write().await;
+        if library.note_added(info_hash, crate::library::now_seconds())
+            && let Err(err) = library.save(&self.session_dir)
+        {
+            log::warn!("could not save the library record: {err}");
+        }
+    }
+
+    /// Drops a record for a torrent that was definitely removed.
+    pub async fn forget_torrent(&self, info_hash: &str) {
+        let mut library = self.library.write().await;
+        if library.forget(info_hash)
+            && let Err(err) = library.save(&self.session_dir)
+        {
+            log::warn!("could not save the library record: {err}");
+        }
+    }
+
+    /// When each torrent was added, keyed by info hash.
+    pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
+        let library = self.library.read().await;
+        library.added_times()
     }
 
     /// Shuts the engine down if one is running, and clears it.

@@ -117,7 +117,7 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine.telemetry())
+    Ok(engine.telemetry_with(&state.added_times().await))
 }
 
 impl From<SettingsError> for CommandError {
@@ -363,6 +363,19 @@ pub async fn confirm_add(
     only_files: Option<Vec<usize>>,
 ) -> Result<usize, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+
+    // Written BEFORE the add, not after. librqbit makes session.json durable
+    // inside `add_torrent`, before it returns -- so a record written afterwards
+    // loses a kill in that window, and the timestamp lost is always the
+    // freshest one, which is exactly what a "recently added" sort is for.
+    //
+    // Record-first inverts the failure into an orphan record: a few hundred
+    // bytes, invisible in a UI that renders the session's torrents, and
+    // self-healing, because the insert-if-absent finds it on the re-add and
+    // keeps this timestamp. That is only safe because reconciliation never
+    // deletes on absence. See #145.
+    state.note_torrent_added(&info_hash).await;
+
     match engine
         .confirm_add(&info_hash, only_files)
         .await
@@ -436,7 +449,12 @@ pub async fn remove_torrent(
         .await
         .map_err(CommandError::from)
     {
-        Ok(()) => {
+        Ok(info_hash) => {
+            // The only place a record is deleted. A removal is knowledge;
+            // an absence is not, which is why reconciliation never deletes.
+            // The hash comes back from `remove` because the id-to-hash
+            // mapping is destroyed by the delete itself.
+            state.forget_torrent(&info_hash).await;
             state.note(EventKind::TorrentRemoved {
                 deleted_data: delete_files,
             });
@@ -520,6 +538,8 @@ pub async fn get_diagnostics(
     // Only the names, and only to redact them. They are never rendered.
     let (core, names) = match &engine {
         Some(engine) => {
+            // Names only, and only to redact them -- the arrival times are
+            // not wanted here and must never enter a bundle (rule 11).
             let snapshot = engine.telemetry();
             let names = snapshot
                 .torrents

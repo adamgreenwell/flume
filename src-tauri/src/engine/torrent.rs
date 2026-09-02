@@ -108,6 +108,18 @@ pub struct TorrentSummary {
     pub eta_seconds: Option<u64>,
     /// Whether all selected files are complete.
     pub finished: bool,
+
+    /// When Flume first added this torrent, in seconds since the epoch.
+    ///
+    /// `None` for a torrent that predates the library record, and rendered as
+    /// absent rather than guessed at — librqbit's restore reads a `HashMap`
+    /// and pushes the adds concurrently, so arrival order is unrecoverable and
+    /// a backfill would invent a different fictional order every launch.
+    ///
+    /// Not derived from the session id. Ids are recycled: `next_id` is
+    /// `max(keys) + 1` over the persisted map, so removing the newest torrent
+    /// hands its number to the next add. See [`crate::library`].
+    pub added_at: Option<u64>,
     /// Failure message when [`Self::state`] is [`TorrentState::Error`].
     pub error: Option<String>,
     /// Absolute directory the files are written to.
@@ -325,6 +337,7 @@ pub(super) fn summarize(
     output_folder: String,
     stats: &TorrentStats,
     availability: Option<Availability>,
+    added_at: Option<u64>,
 ) -> TorrentSummary {
     let (download_bps, upload_bps, live_peers, known_peers) = match stats.live.as_ref() {
         Some(live) => (
@@ -369,6 +382,7 @@ pub(super) fn summarize(
         upload_bps,
         live_peers,
         finished: stats.finished,
+        added_at,
         error: stats.error.clone(),
         output_folder,
     }
@@ -571,6 +585,7 @@ mod tests {
             detail: String::new(),
             eta_seconds: None,
             finished,
+            added_at: None,
             error: None,
             output_folder: "/tmp".into(),
         }

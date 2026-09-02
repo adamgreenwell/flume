@@ -288,6 +288,7 @@ mod tests {
             detail: String::new(),
             eta_seconds: Some(4020),
             finished: false,
+            added_at: None,
             error: None,
             output_folder: "/tmp".into(),
         }

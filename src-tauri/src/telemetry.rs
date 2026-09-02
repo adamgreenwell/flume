@@ -47,11 +47,16 @@ pub fn spawn(app: AppHandle) {
         loop {
             ticker.tick().await;
 
-            let Some(engine) = app.state::<AppState>().engine().await else {
+            let state = app.state::<AppState>();
+            let Some(engine) = state.engine().await else {
                 continue;
             };
 
-            let snapshot = engine.telemetry();
+            // The library record is read per tick rather than cached: it is a
+            // small map, it changes only on an add or a remove, and a stale
+            // copy would show a torrent the user just added with no arrival
+            // time until the next restart.
+            let snapshot = engine.telemetry_with(&state.added_times().await);
 
             let finished = snapshot
                 .torrents

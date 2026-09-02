@@ -340,7 +340,9 @@ async fn control_operations_reject_unknown_ids() {
     for result in [
         engine.pause(999).await,
         engine.resume(999).await,
-        engine.remove(999, false).await,
+        // `remove` returns the hash it destroyed; normalised so the
+        // unknown-id assertion below can treat every call the same.
+        engine.remove(999, false).await.map(|_| ()),
         engine.set_only_files(999, vec![0]).await,
     ] {
         assert!(
@@ -401,7 +403,13 @@ async fn remove_without_delete_leaves_files_on_disk() {
         .expect("engine starts");
     let (id, file) = add_sample(&tmp, &engine).await;
 
-    engine.remove(id, false).await.expect("remove");
+    let removed = engine.remove(id, false).await.expect("remove");
+    // The hash has to come back from the call: the only id-to-hash mapping
+    // lives in the session entry that `delete` destroys, so a caller that
+    // looked it up afterwards would find nothing -- or, once ids are recycled,
+    // someone else's torrent. See #145.
+    assert_eq!(removed.len(), 40, "a hex info hash, not empty: {removed:?}");
+    assert!(removed.chars().all(|c| c.is_ascii_hexdigit()));
 
     assert!(
         engine.torrent_summaries().is_empty(),

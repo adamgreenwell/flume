@@ -31,6 +31,7 @@ function torrent(over: Partial<TorrentSummary> = {}): TorrentSummary {
     detail: "",
     etaSeconds: null,
     finished: false,
+    addedAt: null,
     error: null,
     outputFolder: "/tmp",
     ...over,

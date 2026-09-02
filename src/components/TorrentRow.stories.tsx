@@ -28,6 +28,7 @@ function make(over: Partial<TorrentSummary>): TorrentSummary {
     detail: "1 h 07 min left",
     etaSeconds: 4020,
     finished: false,
+    addedAt: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
     ...over,
@@ -130,6 +131,7 @@ export const TheWholeList: Story = {
             health: "seeding" as const,
             detail: "seeding to 9 of 61 peers · ratio 4.82",
             finished: true,
+            addedAt: null,
           },
           {
             name: "OpenStreetMap Planet Dump 2026-08-17",

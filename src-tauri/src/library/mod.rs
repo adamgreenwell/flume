@@ -275,6 +275,19 @@ impl Library {
         changed
     }
 
+    /// Every known arrival time, keyed by info hash.
+    ///
+    /// Records with no timestamp are omitted rather than carried as `None`:
+    /// the caller is building a lookup, and an absent key and a present `None`
+    /// mean the same thing to it.
+    #[must_use]
+    pub fn added_times(&self) -> HashMap<String, u64> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| record.added_at.map(|at| (hash.clone(), at)))
+            .collect()
+    }
+
     /// Drops a record, for the one caller that knows a torrent was removed.
     ///
     /// The only deletion path. It exists because a *removal* is knowledge,
