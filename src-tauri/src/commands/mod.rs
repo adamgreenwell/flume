@@ -117,7 +117,7 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    Ok(engine.telemetry())
+    Ok(engine.telemetry_with(&state.added_times().await))
 }
 
 impl From<SettingsError> for CommandError {
@@ -182,9 +182,20 @@ pub async fn import_client(
     output_folder: Option<String>,
 ) -> Result<ImportOutcome, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
-    let outcome = engine
+    let (outcome, added) = engine
         .import_from(std::path::Path::new(&torrents_dir), output_folder)
         .await?;
+
+    // An import is the one add path that does not go through `confirm_add`,
+    // and Flume knows exactly when it added each of these. Left to
+    // reconciliation they would all get `added_at: None`, which is the rule
+    // for torrents whose arrival moment is genuinely unrecoverable -- not for
+    // ones added a second ago. Insert-if-absent, so a torrent the user already
+    // had keeps its original time.
+    for info_hash in &added {
+        state.note_torrent_added(info_hash).await;
+    }
+
     state.note(EventKind::LibraryImported {
         added: CountBucket::of(outcome.added),
     });
@@ -363,6 +374,19 @@ pub async fn confirm_add(
     only_files: Option<Vec<usize>>,
 ) -> Result<usize, CommandError> {
     let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+
+    // Written BEFORE the add, not after. librqbit makes session.json durable
+    // inside `add_torrent`, before it returns -- so a record written afterwards
+    // loses a kill in that window, and the timestamp lost is always the
+    // freshest one, which is exactly what a "recently added" sort is for.
+    //
+    // Record-first inverts the failure into an orphan record: a few hundred
+    // bytes, invisible in a UI that renders the session's torrents, and
+    // self-healing, because the insert-if-absent finds it on the re-add and
+    // keeps this timestamp. That is only safe because reconciliation never
+    // deletes on absence. See #145.
+    let noted = state.note_torrent_added(&info_hash).await;
+
     match engine
         .confirm_add(&info_hash, only_files)
         .await
@@ -373,6 +397,14 @@ pub async fn confirm_add(
             Ok(id)
         }
         Err(err) => {
+            // Withdrawn, and only if this call created it. A kill inside
+            // `add_torrent` leaves a record whose timestamp is right to within
+            // seconds, which is why record-first is safe -- but a returned
+            // `Err` is knowledge that the add did *not* happen. Left in place,
+            // the real add months later would silently adopt this timestamp,
+            // and nothing could ever correct it: reconciliation never deletes,
+            // and `forget` needs a session id the torrent never got.
+            state.withdraw_torrent_added(&info_hash, noted).await;
             state.note_failure(&err);
             Err(err)
         }
@@ -436,7 +468,12 @@ pub async fn remove_torrent(
         .await
         .map_err(CommandError::from)
     {
-        Ok(()) => {
+        Ok(info_hash) => {
+            // The only place a record is deleted. A removal is knowledge;
+            // an absence is not, which is why reconciliation never deletes.
+            // The hash comes back from `remove` because the id-to-hash
+            // mapping is destroyed by the delete itself.
+            state.forget_torrent(&info_hash).await;
             state.note(EventKind::TorrentRemoved {
                 deleted_data: delete_files,
             });
@@ -520,6 +557,8 @@ pub async fn get_diagnostics(
     // Only the names, and only to redact them. They are never rendered.
     let (core, names) = match &engine {
         Some(engine) => {
+            // Names only, and only to redact them -- the arrival times are
+            // not wanted here and must never enter a bundle (rule 11).
             let snapshot = engine.telemetry();
             let names = snapshot
                 .torrents

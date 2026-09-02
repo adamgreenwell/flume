@@ -107,6 +107,7 @@ fn sample_summary() -> TorrentSummary {
         detail: "2 min 30 s left".into(),
         eta_seconds: Some(30),
         finished: false,
+        added_at: Some(1_700_000_000),
         error: None,
         output_folder: "/tmp/downloads".into(),
     }
@@ -161,6 +162,7 @@ fn torrent_summary_matches_the_typescript_mirror() {
             "detail",
             "etaSeconds",
             "finished",
+            "addedAt",
             "error",
             "outputFolder",
         ],

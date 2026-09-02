@@ -382,6 +382,18 @@ impl Engine {
 
     /// session's internal ordering is not guaranteed.
     pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
+        self.torrent_summaries_with(&std::collections::HashMap::new())
+    }
+
+    /// [`Self::torrent_summaries`] with arrival times from the library record.
+    ///
+    /// Threaded in as a parameter the way `availability` already is, because
+    /// the record lives in `AppState`, above the engine — and this module
+    /// imports no Tauri types and does not reach upwards.
+    pub fn torrent_summaries_with(
+        &self,
+        added: &std::collections::HashMap<String, u64>,
+    ) -> Vec<TorrentSummary> {
         // Handles are collected before anything is computed from them:
         // `availability_of` goes back through the session, and doing that while
         // `with_torrents` holds its lock would re-enter it.
@@ -406,16 +418,20 @@ impl Engine {
                     .then(|| self.availability_of(id, &handle).map(|a| a.summary))
                     .flatten();
 
+                // `as_string` is hex encoding. `Id20`'s Debug impl happens
+                // to produce the same thing, but relying on a Debug format for
+                // a wire value is a trap.
+                let info_hash = handle.info_hash().as_string();
+                let added_at = added.get(&info_hash).copied();
+
                 torrent::summarize(
                     id,
-                    // `as_string` is hex encoding. `Id20`'s Debug impl
-                    // happens to produce the same thing, but relying on a
-                    // Debug format for a wire value is a trap.
-                    handle.info_hash().as_string(),
+                    info_hash,
                     handle.name(),
                     handle.output_folder().display().to_string(),
                     &stats,
                     availability,
+                    added_at,
                 )
             })
             .collect::<Vec<_>>();
@@ -425,9 +441,17 @@ impl Engine {
 
     /// Builds the full telemetry payload pushed to the UI each tick.
     pub fn telemetry(&self) -> TelemetrySnapshot {
+        self.telemetry_with(&std::collections::HashMap::new())
+    }
+
+    /// [`Self::telemetry`] with arrival times from the library record.
+    pub fn telemetry_with(
+        &self,
+        added: &std::collections::HashMap<String, u64>,
+    ) -> TelemetrySnapshot {
         TelemetrySnapshot {
             core: self.core_status(),
-            torrents: self.torrent_summaries(),
+            torrents: self.torrent_summaries_with(added),
         }
     }
 
@@ -662,13 +686,23 @@ impl Engine {
     /// # Errors
     ///
     /// [`EngineError::UnknownTorrent`] if no such torrent exists.
-    pub async fn remove(&self, id: usize, delete_files: bool) -> Result<(), EngineError> {
-        // Fail on an unknown id before deleting anything.
-        self.handle(id)?;
+    /// Returns the info hash of what was removed.
+    ///
+    /// Captured from the handle *before* the delete, and returned rather than
+    /// discarded, because the only id-to-hash mapping lives in the session
+    /// entry that `delete` destroys — after the call there is no way to learn
+    /// which torrent went. Combined with id recycling, a caller that looked the
+    /// hash up afterwards would eventually write against a torrent that now
+    /// holds the same id. See #145.
+    pub async fn remove(&self, id: usize, delete_files: bool) -> Result<String, EngineError> {
+        // Fail on an unknown id before deleting anything. The handle is also
+        // the last chance to learn the info hash.
+        let info_hash = self.handle(id)?.info_hash().as_string();
         self.session
             .delete(TorrentIdOrHash::Id(id), delete_files)
             .await
-            .map_err(EngineError::Operation)
+            .map_err(EngineError::Operation)?;
+        Ok(info_hash)
     }
 
     /// Changes which files a torrent downloads.
@@ -834,6 +868,9 @@ impl Engine {
         // sentence and the row's line above it cannot disagree about what is
         // happening.
 
+        // The detail panel does not carry the arrival time -- the row above it
+        // already shows it, and threading the library down here would make
+        // this call the only reason the engine needed it.
         let summary = torrent::summarize(
             id,
             handle.info_hash().as_string(),
@@ -841,6 +878,7 @@ impl Engine {
             handle.output_folder().display().to_string(),
             &handle.stats(),
             avail.as_ref().map(|a| a.summary),
+            None,
         );
         let note = note::describe(&summary, &swarm);
 
@@ -897,8 +935,12 @@ impl Engine {
         &self,
         torrents_dir: &std::path::Path,
         output_folder: Option<String>,
-    ) -> Result<ImportOutcome, EngineError> {
+    ) -> Result<(ImportOutcome, Vec<String>), EngineError> {
         let mut outcome = ImportOutcome::default();
+        // The hashes of what was actually added, for the library record. Kept
+        // out of `ImportOutcome` because that crosses IPC and the frontend has
+        // no use for them -- the counts are the whole of what it renders.
+        let mut added = Vec::new();
 
         for path in import::torrent_files(torrents_dir) {
             let Ok(bytes) = std::fs::read(&path) else {
@@ -919,7 +961,10 @@ impl Engine {
                 .await;
 
             match response {
-                Ok(AddTorrentResponse::Added(..)) => outcome.added += 1,
+                Ok(AddTorrentResponse::Added(_, handle)) => {
+                    outcome.added += 1;
+                    added.push(handle.info_hash().as_string());
+                }
                 // Already in the session, e.g. a second run of the import or a
                 // torrent the user had added by hand. Not a failure.
                 Ok(AddTorrentResponse::AlreadyManaged(..)) => outcome.skipped += 1,
@@ -927,7 +972,7 @@ impl Engine {
             }
         }
 
-        Ok(outcome)
+        Ok((outcome, added))
     }
 
     /// Applies global transfer limits to the running session.

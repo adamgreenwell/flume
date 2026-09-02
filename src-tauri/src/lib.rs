@@ -28,6 +28,7 @@ pub mod diagnostics;
 pub mod egress;
 pub mod engine;
 pub mod guard;
+pub mod library;
 mod menu;
 pub mod settings;
 pub mod state;

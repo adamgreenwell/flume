@@ -125,6 +125,18 @@ export interface TorrentSummary {
   etaSeconds: number | null;
   /** Whether all selected files are complete. */
   finished: boolean;
+  /**
+   * When Flume first added this torrent, in seconds since the epoch.
+   *
+   * `null` for a torrent that predates the library record, and shown as absent
+   * rather than guessed at — librqbit restores torrents from a hash map and
+   * adds them concurrently, so arrival order is unrecoverable and a backfill
+   * would invent a different order every launch.
+   *
+   * Deliberately not the session id. Ids are recycled: removing the newest
+   * torrent hands its number to the next one added.
+   */
+  addedAt: number | null;
   /** Failure message when {@link TorrentSummary.state} is `"error"`. */
   error: string | null;
   /** Absolute directory the files are written to. */

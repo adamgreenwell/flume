@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError},
+    library::{Library, Noted, persisted_info_hashes, write_atomically},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -40,6 +41,14 @@ pub struct AppState {
     egress: Mutex<EgressWatcher>,
     /// The hysteresis between a verdict and acting on it.
     gate: Mutex<TransferGate>,
+    /// What Flume remembers about each torrent that librqbit does not.
+    ///
+    /// Settings-shaped rather than Recorder-shaped: the roadmap puts a label
+    /// (#58) and a per-torrent folder (#61) in this record, and silently
+    /// losing a label someone just typed is not acceptable the way a missed
+    /// usage count is. See [`crate::library`].
+    library: RwLock<Library>,
+
     /// The last status the guard loop published.
     ///
     /// Read by `check_egress` rather than re-probing, so the UI and the engine
@@ -55,6 +64,14 @@ impl AppState {
             settings.usage_reporting,
             env!("CARGO_PKG_VERSION").to_owned(),
         ));
+
+        // Loaded here rather than lazily: `restart_engine` reconciles against
+        // it on the very first session construction, which happens before any
+        // command runs.
+        let (library, problem) = Library::load(&session_dir);
+        if let Some(problem) = problem {
+            log::warn!("{problem}");
+        }
 
         // Probed once here, synchronously, so no command can ever observe a
         // status that does not exist yet. It costs one uncached probe -- about
@@ -78,6 +95,7 @@ impl AppState {
             first_run,
             usage,
             started_at: Instant::now(),
+            library: RwLock::new(library),
             egress: Mutex::new(watcher),
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
@@ -215,8 +233,127 @@ impl AppState {
 
         let engine = Engine::start(settings.to_engine_config(self.session_dir.clone())).await?;
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
+        // Reconciled *before* the engine is published. Every command gates on
+        // `engine()`, so publishing first opens a window in which a
+        // `remove_torrent` can delete a record between this pass reading
+        // session.json and taking the library lock -- and reconciliation
+        // would then put it straight back.
+        //
+        // Gated on the start having succeeded, and run here rather than at
+        // startup because there is no single launch: a session is constructed
+        // from the first guard tick, from every guard release, and from any
+        // settings change that requires a restart.
+        self.reconcile_library().await;
+
         *self.engine.write().await = Some(engine);
         Ok(())
+    }
+
+    /// Creates records for torrents that have none. Deletes nothing.
+    ///
+    /// Reads librqbit's *persisted* rows rather than the live session. A
+    /// torrent that failed to restore -- an unmounted drive, a permissions
+    /// problem -- is absent from the session and present in the file, and
+    /// reconciling against the live reading would look like it had been
+    /// removed. `None` means the file could not be read at all, which is not
+    /// the same as no torrents and must not be treated as one.
+    async fn reconcile_library(&self) {
+        let Some(present) = persisted_info_hashes(&self.session_dir) else {
+            log::warn!(
+                "could not read librqbit's session file; \
+                 leaving the library record alone this session"
+            );
+            return;
+        };
+
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.reconcile(present) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// Writes a serialised record, with no lock held.
+    ///
+    /// The write is blocking file I/O. Serialising happens under the lock --
+    /// it is in-memory and fast -- and the write happens outside it, because
+    /// holding a `tokio` write guard across a blocking syscall parks the
+    /// runtime worker and blocks `added_times`, which takes a read lock on
+    /// every telemetry tick. `Settings` reaches the same arrangement from the
+    /// other direction: `update_settings` saves a local value before taking
+    /// the lock at all.
+    fn persist_library(&self, json: Option<String>) {
+        let Some(json) = json else {
+            return;
+        };
+        if let Err(err) = write_atomically(&self.session_dir, &json) {
+            log::warn!("could not save the library record: {err}");
+        }
+    }
+
+    /// Records a torrent's arrival, before it is added.
+    ///
+    /// Insert-if-absent, so a re-add keeps the original timestamp. Returns
+    /// what it did, so a caller that then learns the add failed can withdraw
+    /// a record this call invented — see [`Self::withdraw_torrent_added`].
+    pub async fn note_torrent_added(&self, info_hash: &str) -> Noted {
+        let (noted, json) = {
+            let mut library = self.library.write().await;
+            let noted = library.note_added(info_hash, crate::library::now_seconds());
+            if !noted.changed() {
+                return noted;
+            }
+            (noted, library.to_json())
+        };
+        self.persist_library(json);
+        noted
+    }
+
+    /// Undoes a record written for an add that then failed.
+    ///
+    /// Only withdraws a record the matching [`Self::note_torrent_added`]
+    /// *created*. Record-first is justified by the kill window inside
+    /// librqbit's `add_torrent`, where the retained timestamp is right to
+    /// within seconds — but a returned `Err` is different in kind. It is
+    /// positive knowledge that the add did not happen, and leaving the record
+    /// means the real add months later silently adopts a timestamp from the
+    /// failed attempt, with no path that can ever correct it.
+    ///
+    /// This does not weaken the never-delete-on-absence rule: an absence is
+    /// not knowledge, and this is.
+    pub async fn withdraw_torrent_added(&self, info_hash: &str, noted: Noted) {
+        if noted != Noted::Created {
+            return;
+        }
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.forget(info_hash) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// Drops a record for a torrent that was definitely removed.
+    pub async fn forget_torrent(&self, info_hash: &str) {
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.forget(info_hash) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// When each torrent was added, keyed by info hash.
+    pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
+        let library = self.library.read().await;
+        library.added_times()
     }
 
     /// Shuts the engine down if one is running, and clears it.
