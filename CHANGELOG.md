@@ -18,6 +18,16 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   status frozen with no way to recover from inside the app. Starting the
   session is now bounded, and the failure says your library has not been
   deleted.
+- **A start that fails now says which torrent is the reason, and says it in the
+  app.** The bounded start above stops the hang but not the problem: Flume
+  still could not name the row to remove, and the explanation only ever reached
+  the log file, because the window kept showing "the torrent engine is still
+  starting" for the rest of the session. Flume now checks which persisted
+  torrents have no `.torrent` file beside them, names them in the message, and
+  the window shows that message instead of a startup sentence that has stopped
+  being true. Nothing is deleted or repaired on your behalf — a sidecar can go
+  missing because a drive is not mounted yet, which is not a torrent you want
+  dropped.
 
 ### Added
 

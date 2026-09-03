@@ -70,6 +70,59 @@ pub const SESSION_START_TIMEOUT: Duration = Duration::from_secs(120);
 /// hanging the add dialog forever.
 const MAGNET_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How many suspect info hashes a timeout message will name before it counts.
+///
+/// A session directory whose sidecars have all been deleted makes every torrent
+/// a suspect, and a banner listing two hundred hex strings says less than one
+/// listing three and a number.
+const MAX_NAMED_SUSPECTS: usize = 3;
+
+/// The sentences after "did not finish starting within N seconds".
+///
+/// Two messages rather than one with a suffix, because knowing the suspects
+/// changes what can honestly be said: without them the cause is a guess
+/// ("this usually means"), and with them it has been checked.
+///
+/// The advice is always to edit `session.json`, never to let Flume repair it.
+/// Dropping the row would start the app and silently take a torrent out of the
+/// user's library -- and Flume cannot tell a sidecar someone deleted from one
+/// on a volume that is not mounted yet.
+fn diagnosis(suspects: &[String]) -> String {
+    let Some((first, rest)) = suspects.split_first() else {
+        return "This usually means a torrent in your library is missing its \
+                .torrent file and Flume is waiting for peers that will never \
+                answer. Nothing has been deleted; the diagnostics report in \
+                Settings → Privacy says which session directory to look at."
+            .to_owned();
+    };
+
+    let named = suspects.len().min(MAX_NAMED_SUSPECTS);
+    let list = suspects[..named].join(", ");
+    let unnamed = match suspects.len() - named {
+        0 => String::new(),
+        n => format!(" and {n} more"),
+    };
+
+    if rest.is_empty() {
+        format!(
+            "A torrent in your library has no .torrent file, so Flume is \
+             waiting for peers that will never answer: {first}. Nothing has \
+             been deleted — removing that entry from session.json, in the \
+             session directory the diagnostics report in Settings → Privacy \
+             names, will let Flume start."
+        )
+    } else {
+        format!(
+            "{} torrents in your library have no .torrent file, so Flume is \
+             waiting for peers that will never answer: {list}{unnamed}. \
+             Nothing has been deleted — removing those entries from \
+             session.json, in the session directory the diagnostics report in \
+             Settings → Privacy names, will let Flume start.",
+            suspects.len()
+        )
+    }
+}
+
 /// Errors that can arise while starting or querying the engine.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -97,16 +150,22 @@ pub enum EngineError {
     /// are different: nothing refused, something never answered. The usual
     /// reason is a persisted torrent whose `.torrent` file is missing, which
     /// librqbit restores as a magnet and then waits on forever. See #154.
-    #[error(
-        "the torrent session did not finish starting within {seconds} seconds. \
-         This usually means a torrent in your library is missing its .torrent \
-         file and Flume is waiting for peers that will never answer. Nothing \
-         has been deleted; the diagnostics report in Settings → Privacy says \
-         which session directory to look at."
-    )]
+    #[error("the torrent session did not finish starting within {seconds} seconds. {}", diagnosis(.suspects))]
     SessionStartTimeout {
         /// How long was waited, in seconds.
         seconds: u64,
+        /// Persisted torrents found to have no `.torrent` file beside them,
+        /// lower-case hex and sorted.
+        ///
+        /// Read once, on the way into this error, rather than kept up to date:
+        /// it answers "which row do I remove", and nothing asks that until a
+        /// start has already timed out.
+        ///
+        /// Empty is not only "none were missing" -- it is also "the session
+        /// file could not be read". [`diagnosis`] treats the two the same,
+        /// because the advice is the same. See
+        /// [`crate::library::persisted_without_sidecar`].
+        suspects: Vec<String>,
     },
 
     /// The supplied magnet URI could not be parsed.
@@ -272,6 +331,10 @@ impl Engine {
         .await
         .map_err(|_| EngineError::SessionStartTimeout {
             seconds: deadline.as_secs(),
+            // Looked up only here, on the failing path. Every launch would
+            // otherwise pay a `stat` per persisted torrent to answer a question
+            // nobody is asking.
+            suspects: crate::library::persisted_without_sidecar(&config.session_dir),
         })?
         .map_err(EngineError::SessionStart)?;
 
@@ -1036,6 +1099,104 @@ fn classify_health(dht: &DhtStatus, listening: bool) -> EngineHealth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hash long enough to look like the real thing in the assertions below.
+    fn hash(tag: char) -> String {
+        std::iter::repeat_n(tag, 40).collect()
+    }
+
+    #[test]
+    fn a_timeout_with_no_suspects_still_explains_itself() {
+        // The reader returns nothing both when every sidecar is present and
+        // when session.json could not be read at all. Neither can name a row,
+        // so the message stays a diagnosis rather than an accusation.
+        let err = EngineError::SessionStartTimeout {
+            seconds: 120,
+            suspects: Vec::new(),
+        };
+        let message = err.to_string();
+
+        assert!(message.contains("within 120 seconds"));
+        assert!(
+            message.contains("usually means"),
+            "without suspects the cause is a guess and must read as one: {message}"
+        );
+        assert!(message.contains("Nothing has been deleted"));
+    }
+
+    #[test]
+    fn one_suspect_is_named_and_the_hedge_is_dropped() {
+        let err = EngineError::SessionStartTimeout {
+            seconds: 120,
+            suspects: vec![hash('a')],
+        };
+        let message = err.to_string();
+
+        assert!(
+            message.contains(&hash('a')),
+            "the whole point is naming the row: {message}"
+        );
+        assert!(
+            !message.contains("usually means"),
+            "the sidecar was checked, so this is no longer a guess: {message}"
+        );
+        assert!(
+            message.contains("that entry"),
+            "singular advice for a single suspect: {message}"
+        );
+        assert!(message.contains("session.json"));
+    }
+
+    #[test]
+    fn several_suspects_are_counted_and_listed() {
+        let err = EngineError::SessionStartTimeout {
+            seconds: 120,
+            suspects: vec![hash('a'), hash('b')],
+        };
+        let message = err.to_string();
+
+        assert!(message.contains("2 torrents"));
+        assert!(message.contains(&hash('a')) && message.contains(&hash('b')));
+        assert!(message.contains("those entries"));
+    }
+
+    #[test]
+    fn a_long_list_is_capped_and_the_rest_counted() {
+        // A session directory someone emptied makes every torrent a suspect.
+        // The message has to stay readable in a banner.
+        let suspects: Vec<String> = "abcdefgh".chars().map(hash).collect();
+        let err = EngineError::SessionStartTimeout {
+            seconds: 120,
+            suspects: suspects.clone(),
+        };
+        let message = err.to_string();
+
+        assert!(message.contains("8 torrents"));
+        assert!(message.contains("and 5 more"));
+        for named in &suspects[..MAX_NAMED_SUSPECTS] {
+            assert!(
+                message.contains(named),
+                "{named} should be listed: {message}"
+            );
+        }
+        for hidden in &suspects[MAX_NAMED_SUSPECTS..] {
+            assert!(
+                !message.contains(hidden),
+                "{hidden} is past the cap and should only be counted: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn exactly_the_cap_is_listed_without_an_and_more() {
+        let suspects: Vec<String> = "abc".chars().map(hash).collect();
+        let err = EngineError::SessionStartTimeout {
+            seconds: 120,
+            suspects,
+        };
+
+        assert!(!err.to_string().contains("more"));
+    }
 
     fn dht(enabled: bool, nodes: usize) -> DhtStatus {
         DhtStatus {
