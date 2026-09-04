@@ -147,11 +147,20 @@ judged on; change it in the same commit as the schema.
 `[patch.crates-io]` entry pointing at `adamgreenwell/rqbit`, pinned to a rev.
 Delete it the moment the change lands upstream in a crates.io release.
 
-**Do not delete the fork's `peer-availability` branch.** `Cargo.lock` pins the
+**Do not delete the fork's `flume-integration` branch.** `Cargo.lock` pins the
 full commit SHA, so a force-push cannot silently change what is built — but the
 commit still has to remain reachable. Deleting the branch, or the fork, leaves
 it eligible for garbage collection and every build and CI run breaks with a
 fetch error. The fork must also stay public: CI clones it anonymously.
+
+**`flume-integration` exists because the PR branches are single-purpose.**
+`[patch.crates-io]` takes one source, and Flume needs both patches, so the two
+review branches — `peer-availability` (#644) and `windows-sharing-violation`
+(#645) — are kept clean for their maintainers and `flume-integration` carries
+both for the build. It used to be that `peer-availability` held everything;
+the maintainer asked for the split, correctly. Rebuild `flume-integration` by
+cherry-picking on top of the review branches, never the other way round, and
+create it at the old SHA before force-pushing anything it points at.
 
 **A second patch fixes Windows file locking (#9).** `FilesystemStorage` opened
 every file read _and_ write when `allow_overwrite` is set, including a complete
@@ -162,7 +171,7 @@ on a sharing violation and logs the degraded mode; seeding only reads, so a
 completed torrent is served normally. Unix is unaffected — an open handle does
 not restrict other opens there.
 
-The first patch adds three things, all in `PeerStats`:
+The availability patch adds three things, all in `PeerStats`:
 
 - `have_bitfield` — the peer's bitfield, opt-in via
   `PeerStatsFilter::include_bitfield`, off by default.
@@ -172,7 +181,8 @@ The first patch adds three things, all in `PeerStats`:
 - public re-exports of `PeerStats` and `PeerStatsFilter`, which were a return
   type and a parameter of a public method while living in a private module.
 
-Sent upstream as `ikatson/rqbit#644`. Flume reads only `have_bitfield`.
+Sent upstream as `ikatson/rqbit#644`, the Windows fix as `#645`. Flume reads
+only `have_bitfield`.
 
 **A per-peer count is not enough,** which is worth remembering before anyone
 tries to shrink the patch back to it. A count gives the _mean_ copies per
@@ -181,12 +191,24 @@ overlap completely or not at all — identical averages, and only one of those
 torrents can finish. `availability::compute` therefore works from bitfields,
 and `overlapping_peers_are_not_the_same_as_complementary_ones` pins the case.
 
-**Bitfields are byte-padded and the padding is not trustworthy.** librqbit's
-`on_bitfield` validates the byte length and stores the peer's bytes verbatim,
-so a peer that sets the spare trailing bits would inflate any count taken over
-the whole bitfield. Both the patch and `availability::compute` slice to
-`total_pieces` first. librqbit does the same thing itself two lines below the
-length check.
+**Bitfields are byte-padded and the padding is not trustworthy.** A bitfield
+carries a bit per piece rounded up to a byte, so up to 7 trailing bits are
+spare. The spec says a peer zeroes them, but librqbit validated only the byte
+_length_ and then stored the peer's bytes verbatim, so a peer that set them
+would inflate any count taken over the whole bitfield.
+
+The patch now clears them once at ingest, in `on_bitfield`, rather than
+working around them at each use — the maintainer's call on #644, and the better
+one: `count_ones()` then means "pieces this peer has" everywhere. `on_have` had
+to be tightened in the same commit, because it bounds the index with `get_mut`
+against the bitfield's _length_, which overshoots the piece count by the same
+padding — so a peer could set a padding bit one `Have` message after ingest.
+That also stops a peer claiming a piece that does not exist.
+
+`availability::analyse` still slices to `total_pieces` itself. That is not
+redundant: it must not depend on the fork's ingest behaviour, which is the
+part most likely to change shape as #644 is reviewed, or to be absent entirely
+if Flume ever runs a stock librqbit.
 
 **The Thin/Healthy threshold scales with the peer count.** Healthy is
 `rarest >= min(3, live_peers)`. The design says "every piece on ≥3 peers", but
