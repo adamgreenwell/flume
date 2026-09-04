@@ -298,7 +298,7 @@ src-tauri/
   src/commands/       #[tauri::command] handlers
   src/state/          shared app state
   tests/engine.rs     integration tests against a real librqbit Session
-  tests/commands.rs   IPC-layer tests via Tauri's mock runtime
+  tests/ipc_contract.rs    pins Rust serde shapes against src/lib/ipc/types.ts
   tests/usage_contract.rs  pins the wire format against collector/schema.json
 docs/                 wiki source, mirrored to the GitHub Wiki
 ```

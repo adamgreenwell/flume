@@ -45,6 +45,39 @@ impl CommandError {
             message: "The torrent engine is still starting.".to_owned(),
         }
     }
+
+    /// `engineNotReady`, saying why instead of "still starting".
+    ///
+    /// The same `kind` on purpose. From a command's point of view nothing has
+    /// changed — there is no engine, the call could not run, and the guard will
+    /// try again — so a frontend branching on the identifier should behave
+    /// identically. Only the sentence differs, which is exactly the split the
+    /// `From<EngineError>` impl below describes: the kind is the contract, the
+    /// message is for humans.
+    fn not_ready_because(reason: String) -> Self {
+        Self {
+            kind: "engineNotReady",
+            message: reason,
+        }
+    }
+}
+
+/// The engine, or the truest available reason there is not one.
+///
+/// Every command begins with this and none can do anything without it. It
+/// replaces a bare [`CommandError::not_ready`], which always claimed the engine
+/// was "still starting" — true for the first seconds of a launch, and false for
+/// good once a start has failed. A #154 timeout leaves the app in exactly that
+/// state, and the message naming the torrent to remove is worth nothing if the
+/// user never sees it.
+async fn require_engine(state: &AppState) -> Result<Engine, CommandError> {
+    match state.engine().await {
+        Some(engine) => Ok(engine),
+        None => Err(state
+            .start_failure()
+            .await
+            .map_or_else(CommandError::not_ready, CommandError::not_ready_because)),
+    }
 }
 
 impl From<EngineError> for CommandError {
@@ -97,11 +130,12 @@ impl AppState {
 ///
 /// # Errors
 ///
-/// Returns [`CommandError`] with kind `engineNotReady` while the engine is
-/// still starting up.
+/// Returns [`CommandError`] with kind `engineNotReady` whenever there is no
+/// engine — still starting, held by the egress guard, or failed to start, the
+/// message saying which.
 #[tauri::command]
 pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.core_status())
 }
 
@@ -112,11 +146,12 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 ///
 /// # Errors
 ///
-/// Returns [`CommandError`] with kind `engineNotReady` while the engine is
-/// still starting up.
+/// Returns [`CommandError`] with kind `engineNotReady` whenever there is no
+/// engine — still starting, held by the egress guard, or failed to start, the
+/// message saying which.
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.telemetry_with(&state.added_times().await))
 }
 
@@ -181,7 +216,7 @@ pub async fn import_client(
     torrents_dir: String,
     output_folder: Option<String>,
 ) -> Result<ImportOutcome, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     let (outcome, added) = engine
         .import_from(std::path::Path::new(&torrents_dir), output_folder)
         .await?;
@@ -335,13 +370,13 @@ pub async fn update_settings(
 /// # Errors
 ///
 /// `invalidMagnet` for a malformed URI, `metadata` if the torrent cannot be
-/// read or resolved, `engineNotReady` while starting.
+/// read or resolved, `engineNotReady` when there is no engine.
 #[tauri::command]
 pub async fn preview_torrent(
     state: State<'_, AppState>,
     source: TorrentSource,
 ) -> Result<TorrentPreview, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     let route = match &source {
         TorrentSource::Magnet { .. } => AddSource::Magnet,
         TorrentSource::File { .. } => AddSource::File,
@@ -373,7 +408,7 @@ pub async fn confirm_add(
     info_hash: String,
     only_files: Option<Vec<usize>>,
 ) -> Result<usize, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
 
     // Written BEFORE the add, not after. librqbit makes session.json durable
     // inside `add_torrent`, before it returns -- so a record written afterwards
@@ -415,13 +450,13 @@ pub async fn confirm_add(
 ///
 /// # Errors
 ///
-/// `engineNotReady` while the engine is starting.
+/// `engineNotReady` whenever there is no engine.
 #[tauri::command]
 pub async fn discard_preview(
     state: State<'_, AppState>,
     info_hash: String,
 ) -> Result<(), CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     engine.discard_preview(&info_hash).await;
     Ok(())
 }
@@ -433,7 +468,7 @@ pub async fn discard_preview(
 /// `unknownTorrent` if no such torrent exists.
 #[tauri::command]
 pub async fn pause_torrent(state: State<'_, AppState>, id: usize) -> Result<(), CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.pause(id).await?)
 }
 
@@ -444,7 +479,7 @@ pub async fn pause_torrent(state: State<'_, AppState>, id: usize) -> Result<(), 
 /// `unknownTorrent` if no such torrent exists.
 #[tauri::command]
 pub async fn resume_torrent(state: State<'_, AppState>, id: usize) -> Result<(), CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.resume(id).await?)
 }
 
@@ -462,7 +497,7 @@ pub async fn remove_torrent(
     id: usize,
     delete_files: bool,
 ) -> Result<(), CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     match engine
         .remove(id, delete_files)
         .await
@@ -497,7 +532,7 @@ pub async fn set_only_files(
     id: usize,
     files: Vec<usize>,
 ) -> Result<(), CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.set_only_files(id, files).await?)
 }
 
@@ -512,7 +547,7 @@ pub async fn get_torrent_files(
     state: State<'_, AppState>,
     id: usize,
 ) -> Result<Vec<TorrentFileState>, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.torrent_files(id)?)
 }
 
@@ -530,7 +565,7 @@ pub async fn get_torrent_detail(
     state: State<'_, AppState>,
     id: usize,
 ) -> Result<TorrentDetail, CommandError> {
-    let engine = state.engine().await.ok_or_else(CommandError::not_ready)?;
+    let engine = require_engine(&state).await?;
     Ok(engine.torrent_detail(id)?)
 }
 

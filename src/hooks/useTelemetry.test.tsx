@@ -52,6 +52,85 @@ const engineNotReady = () => {
 afterEach(clearMocks);
 
 describe("useTelemetry", () => {
+  it("replaces the startup message once the start actually fails", async () => {
+    // The case #154 leaves behind. The first fetch is answered before the
+    // engine has given up, so it truthfully says "still starting"; the start
+    // then times out two minutes later with the message that names the torrent
+    // to remove. Without a retry the first sentence stands for good and the
+    // useful one is only ever written to the log.
+    const failed =
+      "the torrent session did not finish starting within 120 seconds. " +
+      "A torrent in your library has no .torrent file";
+    let message = "The torrent engine is still starting.";
+    setupIPC(() => {
+      throw { kind: "engineNotReady", message };
+    });
+
+    const { result } = renderHook(() => useTelemetry());
+    await waitFor(() => expect(result.current.error).toBe(message));
+
+    message = failed;
+    await waitFor(() => expect(result.current.error).toBe(failed), {
+      timeout: 3000,
+    });
+  });
+
+  it("stops asking once a snapshot has arrived", async () => {
+    // The retry exists for a window in which nothing is flowing. Left running
+    // it would be a poll, which is the thing this hook was written to replace.
+    let calls = 0;
+    setupIPC(() => {
+      calls += 1;
+      throw { kind: "engineNotReady", message: "starting" };
+    });
+
+    const { result } = renderHook(() => useTelemetry());
+    await waitFor(() => expect(result.current.error).toBe("starting"));
+
+    await emit(TELEMETRY_EVENT, snapshot(1));
+    await waitFor(() => expect(result.current.telemetry).not.toBeNull());
+
+    const settled = calls;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(calls).toBe(settled);
+  });
+
+  it("gives up when nothing is answering IPC at all", async () => {
+    // Storybook, or `next dev` opened in a real browser. Nothing will ever
+    // answer, so retrying only overwrites the message that says so — once a
+    // second, for as long as the page is open.
+    let calls = 0;
+    setupIPC(() => {
+      calls += 1;
+      throw new Error("no IPC internals");
+    });
+
+    const { result } = renderHook(() => useTelemetry());
+    await waitFor(() =>
+      expect(result.current.error).toBe("Could not reach the torrent engine."),
+    );
+
+    const settled = calls;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(calls).toBe(settled);
+  });
+
+  it("stops asking when the hook unmounts", async () => {
+    let calls = 0;
+    setupIPC(() => {
+      calls += 1;
+      throw { kind: "engineNotReady", message: "starting" };
+    });
+
+    const { result, unmount } = renderHook(() => useTelemetry());
+    await waitFor(() => expect(result.current.error).toBe("starting"));
+
+    unmount();
+    const settled = calls;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(calls).toBe(settled);
+  });
+
   it("renders a pushed snapshot", async () => {
     setupIPC(engineNotReady);
     const { result } = renderHook(() => useTelemetry());

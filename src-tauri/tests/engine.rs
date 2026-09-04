@@ -88,9 +88,25 @@ async fn a_torrent_whose_dot_torrent_file_is_missing_cannot_hang_the_session() {
     let result = Engine::start_within(config, Duration::from_secs(5)).await;
     let elapsed = started.elapsed();
 
+    let err = match result {
+        Err(err) => err,
+        Ok(_) => panic!("a sidecar-less row should time out rather than hang"),
+    };
+    let message = err.to_string();
+    let EngineError::SessionStartTimeout { suspects, .. } = err else {
+        panic!("expected a start timeout, got: {message}");
+    };
+    // The half of #154 the timeout alone does not answer: *which* row. Nothing
+    // else in Flume can tell the user, because the sidecar is missing and the
+    // row carries no name.
+    assert_eq!(
+        suspects,
+        vec!["b4c9a1f70e2d83a6157c0d4e9b2f8a1d3e6f7c05".to_owned()],
+        "the timeout should name the row it is waiting on"
+    );
     assert!(
-        matches!(result, Err(EngineError::SessionStartTimeout { .. })),
-        "a sidecar-less row should time out rather than hang, got {result:?}"
+        message.contains("b4c9a1f70e2d83a6157c0d4e9b2f8a1d3e6f7c05"),
+        "and the message the user sees should carry it: {message}"
     );
     // The deadline has to be enforced rather than merely declared: before the
     // fix this call never returned at all.
@@ -270,6 +286,63 @@ async fn the_session_file_reader_matches_what_librqbit_writes() {
          librqbit just persisted ({expected}). librqbit's session.json format \
          has probably moved -- see src-tauri/src/library/session_file.rs"
     );
+}
+
+/// Flume must look for the `.torrent` sidecar exactly where librqbit puts it.
+///
+/// The companion pin to the one above, and it matters in both directions.
+/// `persisted_without_sidecar` decides which torrent a timed-out start names,
+/// and it does that by predicting a filename:
+/// `session_dir/<lower-case hex>.torrent`, mirroring
+/// `JsonSessionPersistenceStore::torrent_bytes_filename`. Two ways that can
+/// silently rot -- `Id20`'s `Debug` no longer being lower-case hex, or the
+/// store no longer writing beside `session.json` -- and both fail the same
+/// way: every intact torrent reads as missing its sidecar, and Flume tells the
+/// user to delete rows that are perfectly fine.
+///
+/// So this asserts the quiet direction first: with a torrent librqbit has
+/// really persisted, nothing is a suspect.
+#[tokio::test]
+async fn the_missing_sidecar_check_matches_where_librqbit_writes() {
+    use flume_lib::library::persisted_without_sidecar;
+
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    let config = test_config(&tmp, false);
+    let session_dir = config.session_dir.clone();
+
+    let engine = Engine::start(config).await.expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { path })
+        .await
+        .expect("preview succeeds");
+    let expected = preview.info_hash.clone();
+    engine
+        .confirm_add(&expected, None)
+        .await
+        .expect("confirm add");
+
+    assert!(
+        persisted_without_sidecar(&session_dir).is_empty(),
+        "librqbit just wrote a sidecar for {expected}, and Flume did not find \
+         it at {}. It is looking in the wrong place, and would accuse an intact \
+         library of being the reason a start timed out -- see \
+         src-tauri/src/library/session_file.rs",
+        session_dir.join(format!("{expected}.torrent")).display()
+    );
+
+    // And now the loud direction, against the same real file rather than a
+    // hand-authored name.
+    std::fs::remove_file(session_dir.join(format!("{expected}.torrent")))
+        .expect("the sidecar exists at the predicted path");
+
+    assert_eq!(
+        persisted_without_sidecar(&session_dir),
+        vec![expected],
+        "with the sidecar gone the row is exactly what a timed-out start names"
+    );
+
+    engine.shutdown().await;
 }
 
 #[tokio::test]
@@ -821,4 +894,110 @@ async fn a_torrent_file_is_not_subject_to_the_magnet_deadline() {
     assert_eq!(preview.files.len(), 1);
 
     engine.shutdown().await;
+}
+
+/// A failed start must leave a reason behind, because nothing else will.
+///
+/// `AppState` appears in this file rather than a Tauri one for the same reason
+/// the rest of it does: it imports no Tauri types, so the whole engine
+/// lifecycle is testable in a plain `cargo test` process.
+///
+/// The gap this closes is narrow and total. `AppState::restart_engine` is
+/// called from `crate::guard`, on a timer, with no command in flight — so the
+/// caller logs the error and swallows it, and every command afterwards reports
+/// `engineNotReady` with the message "The torrent engine is still starting."
+/// After a start that failed, that sentence is false and stays false, which
+/// makes the #154 message naming the torrent to remove unreachable by anyone
+/// not reading the log file.
+///
+/// A bad directory rather than a #154 timeout, because it fails in
+/// milliseconds and needs no network. What is being tested is the remembering,
+/// which is the same either way.
+#[tokio::test]
+async fn a_failed_start_is_remembered_until_one_succeeds() {
+    use flume_lib::{settings::Settings, state::AppState};
+
+    let tmp = TempDir::new().expect("temp dir");
+    let session_dir = tmp.path().join("session");
+
+    // A *file* where the download directory should be, so `create_dir_all`
+    // fails rather than the session doing any real work.
+    let blocked = tmp.path().join("not-a-directory");
+    std::fs::write(&blocked, b"").expect("write blocker");
+
+    let broken = Settings {
+        download_dir: blocked,
+        enable_dht: false,
+        enable_upnp: false,
+        listen_port: 0,
+        ..Settings::default()
+    };
+    let state = AppState::new(broken.clone(), session_dir, false);
+
+    assert!(
+        state.start_failure().await.is_none(),
+        "nothing has been tried yet; an app that has not started an engine \
+         has not failed to"
+    );
+
+    let err = state
+        .restart_engine(&broken)
+        .await
+        .expect_err("a file where a directory belongs cannot start a session");
+
+    assert_eq!(
+        state.start_failure().await.as_deref(),
+        Some(err.to_string().as_str()),
+        "the reason a command will show has to be the reason the start failed"
+    );
+
+    // And a retry that works clears it. The guard retries every tick, so a
+    // transient failure must not leave a stale accusation on screen.
+    let working = Settings {
+        download_dir: tmp.path().join("downloads"),
+        ..broken
+    };
+    state
+        .restart_engine(&working)
+        .await
+        .expect("a writable directory starts");
+
+    assert_eq!(
+        state.start_failure().await,
+        None,
+        "a start that succeeded has nothing left to explain"
+    );
+
+    state.shutdown().await;
+}
+
+/// Stopping deliberately is not failing to start.
+#[tokio::test]
+async fn shutting_down_clears_the_last_start_failure() {
+    use flume_lib::{settings::Settings, state::AppState};
+
+    let tmp = TempDir::new().expect("temp dir");
+    let blocked = tmp.path().join("not-a-directory");
+    std::fs::write(&blocked, b"").expect("write blocker");
+
+    let broken = Settings {
+        download_dir: blocked,
+        enable_dht: false,
+        enable_upnp: false,
+        listen_port: 0,
+        ..Settings::default()
+    };
+    let state = AppState::new(broken.clone(), tmp.path().join("session"), false);
+    state
+        .restart_engine(&broken)
+        .await
+        .expect_err("cannot start");
+    assert!(state.start_failure().await.is_some());
+
+    // The guard calls this every tick it holds. Without the clear, a hold
+    // would go on explaining itself with whatever last went wrong, possibly
+    // hours earlier and unrelated.
+    state.shutdown().await;
+
+    assert_eq!(state.start_failure().await, None);
 }

@@ -54,6 +54,22 @@ pub struct AppState {
     /// Read by `check_egress` rather than re-probing, so the UI and the engine
     /// loop can never disagree about what the routing table said.
     status: RwLock<GuardStatus>,
+
+    /// Why the last attempt to start an engine failed, if it did.
+    ///
+    /// Exists because an engine that fails to start has no other route to the
+    /// user. The attempt happens in [`crate::guard`], on a timer, with no
+    /// command in flight to return an error to — so it is logged and swallowed,
+    /// and every command afterwards reports `engineNotReady`, whose message
+    /// says the engine is "still starting". That sentence is true for the first
+    /// few seconds of a launch and false forever after a failed start, which is
+    /// the state a #154 timeout leaves the app in permanently.
+    ///
+    /// A `String` rather than the [`EngineError`]: it is only ever rendered,
+    /// `anyhow::Error` is not `Clone`, and holding the mapped `CommandError`
+    /// would make this module depend on `crate::commands`, which is the wrong
+    /// direction.
+    start_failure: RwLock<Option<String>>,
 }
 
 impl AppState {
@@ -99,6 +115,7 @@ impl AppState {
             egress: Mutex::new(watcher),
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
+            start_failure: RwLock::new(None),
         }
     }
 
@@ -231,7 +248,18 @@ impl AppState {
             old.shutdown().await;
         }
 
-        let engine = Engine::start(settings.to_engine_config(self.session_dir.clone())).await?;
+        let engine = match Engine::start(settings.to_engine_config(self.session_dir.clone())).await
+        {
+            Ok(engine) => engine,
+            Err(err) => {
+                // Kept for the commands to render. The caller in
+                // `crate::guard` logs and swallows this, because a failed
+                // start must not stop the guard loop -- so without somewhere
+                // to put it, the reason exists only in the log file.
+                *self.start_failure.write().await = Some(err.to_string());
+                return Err(err);
+            }
+        };
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
         // Reconciled *before* the engine is published. Every command gates on
         // `engine()`, so publishing first opens a window in which a
@@ -246,7 +274,19 @@ impl AppState {
         self.reconcile_library().await;
 
         *self.engine.write().await = Some(engine);
+        // Cleared last, with an engine already published. A retry that
+        // succeeded has nothing left to explain.
+        *self.start_failure.write().await = None;
         Ok(())
+    }
+
+    /// Why there is no engine, when the reason is a failed start.
+    ///
+    /// `None` covers both "there is an engine" and the ordinary reasons for
+    /// there not being one — a launch still in progress, or a guard holding —
+    /// neither of which is a failure to report. See [`Self::start_failure`].
+    pub async fn start_failure(&self) -> Option<String> {
+        self.start_failure.read().await.clone()
     }
 
     /// Creates records for torrents that have none. Deletes nothing.
@@ -361,5 +401,9 @@ impl AppState {
         if let Some(engine) = self.engine.write().await.take() {
             engine.shutdown().await;
         }
+        // A deliberate stop is not a failed start. Leaving the old reason
+        // standing would have the guard explain a hold with the last thing
+        // that went wrong, possibly hours earlier.
+        *self.start_failure.write().await = None;
     }
 }
