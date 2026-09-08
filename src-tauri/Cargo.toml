@@ -82,7 +82,7 @@ uuid = { version = "1.24", features = ["v4", "serde"] }
 # Redaction is the whole point of the diagnostics bundle; hand-rolled scanning
 # for URLs, addresses and hashes is exactly the thing to get subtly wrong.
 regex = "1.13"
-rand = "0.9"
+rand = "0.10"
 
 [features]
 default = []
