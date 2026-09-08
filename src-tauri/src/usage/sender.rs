@@ -19,7 +19,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use rand::Rng;
+use rand::RngExt;
 
 use super::{Delivery, Envelope, Recorder};
 
