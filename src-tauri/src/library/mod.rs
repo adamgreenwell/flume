@@ -52,7 +52,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub use session_file::persisted_info_hashes;
+pub use session_file::{persisted_info_hashes, persisted_without_sidecar};
 
 /// Filename inside the app-data directory.
 const LIBRARY_FILE: &str = "library.json";

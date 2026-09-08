@@ -525,6 +525,38 @@ mod tests {
     }
 
     #[test]
+    fn strips_the_hashes_a_start_timeout_deliberately_names() {
+        // Architecture rule 11: nothing that identifies a download leaves the
+        // machine, in a usage event or a diagnostics bundle. A start that times
+        // out now names its suspects on purpose -- the user cannot act on #154
+        // otherwise -- and `crate::guard` logs that message, which puts it in
+        // the log tail this bundle carries. Redacted by the general hex rule
+        // rather than a special case, and pinned here because the message is
+        // now a deliberate carrier rather than an accident.
+        let logged = "torrent engine failed to start: the torrent session did \
+             not finish starting within 120 seconds. 2 torrents in your library \
+             have no .torrent file, so Flume is waiting for peers that will \
+             never answer: b4c9a1f70e2d83a6157c0d4e9b2f8a1d3e6f7c05, \
+             AABBCCDDEEFF00112233445566778899aabbccdd.";
+
+        let out = redactor().apply(logged);
+
+        assert!(
+            !out.contains("b4c9a1f70e2d83a6157c0d4e9b2f8a1d3e6f7c05"),
+            "the bundle must not carry an info hash: {out}"
+        );
+        assert!(
+            !out.contains("AABBCCDDEEFF00112233445566778899aabbccdd"),
+            "including an upper-case one: {out}"
+        );
+        assert_eq!(out.matches("<info-hash>").count(), 2);
+        assert!(
+            out.contains("no .torrent file"),
+            "and the bundle should still say what went wrong: {out}"
+        );
+    }
+
+    #[test]
     fn removes_paths_and_prefers_the_more_specific_label() {
         let out = redactor().apply("writing to /Users/adam/Media/Linux/disc.iso");
         // Not `<home>/Media/Linux/...`, which would still name the folder.
