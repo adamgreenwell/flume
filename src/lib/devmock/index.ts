@@ -277,6 +277,10 @@ const SETTINGS: Settings = {
   downloadLimitBps: null,
   uploadLimitBps: 2_097_152,
   proxyUrl: null,
+  policyRules: {
+    global: { seedRatioLimit: null, seedTimeLimitSecs: null },
+    overrides: {},
+  },
   theme: "system",
   density: "comfortable",
   rail: "expanded",

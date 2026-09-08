@@ -444,6 +444,36 @@ export interface TorrentDetail {
   note: Note;
 }
 
+/**
+ * Why the policy engine stopped a torrent. Mirrors Rust `PauseReason`.
+ *
+ * Recorded so a stopped torrent can be explained, rather than showing a bare
+ * "paused" indistinguishable from a failure or a user action.
+ */
+export type PauseReason = "ratioReached" | "seedTimeReached" | "queued";
+
+/** Limits that can be set globally or per torrent. Mirrors Rust `TorrentRules`. */
+export interface TorrentRules {
+  /** Stop seeding once uploaded ÷ downloaded reaches this; `null` for no limit. */
+  seedRatioLimit: number | null;
+  /** Stop seeding after this many seconds of actual seeding; `null` for no limit. */
+  seedTimeLimitSecs: number | null;
+}
+
+/**
+ * Policy rules, global plus per-torrent overrides. Mirrors Rust `Rules`.
+ *
+ * An override replaces the global rules wholesale rather than merging field by
+ * field — otherwise "unlimited for this one torrent" is impossible to express,
+ * because an unset field would inherit the global value.
+ */
+export interface Rules {
+  /** Applied to any torrent without an override. */
+  global: TorrentRules;
+  /** Per-torrent rules, keyed by info hash. */
+  overrides: Record<string, TorrentRules>;
+}
+
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
 export type Theme = "system" | "light" | "dark";
 
@@ -654,6 +684,13 @@ export interface Settings {
    * Format: `socks5://[user:password@]host:port`. Requires a session restart.
    */
   proxyUrl: string | null;
+  /**
+   * Rules the policy engine applies.
+   *
+   * Evaluated on every telemetry tick, so changes take effect within a second
+   * and need no session restart.
+   */
+  policyRules: Rules;
   /** UI colour scheme. */
   theme: Theme;
   /**

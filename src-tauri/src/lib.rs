@@ -12,6 +12,7 @@
 //! * [`commands`] — `#[tauri::command]` entry points. Thin by design.
 //! * [`deeplink`] — `magnet:` handling and single-instance behaviour.
 //! * [`diagnostics`] — a redacted bundle the user can paste into an issue.
+//! * [`policy`] — decides what should happen to torrents. Pure, Tauri-free.
 //! * [`settings`] — user configuration and its persistence. Also Tauri-free.
 //! * [`telemetry`] — pushes batched status to the UI on a fixed cadence.
 //! * [`usage`] — opt-in anonymous counts. The only thing that leaves the
@@ -30,6 +31,7 @@ pub mod engine;
 pub mod guard;
 pub mod library;
 mod menu;
+pub mod policy;
 pub mod settings;
 pub mod state;
 pub mod telemetry;
