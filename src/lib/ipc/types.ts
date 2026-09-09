@@ -462,6 +462,21 @@ export interface TorrentDetail {
   note: Note;
 }
 
+/**
+ * One torrent's seed limits and the globals it would otherwise follow.
+ * Mirrors Rust `SeedLimits`.
+ *
+ * Returned together because neither describes the situation alone: "follows
+ * your global limits" is only meaningful beside what those limits are, and an
+ * override is only meaningful as a departure from them.
+ */
+export interface SeedLimits {
+  /** This torrent's override, or `null` when it follows the globals. */
+  torrent: TorrentRules | null;
+  /** The global limits from settings. */
+  global: TorrentRules;
+}
+
 /** Limits that can be set globally or per torrent. Mirrors Rust `TorrentRules`. */
 export interface TorrentRules {
   /** Stop seeding once uploaded ÷ downloaded reaches this; `null` for no limit. */

@@ -28,13 +28,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use flume_lib::{
-    commands::CommandError,
+    commands::{CommandError, SeedLimits},
     egress::{EgressGuard, EgressPath, EgressReport, GuardStatus, Hop, InterfaceKind, Verdict},
     engine::{
         Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
         PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
         TorrentFileState, TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
     },
+    policy::TorrentRules,
     settings::{Settings, Theme},
 };
 use serde_json::Value;
@@ -140,6 +141,27 @@ fn dht_status_matches_the_typescript_mirror() {
         &sample_dht(),
         &["enabled", "nodesV4", "nodesV6", "outstandingRequests"],
         "DhtStatus",
+    );
+}
+
+#[test]
+fn seed_limits_matches_the_typescript_mirror() {
+    assert_keys(
+        &SeedLimits {
+            torrent: Some(TorrentRules::default()),
+            global: TorrentRules::default(),
+        },
+        &["torrent", "global"],
+        "SeedLimits",
+    );
+}
+
+#[test]
+fn torrent_rules_matches_the_typescript_mirror() {
+    assert_keys(
+        &TorrentRules::default(),
+        &["seedRatioLimit", "seedTimeLimitSecs"],
+        "TorrentRules",
     );
 }
 

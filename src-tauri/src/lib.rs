@@ -106,6 +106,7 @@ pub fn run() {
             commands::set_only_files,
             commands::get_torrent_files,
             commands::get_torrent_detail,
+            commands::get_seed_limits,
             commands::set_torrent_rules,
             commands::keep_seeding,
             commands::get_diagnostics,
