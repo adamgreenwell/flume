@@ -198,10 +198,18 @@ which also survives the header gaining fields.
 
 ### What is not imported
 
-**Categories and seeding rules.** The design asks for them, but Flume has no
-category model and no per-torrent rules, so there is nowhere to put them. They
-are not read at all, rather than read and dropped, and the card does not claim
-to bring them across.
+**Categories and seeding rules.** The design asks for both; neither is brought
+across, for two different reasons.
+
+Categories have nowhere to go — Flume has no category model
+([#58](https://github.com/adamgreenwell/flume/issues/58)).
+
+Seeding rules have had somewhere to go since 1.2.0: global seed limits in
+settings, per-torrent overrides on the library record. The importer does not
+read the source client's, which is a gap rather than an impossibility.
+
+Either way they are not read at all, rather than read and dropped, and the card
+does not claim to bring them across.
 
 Two of the design's three questions also changed, for the same kind of reason:
 the measured-bandwidth caption would need a speed test, which is a surprising

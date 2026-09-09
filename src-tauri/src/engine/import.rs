@@ -15,10 +15,20 @@
 //!
 //! ## What is deliberately not imported
 //!
-//! The design also promises categories and seeding rules. Flume has neither —
-//! no category model, no per-torrent rules — so there is nowhere to put them.
-//! They are not read, rather than read and dropped on the floor, and the UI
-//! does not claim to bring them across.
+//! The design also promises categories and seeding rules. Neither is brought
+//! across, but for two different reasons now, and the difference matters.
+//!
+//! Categories have nowhere to go: Flume has no category model
+//! ([#58](https://github.com/adamgreenwell/flume/issues/58)).
+//!
+//! Seeding rules *would* have somewhere to go since 1.2.0 — `Settings` carries
+//! global seed limits and the library record carries per-torrent overrides. The
+//! importer simply does not read the source client's, which is a gap rather
+//! than an impossibility. Transmission and Deluge both store theirs in the
+//! files this module already opens.
+//!
+//! Either way they are not read, rather than read and dropped on the floor,
+//! and the UI does not claim to bring them across.
 
 use std::path::{Path, PathBuf};
 
