@@ -14,6 +14,9 @@ const FILL_BY_STATE: Record<TorrentState, string> = {
   downloading: "bg-acc",
   seeding: "bg-ok",
   paused: "bg-fg-3",
+  // Shares `fg-3` with paused, which is what the note above already describes:
+  // "the scheduler caused the other" is this state.
+  queued: "bg-fg-3",
   error: "bg-err",
 };
 

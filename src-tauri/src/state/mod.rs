@@ -8,7 +8,7 @@ use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError, PauseReason},
     library::{Library, Noted, persisted_info_hashes, write_atomically},
-    policy::{PolicyState, Rules, TorrentRules},
+    policy::{PolicyState, QueueLimits, Rules, TorrentRules},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -256,6 +256,9 @@ impl AppState {
                 seed_time_limit_secs: settings.seed_time_limit_secs,
             },
             overrides: self.library.read().await.torrent_rules(),
+            // Session-wide, so it comes from settings alone. Settings rows for
+            // these land with the rest of #56.
+            queue: QueueLimits::default(),
         }
     }
 

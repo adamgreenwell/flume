@@ -44,7 +44,7 @@ use std::collections::HashSet;
 
 use crate::engine::{PauseReason, TelemetrySnapshot, TorrentState, TorrentSummary};
 
-pub use rules::{Rules, TorrentRules};
+pub use rules::{QueueLimits, Rules, TorrentRules};
 pub use state::PolicyState;
 
 /// Something the telemetry loop should do.
@@ -123,10 +123,11 @@ pub fn evaluate(
                 if state.paused_reason(&torrent.info_hash) == Some(reason) {
                     continue;
                 }
-                if torrent.state == TorrentState::Paused {
-                    // The user stopped it, or it is stopped for another
-                    // reason. Record the reason without acting, so the UI can
-                    // explain it, but do not issue a redundant pause.
+                if matches!(torrent.state, TorrentState::Paused | TorrentState::Queued) {
+                    // The user stopped it, it is waiting on a slot, or it is
+                    // stopped for another reason. Record the reason without
+                    // acting, so the UI can explain it, but do not issue a
+                    // redundant pause.
                     state.mark_paused(&torrent.info_hash, reason);
                     continue;
                 }
@@ -148,14 +149,135 @@ pub fn evaluate(
             }
             Decision::Leave => {
                 // A torrent running normally is no longer policy-paused.
-                if torrent.state != TorrentState::Paused {
+                //
+                // `Queued` is excluded deliberately: it *is* policy-paused, and
+                // clearing it here would drop the reason every tick, so the
+                // queue would resume the torrent it had just parked.
+                if !matches!(torrent.state, TorrentState::Paused | TorrentState::Queued) {
                     state.clear_paused(&torrent.info_hash);
                 }
             }
         }
     }
 
+    // The queue runs last, over what the stop rules left alone. That ordering
+    // *is* rule 2: a torrent stopped at its ratio has already been marked and
+    // is skipped here, so the queue cannot start it. Nothing enforces that
+    // beyond the order of these two passes, which is why they are one function.
+    apply_queue(snapshot, rules, &mut state, &mut actions);
+
     Outcome { actions, state }
+}
+
+/// Decides which torrents run and which wait, across the whole session.
+///
+/// The one rule that cannot be answered per torrent: a slot limit is a
+/// statement about the set. This runs after the per-torrent pass so that
+/// anything a stop rule claimed is already spoken for.
+///
+/// # What is eligible
+///
+/// Only torrents that are running or that the queue itself stopped. In
+/// particular:
+///
+/// * A torrent **the user paused** is never admitted. Rule 1, and the reason
+///   the queue cannot simply count running torrents and start the difference.
+/// * A torrent **stopped by another rule** is not admitted, and not counted
+///   against the limits either — it is not using a slot.
+/// * **Checking and errored** torrents are left entirely alone: they occupy no
+///   slot, and pausing a torrent mid-verify to free a slot it is not using
+///   would be hostile.
+///
+/// # Order
+///
+/// Arrival order, oldest first, ties broken by info hash so the result is
+/// stable across ticks. Explicit reordering is the rest of #56; until then the
+/// order a user would guess is the order they added things in.
+fn apply_queue(
+    snapshot: &TelemetrySnapshot,
+    rules: &Rules,
+    state: &mut PolicyState,
+    actions: &mut Vec<Action>,
+) {
+    if rules.queue.is_empty() {
+        // No limit means no queue. Worth the early return: without it, every
+        // torrent would be "admitted" and any left over from a previous
+        // configuration would be resumed on the same tick the user cleared the
+        // limits, which is right but noisy to reason about.
+        return;
+    }
+
+    let queued_by_us =
+        |state: &PolicyState, hash: &str| state.paused_reason(hash) == Some(PauseReason::Queued);
+
+    // Eligible: running, or waiting because this queue stopped it. A torrent
+    // stopped for any other reason is neither admitted nor counted.
+    let mut eligible: Vec<&TorrentSummary> = snapshot
+        .torrents
+        .iter()
+        .filter(|t| match t.state {
+            TorrentState::Downloading | TorrentState::Seeding => state
+                .paused_reason(&t.info_hash)
+                .is_none_or(|r| r == PauseReason::Queued),
+            // Ours by definition -- the state exists only because this queue
+            // put the torrent there.
+            TorrentState::Queued => true,
+            // Still reachable for one tick after the queue decides, before
+            // `summarize` reports `Queued`.
+            TorrentState::Paused => queued_by_us(state, &t.info_hash),
+            TorrentState::Checking | TorrentState::Error => false,
+        })
+        .collect();
+
+    // Oldest first. `added_at` is absent for torrents that predate the library
+    // record, and those sort last rather than first -- an unknown arrival time
+    // is not evidence of being early.
+    eligible.sort_by(|a, b| {
+        a.added_at
+            .unwrap_or(u64::MAX)
+            .cmp(&b.added_at.unwrap_or(u64::MAX))
+            .then_with(|| a.info_hash.cmp(&b.info_hash))
+    });
+
+    let mut downloads = 0;
+    let mut seeds = 0;
+
+    for torrent in eligible {
+        let is_seed = torrent.finished;
+        let (used, limit) = if is_seed {
+            (seeds, rules.queue.max_active_seeds)
+        } else {
+            (downloads, rules.queue.max_active_downloads)
+        };
+
+        let within_kind = limit.is_none_or(|max| used < max);
+        let within_total = rules
+            .queue
+            .max_active_total
+            .is_none_or(|max| downloads + seeds < max);
+
+        if within_kind && within_total {
+            if is_seed {
+                seeds += 1;
+            } else {
+                downloads += 1;
+            }
+            // Only resume what this queue stopped. A torrent already running
+            // needs nothing, and one the user paused is not here at all.
+            if matches!(torrent.state, TorrentState::Paused | TorrentState::Queued)
+                && queued_by_us(state, &torrent.info_hash)
+            {
+                state.clear_paused(&torrent.info_hash);
+                actions.push(Action::Resume { id: torrent.id });
+            }
+        } else if !matches!(torrent.state, TorrentState::Paused | TorrentState::Queued) {
+            state.mark_paused(&torrent.info_hash, PauseReason::Queued);
+            actions.push(Action::Pause {
+                id: torrent.id,
+                reason: PauseReason::Queued,
+            });
+        }
+    }
 }
 
 /// What a set of rules wants for one torrent.
