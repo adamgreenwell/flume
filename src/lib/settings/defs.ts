@@ -19,7 +19,7 @@ import type { Settings } from "@/lib/ipc/types";
 
 /** Which group a setting belongs to. */
 export type SectionId =
-  "speed" | "seeding" | "files" | "network" | "ui" | "privacy";
+  "speed" | "queue" | "seeding" | "files" | "network" | "ui" | "privacy";
 
 /** One group in the settings nav. */
 export interface SectionDef {
@@ -35,6 +35,12 @@ export const SECTIONS: readonly SectionDef[] = [
     id: "speed",
     name: "Speed",
     description: "How much of your connection Flume may use.",
+    icon: "clock",
+  },
+  {
+    id: "queue",
+    name: "Queue",
+    description: "How many torrents run at once.",
     icon: "clock",
   },
   {
@@ -77,6 +83,8 @@ export type Control =
   | { kind: "ratio" }
   /** A span of seeding time, as a stepped slider whose top stop is "no limit". */
   | { kind: "duration" }
+  /** A count of torrents, as a stepped slider whose top stop is "no limit". */
+  | { kind: "count" }
   | { kind: "port" }
   | { kind: "path" }
   | { kind: "text"; placeholder: string }
@@ -176,6 +184,66 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     control: { kind: "rate" },
     keywords: ["throttle", "bandwidth", "cap", "seeding", "rate limit"],
     consequence: rateConsequence("up"),
+  },
+  {
+    id: "maxActiveDownloads",
+    section: "queue",
+    label: "Download at most",
+    key: "queue.maxDownloads",
+    control: { kind: "count" },
+    keywords: [
+      "queue",
+      "limit",
+      "concurrent",
+      "at once",
+      "active",
+      "slots",
+      "parallel",
+    ],
+    consequence: (n) =>
+      n === null
+        ? "Every torrent you add starts downloading immediately. On a slow connection that means each one crawls, because they are all sharing it."
+        : `Only ${n} download at a time. The rest wait their turn and start on their own as slots free, oldest first — they are queued, not paused.`,
+  },
+  {
+    id: "maxActiveSeeds",
+    section: "queue",
+    label: "Seed at most",
+    key: "queue.maxSeeds",
+    control: { kind: "count" },
+    keywords: [
+      "queue",
+      "limit",
+      "concurrent",
+      "at once",
+      "active",
+      "slots",
+      "upload",
+    ],
+    consequence: (n) =>
+      n === null
+        ? "Every finished torrent keeps seeding. Counted separately from downloads, so this does not compete with them."
+        : `Only ${n} seed at a time. Seeding costs upload where downloading costs both, which is why this is its own limit rather than sharing one with downloads.`,
+  },
+  {
+    id: "maxActiveTotal",
+    section: "queue",
+    label: "Run at most",
+    key: "queue.maxTotal",
+    control: { kind: "count" },
+    keywords: [
+      "queue",
+      "limit",
+      "concurrent",
+      "at once",
+      "active",
+      "slots",
+      "total",
+    ],
+    consequence: (n) =>
+      n === null
+        ? "No overall cap. Downloads and seeds are limited only by their own settings above."
+        : `Never more than ${n} running at once, downloads and seeds together. Whichever of the three limits is reached first is the one that applies.`,
   },
   {
     id: "seedRatioLimit",

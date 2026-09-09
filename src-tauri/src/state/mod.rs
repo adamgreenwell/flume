@@ -256,9 +256,13 @@ impl AppState {
                 seed_time_limit_secs: settings.seed_time_limit_secs,
             },
             overrides: self.library.read().await.torrent_rules(),
-            // Session-wide, so it comes from settings alone. Settings rows for
-            // these land with the rest of #56.
-            queue: QueueLimits::default(),
+            // Session-wide, so it comes from settings alone -- there is no
+            // per-torrent override to fold in, unlike the seed limits above.
+            queue: QueueLimits {
+                max_active_downloads: settings.max_active_downloads,
+                max_active_seeds: settings.max_active_seeds,
+                max_active_total: settings.max_active_total,
+            },
         }
     }
 

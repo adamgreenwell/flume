@@ -14,6 +14,9 @@ const SETTINGS: Settings = {
   proxyUrl: null,
   seedRatioLimit: 2,
   seedTimeLimitSecs: 86_400,
+  maxActiveDownloads: 3,
+  maxActiveSeeds: null,
+  maxActiveTotal: null,
   theme: "system",
   density: "comfortable",
   rail: "expanded",
@@ -174,6 +177,9 @@ describe("searchSettings", () => {
     expect(found.map((d) => d.id)).toEqual([
       "downloadLimitBps",
       "uploadLimitBps",
+      "maxActiveDownloads",
+      "maxActiveSeeds",
+      "maxActiveTotal",
       "seedRatioLimit",
       "seedTimeLimitSecs",
     ]);

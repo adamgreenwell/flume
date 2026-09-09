@@ -41,6 +41,29 @@ export const SEED_TIME_STEPS: ReadonlyArray<number | null> = [
 ];
 
 /**
+ * Active-torrent stops, coarsening as they climb.
+ *
+ * Dense at the low end because that is where the decision is: the difference
+ * between two and three concurrent downloads is one a user feels, and the
+ * difference between fifteen and twenty is one nobody tunes deliberately.
+ * `null` sits at the top because "no limit" is the same decision as "a very
+ * high limit" -- it is where the slider already was before anyone touched it.
+ */
+export const COUNT_STEPS: ReadonlyArray<number | null> = [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  8,
+  10,
+  15,
+  20,
+  null,
+];
+
+/**
  * Renders a stepped slider over `steps`, with `null` meaning no limit.
  *
  * Factored out of the rate control when the seed limits arrived, and shared

@@ -731,6 +731,26 @@ export interface Settings {
    * survives restarts — so this means the same thing across a quit.
    */
   seedTimeLimitSecs: number | null;
+  /**
+   * Most torrents that may download at once; `null` is no limit.
+   *
+   * Session-wide and deliberately not overridable per torrent — a slot limit
+   * is about this machine, and "let this one through" is what queue order is
+   * for. Applied live.
+   */
+  maxActiveDownloads: number | null;
+  /**
+   * Most torrents that may seed at once; `null` is no limit.
+   *
+   * Counted separately from downloads because they cost different things: a
+   * finished torrent spends upload, an unfinished one spends both.
+   */
+  maxActiveSeeds: number | null;
+  /**
+   * Most torrents that may run at all, downloads and seeds together; `null` is
+   * no limit. Whichever limit binds first wins.
+   */
+  maxActiveTotal: number | null;
   /** UI colour scheme. */
   theme: Theme;
   /**

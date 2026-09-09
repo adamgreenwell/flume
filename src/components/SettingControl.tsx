@@ -4,7 +4,12 @@ import type { Hop } from "@/lib/ipc/types";
 import type { Control } from "@/lib/settings/defs";
 import { formatDuration, formatSpeed } from "@/lib/format";
 
-import { RATIO_STEPS, SEED_TIME_STEPS, SteppedSlider } from "./SteppedSlider";
+import {
+  COUNT_STEPS,
+  RATIO_STEPS,
+  SEED_TIME_STEPS,
+  SteppedSlider,
+} from "./SteppedSlider";
 
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
@@ -166,6 +171,18 @@ export function SettingControl({
           format={(ratio) => ratio.toFixed(2)}
           onChange={onChange}
           width="w-[76px]"
+        />
+      );
+
+    case "count":
+      return (
+        <SteppedSlider
+          steps={COUNT_STEPS}
+          value={(value as number | null) ?? null}
+          label={label}
+          format={(n) => (n === 1 ? "1 torrent" : `${n} torrents`)}
+          onChange={onChange}
+          width="w-[86px]"
         />
       );
 

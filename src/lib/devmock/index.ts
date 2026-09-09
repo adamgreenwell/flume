@@ -360,6 +360,11 @@ const SETTINGS: Settings = {
   // explains it, and the settings screen has a row with a value in it.
   seedRatioLimit: 2,
   seedTimeLimitSecs: null,
+  // A queue limit is set so the mock's queued torrent has a reason to exist,
+  // and the settings rows have a value in them.
+  maxActiveDownloads: 3,
+  maxActiveSeeds: null,
+  maxActiveTotal: null,
   theme: "system",
   density: "comfortable",
   rail: "expanded",
