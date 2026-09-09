@@ -47,6 +47,10 @@ next-env.d.ts
 # --- Editors & OS -----------------------------------------------------------
 .DS_Store
 Thumbs.db
+# Codex's MCP server list, which points at a localhost port on one machine.
+# Same accident as `.claude/launch.json` above: picked up by `git add -A` and
+# carried onto a feature branch, where it had nothing to do with the change.
+.codex/
 .idea/
 .vscode/*
 !.vscode/extensions.json
