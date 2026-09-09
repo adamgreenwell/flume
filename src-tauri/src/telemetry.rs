@@ -75,7 +75,13 @@ pub fn spawn(app: AppHandle) {
             // small map, it changes only on an add or a remove, and a stale
             // copy would show a torrent the user just added with no arrival
             // time until the next restart.
-            let snapshot = engine.telemetry_with(&state.added_times().await);
+            // Read before this tick's evaluation, not after: a torrent policy
+            // stops now is still running in this snapshot and only shows as
+            // paused in the next one -- which is the tick this map first names
+            // it. Decorating with the newer reasons would label a torrent
+            // "stopped at your ratio limit" while it is still seeding.
+            let snapshot =
+                engine.telemetry_with(&state.added_times().await, &state.pause_reasons().await);
 
             // Policy decides; this loop acts. The split is deliberate --
             // `evaluate` is pure and testable, and everything that touches the

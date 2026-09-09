@@ -62,6 +62,29 @@ pub enum SwarmHealth {
     Thin,
 }
 
+/// Why a torrent is stopped, when something other than the user stopped it.
+///
+/// Lives here rather than in `policy` because it is status vocabulary, like
+/// [`SwarmHealth`] and the detail line beside it: it describes a torrent, and
+/// it travels to the UI on [`TorrentSummary`]. `policy` decides *which*
+/// variant applies -- that is a decision, and decisions live there -- but the
+/// word for the condition belongs with the other words for conditions.
+///
+/// Absent means the torrent is not stopped, or the user stopped it themselves.
+/// The distinction is the whole point: a bare "paused" is indistinguishable
+/// from a failure, and a torrent Flume stopped on the user's behalf has to say
+/// so or it reads as something broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PauseReason {
+    /// Reached its seed ratio limit.
+    RatioReached,
+    /// Reached its seed time limit.
+    SeedTimeReached,
+    /// Waiting for a slot under the active-torrent limits.
+    Queued,
+}
+
 /// A snapshot of one torrent, safe to send over IPC.
 ///
 /// Contains no piece data — only counters, and the file *lengths* needed to
@@ -104,6 +127,13 @@ pub struct TorrentSummary {
     /// so repeating it here would spend the only line that can say something
     /// useful on saying nothing.
     pub detail: String,
+    /// Why Flume stopped this torrent, when Flume rather than the user did.
+    ///
+    /// `None` covers both "not stopped" and "the user stopped it", which the
+    /// UI tells apart using [`Self::state`]. The engine does not decide this:
+    /// the caller passes the policy bookkeeping in, the same way it passes
+    /// arrival times -- see [`super::Engine::telemetry_with`].
+    pub pause_reason: Option<PauseReason>,
     /// Estimated seconds to completion, or `None` when it cannot be estimated.
     pub eta_seconds: Option<u64>,
     /// Whether all selected files are complete.
@@ -287,15 +317,19 @@ pub(super) fn classify_health(
 /// design's copy needs a fact Flume does not track yet — how long ago the user
 /// paused, which queue slot is blocking — the sentence states what is known
 /// instead of inventing the rest.
-pub(super) fn describe(
-    state: TorrentState,
-    eta_seconds: Option<u64>,
-    live_peers: u32,
-    known_peers: u32,
-    progress_bytes: u64,
-    uploaded_bytes: u64,
-    error: Option<&str>,
-) -> String {
+pub(super) fn describe(summary: &TorrentSummary) -> String {
+    let TorrentSummary {
+        state,
+        eta_seconds,
+        live_peers,
+        known_peers,
+        progress_bytes,
+        uploaded_bytes,
+        pause_reason,
+        ..
+    } = *summary;
+    let error = summary.error.as_deref();
+
     match state {
         // The raw engine message, not a paraphrase. A remedy sentence needs the
         // structured `Problem` from the API contract, which is later work.
@@ -304,7 +338,22 @@ pub(super) fn describe(
             None => "stopped by a failure".to_string(),
         },
         TorrentState::Checking => "re-checking data already on disk".to_string(),
-        TorrentState::Paused => "paused — everything downloaded is verified on disk".to_string(),
+        // A limit Flume enforced has to say so. Left as a bare "paused", a
+        // torrent Flume stopped on the user's behalf is indistinguishable from
+        // one they stopped themselves, and reads as something having gone
+        // wrong. `None` here still means the user's own pause.
+        TorrentState::Paused => match pause_reason {
+            Some(PauseReason::RatioReached) => {
+                "stopped at your seed ratio limit — everything is verified on disk".to_string()
+            }
+            Some(PauseReason::SeedTimeReached) => {
+                "stopped at your seed time limit — everything is verified on disk".to_string()
+            }
+            Some(PauseReason::Queued) => {
+                "queued — waiting for a slot under your active-torrent limit".to_string()
+            }
+            None => "paused — everything downloaded is verified on disk".to_string(),
+        },
         TorrentState::Seeding => {
             #[allow(clippy::cast_precision_loss)]
             let ratio = if progress_bytes == 0 {
@@ -329,6 +378,21 @@ pub(super) fn describe(
     }
 }
 
+/// The per-torrent facts the engine cannot work out for itself.
+///
+/// Both are looked up by info hash by the caller and handed in: arrival time
+/// comes from the library record, and the pause reason from the policy
+/// bookkeeping. Bundled rather than passed loose because they arrive together,
+/// mean nothing to the engine, and are the two things a caller has to think
+/// about — the rest of [`summarize`]'s arguments come straight off the handle.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Supplied {
+    /// When Flume first added this torrent, in seconds since the epoch.
+    pub added_at: Option<u64>,
+    /// Why Flume stopped it, when Flume rather than the user did.
+    pub pause_reason: Option<PauseReason>,
+}
+
 /// Builds a [`TorrentSummary`] from librqbit's per-torrent stats.
 pub(super) fn summarize(
     id: usize,
@@ -337,8 +401,12 @@ pub(super) fn summarize(
     output_folder: String,
     stats: &TorrentStats,
     availability: Option<Availability>,
-    added_at: Option<u64>,
+    supplied: Supplied,
 ) -> TorrentSummary {
+    let Supplied {
+        added_at,
+        pause_reason,
+    } = supplied;
     let (download_bps, upload_bps, live_peers, known_peers) = match stats.live.as_ref() {
         Some(live) => (
             live.download_speed.as_bytes(),
@@ -356,19 +424,15 @@ pub(super) fn summarize(
     let state = classify_state(&stats.state, stats.finished);
     let eta = eta_seconds(stats.progress_bytes, stats.total_bytes, download_bps);
 
-    TorrentSummary {
+    let mut summary = TorrentSummary {
         state,
         eta_seconds: eta,
         health: classify_health(state, live_peers, availability),
-        detail: describe(
-            state,
-            eta,
-            live_peers,
-            known_peers,
-            stats.progress_bytes,
-            stats.uploaded_bytes,
-            stats.error.as_deref(),
-        ),
+        // Filled from the finished struct below rather than from the same
+        // values twice. `note::describe` already works this way, and it is
+        // what stops the row's line and the panel's paragraph drifting apart.
+        detail: String::new(),
+        pause_reason,
         known_peers,
         // Falling back to the info hash keeps the row identifiable during the
         // window where a magnet link has not yet resolved its metadata.
@@ -385,7 +449,9 @@ pub(super) fn summarize(
         added_at,
         error: stats.error.clone(),
         output_folder,
-    }
+    };
+    summary.detail = describe(&summary);
+    summary
 }
 
 #[cfg(test)]
@@ -441,19 +507,75 @@ mod tests {
         );
     }
 
+    /// Builds a summary and returns its detail line.
+    ///
+    /// Keeps these tests reading as "this situation produces this sentence"
+    /// now that `describe` takes the whole summary.
+    #[allow(clippy::too_many_arguments)]
+    fn line(
+        state: TorrentState,
+        eta_seconds: Option<u64>,
+        live_peers: u32,
+        known_peers: u32,
+        progress_bytes: u64,
+        uploaded_bytes: u64,
+        error: Option<&str>,
+        pause_reason: Option<PauseReason>,
+    ) -> String {
+        describe(&TorrentSummary {
+            id: 0,
+            info_hash: "a".repeat(40),
+            name: "t".into(),
+            state,
+            progress_bytes,
+            total_bytes: progress_bytes.max(1),
+            uploaded_bytes,
+            download_bps: 0,
+            upload_bps: 0,
+            live_peers,
+            known_peers,
+            health: SwarmHealth::Unknown,
+            detail: String::new(),
+            pause_reason,
+            eta_seconds,
+            finished: false,
+            added_at: None,
+            error: error.map(str::to_owned),
+            output_folder: "/tmp".into(),
+        })
+    }
+
     #[test]
     fn the_detail_line_never_just_repeats_the_state() {
         // The row draws the state as an icon. A detail line that says
         // "Downloading" has spent the only useful line on nothing.
         let cases = [
-            describe(TorrentState::Downloading, Some(150), 12, 44, 0, 0, None),
-            describe(TorrentState::Downloading, None, 0, 0, 0, 0, None),
-            describe(TorrentState::Downloading, None, 0, 3, 0, 0, None),
-            describe(TorrentState::Downloading, None, 6, 11, 0, 0, None),
-            describe(TorrentState::Seeding, None, 9, 61, 1_000, 4_820, None),
-            describe(TorrentState::Paused, None, 0, 0, 0, 0, None),
-            describe(TorrentState::Checking, None, 0, 0, 0, 0, None),
-            describe(TorrentState::Error, None, 0, 0, 0, 0, Some("no space left")),
+            line(
+                TorrentState::Downloading,
+                Some(150),
+                12,
+                44,
+                0,
+                0,
+                None,
+                None,
+            ),
+            line(TorrentState::Downloading, None, 0, 0, 0, 0, None, None),
+            line(TorrentState::Downloading, None, 0, 3, 0, 0, None, None),
+            line(TorrentState::Downloading, None, 6, 11, 0, 0, None, None),
+            line(TorrentState::Seeding, None, 9, 61, 1_000, 4_820, None, None),
+            line(TorrentState::Paused, None, 0, 0, 0, 0, None, None),
+            line(TorrentState::Checking, None, 0, 0, 0, 0, None, None),
+            line(
+                TorrentState::Error,
+                None,
+                0,
+                0,
+                0,
+                0,
+                Some("no space left"),
+                None,
+            ),
         ];
 
         for detail in &cases {
@@ -468,9 +590,9 @@ mod tests {
     fn a_stalled_download_says_which_kind_of_nothing_is_happening() {
         // The three reasons need three different responses from the user, so
         // they must not collapse into one sentence.
-        let no_peers_known = describe(TorrentState::Downloading, None, 0, 0, 0, 0, None);
-        let none_answering = describe(TorrentState::Downloading, None, 0, 3, 0, 0, None);
-        let connected_idle = describe(TorrentState::Downloading, None, 6, 11, 0, 0, None);
+        let no_peers_known = line(TorrentState::Downloading, None, 0, 0, 0, 0, None, None);
+        let none_answering = line(TorrentState::Downloading, None, 0, 3, 0, 0, None, None);
+        let connected_idle = line(TorrentState::Downloading, None, 6, 11, 0, 0, None, None);
 
         assert!(no_peers_known.contains("DHT"));
         assert!(none_answering.contains('3'));
@@ -480,8 +602,51 @@ mod tests {
     }
 
     #[test]
+    fn the_row_line_says_which_limit_stopped_a_torrent() {
+        // The row is the surface a user sees without opening anything, so the
+        // distinction has to survive here and not only in the detail panel.
+        let user = line(TorrentState::Paused, None, 0, 0, 0, 0, None, None);
+
+        for (reason, expected) in [
+            (PauseReason::RatioReached, "ratio"),
+            (PauseReason::SeedTimeReached, "time"),
+            (PauseReason::Queued, "queued"),
+        ] {
+            let line = line(TorrentState::Paused, None, 0, 0, 0, 0, None, Some(reason));
+
+            assert_ne!(line, user, "{reason:?} read as a plain pause");
+            assert!(
+                line.contains(expected),
+                "{reason:?} should mention {expected:?}: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pause_reason_only_speaks_for_a_paused_torrent() {
+        // Stale bookkeeping must not relabel a running torrent. Policy clears
+        // the record when a torrent runs, but the row should not depend on
+        // that having happened yet.
+        let seeding = line(
+            TorrentState::Seeding,
+            None,
+            4,
+            9,
+            1_000,
+            2_000,
+            None,
+            Some(PauseReason::RatioReached),
+        );
+
+        assert!(
+            seeding.starts_with("seeding to"),
+            "a seeding torrent described itself as stopped: {seeding}"
+        );
+    }
+
+    #[test]
     fn an_error_carries_the_engine_message_rather_than_a_paraphrase() {
-        let detail = describe(
+        let detail = line(
             TorrentState::Error,
             None,
             0,
@@ -489,20 +654,21 @@ mod tests {
             0,
             0,
             Some("/Volumes/Scratch has 0 B free"),
+            None,
         );
         assert!(detail.contains("/Volumes/Scratch has 0 B free"));
     }
 
     #[test]
     fn seeding_reports_the_ratio_it_actually_achieved() {
-        let detail = describe(TorrentState::Seeding, None, 9, 61, 1_000, 4_820, None);
+        let detail = line(TorrentState::Seeding, None, 9, 61, 1_000, 4_820, None, None);
         assert!(detail.contains("4.82"), "{detail}");
         assert!(detail.contains("9 of 61"), "{detail}");
     }
 
     #[test]
     fn a_ratio_with_nothing_downloaded_does_not_divide_by_zero() {
-        let detail = describe(TorrentState::Seeding, None, 0, 0, 0, 500, None);
+        let detail = line(TorrentState::Seeding, None, 0, 0, 0, 500, None, None);
         assert!(detail.contains("0.00"), "{detail}");
     }
 
@@ -583,6 +749,7 @@ mod tests {
             known_peers: 0,
             health: SwarmHealth::Unknown,
             detail: String::new(),
+            pause_reason: None,
             eta_seconds: None,
             finished,
             added_at: None,

@@ -42,10 +42,10 @@ mod state;
 
 use std::collections::HashSet;
 
-use crate::engine::{TelemetrySnapshot, TorrentState, TorrentSummary};
+use crate::engine::{PauseReason, TelemetrySnapshot, TorrentState, TorrentSummary};
 
 pub use rules::{Rules, TorrentRules};
-pub use state::{PauseReason, PolicyState};
+pub use state::PolicyState;
 
 /// Something the telemetry loop should do.
 ///

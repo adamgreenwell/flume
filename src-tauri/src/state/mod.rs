@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
-    engine::{Engine, EngineError},
+    engine::{Engine, EngineError, PauseReason},
     library::{Library, Noted, persisted_info_hashes, write_atomically},
     policy::{PolicyState, Rules},
     settings::Settings,
@@ -423,6 +423,16 @@ impl AppState {
     pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
         let library = self.library.read().await;
         library.added_times()
+    }
+
+    /// Why each torrent policy stopped was stopped, keyed by info hash.
+    ///
+    /// Read before the tick's evaluation rather than after, so it describes
+    /// the state the snapshot is actually in: a torrent policy stops during
+    /// this tick does not appear paused until the next one, which is exactly
+    /// when this map starts naming it.
+    pub async fn pause_reasons(&self) -> std::collections::HashMap<String, PauseReason> {
+        self.policy_state.read().await.pause_reasons().clone()
     }
 
     /// Writes accumulated seeding time into the library record.

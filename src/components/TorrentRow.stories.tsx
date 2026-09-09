@@ -29,6 +29,7 @@ function make(over: Partial<TorrentSummary>): TorrentSummary {
     etaSeconds: 4020,
     finished: false,
     addedAt: null,
+    pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
     ...over,
@@ -95,6 +96,7 @@ export const Errored: Story = {
       knownPeers: 0,
       health: "idle",
       detail: "stopped — /Volumes/Scratch has 0 B free",
+      pauseReason: null,
       error: "/Volumes/Scratch has 0 B free",
       etaSeconds: null,
     }),
@@ -102,6 +104,35 @@ export const Errored: Story = {
 };
 
 /** Every state under the real column header, which is how it is read. */
+/**
+ * Stopped by a seed-ratio rule rather than by the user.
+ *
+ * The row beside {@link TheWholeList}'s plain "paused" is the comparison that
+ * matters: both are inert and neither is a failure, so the only thing telling
+ * them apart is the sentence.
+ */
+export const StoppedAtALimit: Story = {
+  args: {
+    torrent: make({
+      name: "Fedora Workstation 44 x86_64",
+      state: "paused",
+      progressBytes: 2_410_000_000,
+      totalBytes: 2_410_000_000,
+      uploadedBytes: 4_820_000_000,
+      downloadBps: 0,
+      uploadBps: 0,
+      livePeers: 0,
+      knownPeers: 0,
+      health: "idle",
+      detail:
+        "stopped at your seed ratio limit — everything is verified on disk",
+      etaSeconds: null,
+      finished: true,
+      pauseReason: "ratioReached",
+    }),
+  },
+};
+
 export const TheWholeList: Story = {
   render: (args) => (
     <div className="bg-bg-0 flex flex-col">
@@ -155,6 +186,22 @@ export const TheWholeList: Story = {
             knownPeers: 0,
             health: "idle" as const,
             detail: "paused — everything downloaded is verified on disk",
+          },
+          {
+            name: "Fedora Workstation 44 x86_64",
+            state: "paused" as const,
+            progressBytes: 2_410_000_000,
+            totalBytes: 2_410_000_000,
+            uploadedBytes: 4_820_000_000,
+            downloadBps: 0,
+            uploadBps: 0,
+            livePeers: 0,
+            knownPeers: 0,
+            health: "idle" as const,
+            detail:
+              "stopped at your seed ratio limit — everything is verified on disk",
+            finished: true,
+            pauseReason: "ratioReached" as const,
           },
           {
             name: "Wikipedia English Dump 2026-08-01 (multistream)",

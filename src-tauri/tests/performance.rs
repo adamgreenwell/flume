@@ -163,7 +163,7 @@ async fn detail_queries_stay_bounded() {
 
     let started = Instant::now();
     for _ in 0..50 {
-        let _ = engine.torrent_detail(id);
+        let _ = engine.torrent_detail(id, &std::collections::HashMap::new());
         let _ = engine.torrent_files(id);
     }
     let per_pair = started.elapsed() / 50;

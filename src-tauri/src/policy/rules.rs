@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{PauseReason, PolicyState};
-use crate::engine::{TorrentState, TorrentSummary};
+use super::PolicyState;
+use crate::engine::{PauseReason, TorrentState, TorrentSummary};
 
 /// Rules that can be set globally and overridden per torrent.
 ///

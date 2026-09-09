@@ -1,7 +1,11 @@
 "use client";
 
 import { formatBytes, formatSpeed } from "@/lib/format";
-import type { TorrentState, TorrentSummary } from "@/lib/ipc/types";
+import type {
+  PauseReason,
+  TorrentState,
+  TorrentSummary,
+} from "@/lib/ipc/types";
 
 import { HealthChip } from "./HealthChip";
 import { Icon, type IconName } from "./Icon";
@@ -46,6 +50,20 @@ const STATE_LABEL: Record<TorrentState, string> = {
   paused: "Paused",
   checking: "Checking",
   error: "Error",
+};
+
+/**
+ * Accessible wording for a torrent Flume stopped rather than the user.
+ *
+ * The glyph and the ring are identical to a plain pause — both are inert and
+ * neither is a failure — so without this the only thing carrying the
+ * distinction is the meta line below. That is fine to read and useless to
+ * scan, which is exactly the gap a screen reader falls into.
+ */
+const STOPPED_LABEL: Record<PauseReason, string> = {
+  ratioReached: "Stopped at seed ratio limit",
+  seedTimeReached: "Stopped at seed time limit",
+  queued: "Queued, waiting for a slot",
 };
 
 /**
@@ -166,7 +184,11 @@ export function TorrentRow({
           aria-hidden="true"
         />
         <Icon name={STATE_ICON[torrent.state]} size={11} />
-        <span className="sr-only">{STATE_LABEL[torrent.state]}</span>
+        <span className="sr-only">
+          {torrent.state === "paused" && torrent.pauseReason
+            ? STOPPED_LABEL[torrent.pauseReason]
+            : STATE_LABEL[torrent.state]}
+        </span>
       </span>
 
       <span role="gridcell" className="flex min-w-0 grow flex-col gap-0.5">

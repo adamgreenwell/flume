@@ -43,7 +43,7 @@ pub use detail::{
 pub use import::{ClientKind, DetectedClient, ImportOutcome};
 pub use note::{Note, NoteSeverity};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
-pub use torrent::{SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
+pub use torrent::{PauseReason, SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
 /// How long `Session::new_with_opts` may take before Flume gives up on it.
 ///
@@ -445,7 +445,10 @@ impl Engine {
 
     /// session's internal ordering is not guaranteed.
     pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
-        self.torrent_summaries_with(&std::collections::HashMap::new())
+        self.torrent_summaries_with(
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        )
     }
 
     /// [`Self::torrent_summaries`] with arrival times from the library record.
@@ -456,6 +459,7 @@ impl Engine {
     pub fn torrent_summaries_with(
         &self,
         added: &std::collections::HashMap<String, u64>,
+        pause_reasons: &std::collections::HashMap<String, PauseReason>,
     ) -> Vec<TorrentSummary> {
         // Handles are collected before anything is computed from them:
         // `availability_of` goes back through the session, and doing that while
@@ -486,6 +490,7 @@ impl Engine {
                 // a wire value is a trap.
                 let info_hash = handle.info_hash().as_string();
                 let added_at = added.get(&info_hash).copied();
+                let pause_reason = pause_reasons.get(&info_hash).copied();
 
                 torrent::summarize(
                     id,
@@ -494,7 +499,10 @@ impl Engine {
                     handle.output_folder().display().to_string(),
                     &stats,
                     availability,
-                    added_at,
+                    torrent::Supplied {
+                        added_at,
+                        pause_reason,
+                    },
                 )
             })
             .collect::<Vec<_>>();
@@ -504,17 +512,28 @@ impl Engine {
 
     /// Builds the full telemetry payload pushed to the UI each tick.
     pub fn telemetry(&self) -> TelemetrySnapshot {
-        self.telemetry_with(&std::collections::HashMap::new())
+        self.telemetry_with(
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        )
     }
 
-    /// [`Self::telemetry`] with arrival times from the library record.
+    /// [`Self::telemetry`] with the two things the engine cannot know itself.
+    ///
+    /// `added` is arrival times from the library record. `pause_reasons` is
+    /// the policy bookkeeping, keyed by info hash — why Flume stopped a
+    /// torrent, for the torrents Flume rather than the user stopped.
+    ///
+    /// Both are passed in rather than reached for, which is what keeps this
+    /// module free of Tauri and of `policy`.
     pub fn telemetry_with(
         &self,
         added: &std::collections::HashMap<String, u64>,
+        pause_reasons: &std::collections::HashMap<String, PauseReason>,
     ) -> TelemetrySnapshot {
         TelemetrySnapshot {
             core: self.core_status(),
-            torrents: self.torrent_summaries_with(added),
+            torrents: self.torrent_summaries_with(added, pause_reasons),
         }
     }
 
@@ -840,7 +859,11 @@ impl Engine {
     /// # Errors
     ///
     /// [`EngineError::UnknownTorrent`] if no such torrent exists.
-    pub fn torrent_detail(&self, id: usize) -> Result<TorrentDetail, EngineError> {
+    pub fn torrent_detail(
+        &self,
+        id: usize,
+        pause_reasons: &std::collections::HashMap<String, PauseReason>,
+    ) -> Result<TorrentDetail, EngineError> {
         let handle = self.handle(id)?;
 
         let peers = handle
@@ -934,6 +957,10 @@ impl Engine {
         // The detail panel does not carry the arrival time -- the row above it
         // already shows it, and threading the library down here would make
         // this call the only reason the engine needed it.
+        //
+        // The pause reason is different, and is threaded: this panel is where
+        // a stopped torrent gets its paragraph, so it is the one surface that
+        // most needs to say a limit was reached rather than "paused".
         let summary = torrent::summarize(
             id,
             handle.info_hash().as_string(),
@@ -941,7 +968,10 @@ impl Engine {
             handle.output_folder().display().to_string(),
             &handle.stats(),
             avail.as_ref().map(|a| a.summary),
-            None,
+            torrent::Supplied {
+                added_at: None,
+                pause_reason: pause_reasons.get(&handle.info_hash().as_string()).copied(),
+            },
         );
         let note = note::describe(&summary, &swarm);
 

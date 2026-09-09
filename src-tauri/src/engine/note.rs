@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::detail::SwarmStats;
-use super::torrent::{TorrentState, TorrentSummary};
+use super::torrent::{PauseReason, TorrentState, TorrentSummary};
 
 /// How much attention a note wants.
 ///
@@ -188,13 +188,52 @@ pub fn describe(summary: &TorrentSummary, swarm: &SwarmStats) -> Note {
             ),
         },
 
-        TorrentState::Paused => Note {
-            severity: NoteSeverity::Neutral,
-            title: "Paused, nothing lost".to_string(),
-            body: format!(
-                "Your {done} is verified on disk. Resuming reconnects to the \
-                 swarm and picks up from there — nothing is downloaded twice."
-            ),
+        // A torrent Flume stopped has to say what stopped it. `Neutral` is
+        // right for all four: nothing is wrong in any of them, and a limit
+        // being reached is the feature working. What changes is the claim in
+        // the title, because "Paused, nothing lost" invites the user to resume
+        // something that would immediately stop itself again.
+        TorrentState::Paused => match summary.pause_reason {
+            Some(PauseReason::RatioReached) => Note {
+                severity: NoteSeverity::Neutral,
+                title: "Stopped at your seed ratio limit".to_string(),
+                body: format!(
+                    "You have uploaded {} against the {done} you downloaded. \
+                     Your {} is verified on disk and nothing has been deleted. \
+                     Raising the limit or clearing it for this torrent starts \
+                     it seeding again.",
+                    bytes(summary.uploaded_bytes),
+                    bytes(summary.progress_bytes)
+                ),
+            },
+            Some(PauseReason::SeedTimeReached) => Note {
+                severity: NoteSeverity::Neutral,
+                title: "Stopped at your seed time limit".to_string(),
+                body: format!(
+                    "This torrent has served its time seeding. Your {done} is \
+                     verified on disk and nothing has been deleted. Raising \
+                     the limit or clearing it for this torrent starts it \
+                     seeding again."
+                ),
+            },
+            Some(PauseReason::Queued) => Note {
+                severity: NoteSeverity::Neutral,
+                title: "Waiting for a slot".to_string(),
+                body: format!(
+                    "Your active-torrent limit is already met, so this one is \
+                     queued rather than stopped. Your {done} is verified on \
+                     disk, and it starts on its own as soon as a slot opens."
+                ),
+            },
+            None => Note {
+                severity: NoteSeverity::Neutral,
+                title: "Paused, nothing lost".to_string(),
+                body: format!(
+                    "Your {done} is verified on disk. Resuming reconnects to \
+                     the swarm and picks up from there — nothing is downloaded \
+                     twice."
+                ),
+            },
         },
 
         TorrentState::Seeding => {
@@ -289,6 +328,7 @@ mod tests {
             eta_seconds: Some(4020),
             finished: false,
             added_at: None,
+            pause_reason: None,
             error: None,
             output_folder: "/tmp".into(),
         }
@@ -352,6 +392,83 @@ mod tests {
             }
             assert!(!note.body.is_empty(), "{state:?} produced no body");
         }
+    }
+
+    #[test]
+    fn a_policy_stop_never_reads_as_a_plain_pause() {
+        // The acceptance criterion of #55: "the UI distinguishes stopped at
+        // limit from paused by you". If any of these matched the user's own
+        // pause, the feature would be invisible.
+        let user_paused = describe(&summary(TorrentState::Paused), &swarm(0, 0));
+
+        for reason in [
+            PauseReason::RatioReached,
+            PauseReason::SeedTimeReached,
+            PauseReason::Queued,
+        ] {
+            let mut stopped = summary(TorrentState::Paused);
+            stopped.pause_reason = Some(reason);
+            let note = describe(&stopped, &swarm(0, 0));
+
+            assert_ne!(
+                note.title, user_paused.title,
+                "{reason:?} produced the same title as a user pause"
+            );
+            assert_ne!(
+                note.body, user_paused.body,
+                "{reason:?} produced the same body as a user pause"
+            );
+        }
+    }
+
+    #[test]
+    fn every_stop_reason_reads_differently_from_the_others() {
+        // Each wants a different response -- raise a ratio, raise a time,
+        // wait -- so none may collapse into another's sentence.
+        let titles: Vec<String> = [
+            PauseReason::RatioReached,
+            PauseReason::SeedTimeReached,
+            PauseReason::Queued,
+        ]
+        .into_iter()
+        .map(|reason| {
+            let mut stopped = summary(TorrentState::Paused);
+            stopped.pause_reason = Some(reason);
+            describe(&stopped, &swarm(0, 0)).title
+        })
+        .collect();
+
+        let unique: std::collections::HashSet<&String> = titles.iter().collect();
+        assert_eq!(unique.len(), titles.len(), "titles collapsed: {titles:?}");
+    }
+
+    #[test]
+    fn a_stop_at_a_limit_is_neutral_rather_than_an_error() {
+        // A limit being reached is the feature working. Painting it as a
+        // failure would train the user to distrust their own settings.
+        let mut stopped = summary(TorrentState::Paused);
+        stopped.pause_reason = Some(PauseReason::RatioReached);
+
+        assert_eq!(
+            describe(&stopped, &swarm(0, 0)).severity,
+            NoteSeverity::Neutral
+        );
+    }
+
+    #[test]
+    fn a_queued_torrent_says_it_starts_on_its_own() {
+        // The one reason that needs no user action, so the copy must not ask
+        // for any -- unlike the two limits, which suggest raising them.
+        let mut queued = summary(TorrentState::Paused);
+        queued.pause_reason = Some(PauseReason::Queued);
+
+        let note = describe(&queued, &swarm(0, 0));
+
+        assert!(
+            note.body.contains("as soon as a slot opens"),
+            "queued copy should say it resumes itself: {}",
+            note.body
+        );
     }
 
     #[test]
