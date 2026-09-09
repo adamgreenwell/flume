@@ -18,7 +18,8 @@ import type { Settings } from "@/lib/ipc/types";
  */
 
 /** Which group a setting belongs to. */
-export type SectionId = "speed" | "files" | "network" | "ui" | "privacy";
+export type SectionId =
+  "speed" | "seeding" | "files" | "network" | "ui" | "privacy";
 
 /** One group in the settings nav. */
 export interface SectionDef {
@@ -35,6 +36,12 @@ export const SECTIONS: readonly SectionDef[] = [
     name: "Speed",
     description: "How much of your connection Flume may use.",
     icon: "clock",
+  },
+  {
+    id: "seeding",
+    name: "Seeding",
+    description: "When Flume stops giving back.",
+    icon: "arrow-up",
   },
   {
     id: "files",
@@ -66,6 +73,10 @@ export const SECTIONS: readonly SectionDef[] = [
 export type Control =
   | { kind: "toggle" }
   | { kind: "rate" }
+  /** A seed ratio, as a stepped slider whose top stop is "no limit". */
+  | { kind: "ratio" }
+  /** A span of seeding time, as a stepped slider whose top stop is "no limit". */
+  | { kind: "duration" }
   | { kind: "port" }
   | { kind: "path" }
   | { kind: "text"; placeholder: string }
@@ -165,6 +176,30 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     control: { kind: "rate" },
     keywords: ["throttle", "bandwidth", "cap", "seeding", "rate limit"],
     consequence: rateConsequence("up"),
+  },
+  {
+    id: "seedRatioLimit",
+    section: "seeding",
+    label: "Stop seeding at a ratio of",
+    key: "seeding.ratioLimit",
+    control: { kind: "ratio" },
+    keywords: ["ratio", "share", "give back", "stop seeding", "upload"],
+    consequence: (ratio) =>
+      ratio === null
+        ? "Torrents seed until you stop them. Nothing stops on its own, which is the most generous setting and the one that uses the most upstream."
+        : `A torrent stops once it has uploaded ${ratio.toFixed(2)}× what it downloaded — a ${formatBytes(REFERENCE_ISO_BYTES)} download would seed until it had sent ${formatBytes(REFERENCE_ISO_BYTES * ratio)}. Torrents already past that stop at the next check.`,
+  },
+  {
+    id: "seedTimeLimitSecs",
+    section: "seeding",
+    label: "Stop seeding after",
+    key: "seeding.timeLimit",
+    control: { kind: "duration" },
+    keywords: ["time", "hours", "days", "stop seeding", "how long"],
+    consequence: (seconds) =>
+      seconds === null
+        ? "Torrents seed until you stop them, however long that takes."
+        : `A torrent stops after ${formatDuration(seconds)} of actual seeding — time paused does not count, and the total survives quitting Flume. Whichever limit is reached first wins.`,
   },
   {
     id: "downloadDir",

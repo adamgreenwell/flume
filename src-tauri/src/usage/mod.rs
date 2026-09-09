@@ -211,6 +211,12 @@ pub enum SettingKey {
     /// Sidebar expanded or collapsed.
     #[serde(rename = "ui.rail")]
     UiRail,
+    /// Seed ratio limit set or cleared.
+    #[serde(rename = "seeding.ratioLimit")]
+    SeedingRatioLimit,
+    /// Seed time limit set or cleared.
+    #[serde(rename = "seeding.timeLimit")]
+    SeedingTimeLimit,
     /// Usage reporting itself.
     #[serde(rename = "privacy.usage")]
     PrivacyUsage,
@@ -254,6 +260,17 @@ impl SettingKey {
         );
         note(previous.enable_upnp != next.enable_upnp, Self::NetUpnp);
         note(previous.proxy_url != next.proxy_url, Self::NetProxy);
+        // Only that the limit moved, never to what. A ratio is a number about
+        // one person's library, and the useful signal is whether anyone
+        // reaches for the setting at all.
+        note(
+            previous.seed_ratio_limit != next.seed_ratio_limit,
+            Self::SeedingRatioLimit,
+        );
+        note(
+            previous.seed_time_limit_secs != next.seed_time_limit_secs,
+            Self::SeedingTimeLimit,
+        );
         note(
             previous.egress_guard != next.egress_guard,
             Self::NetEgressGuard,

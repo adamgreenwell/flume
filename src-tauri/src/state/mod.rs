@@ -8,7 +8,7 @@ use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError, PauseReason},
     library::{Library, Noted, persisted_info_hashes, write_atomically},
-    policy::{PolicyState, Rules},
+    policy::{PolicyState, Rules, TorrentRules},
     settings::Settings,
     usage::{EventKind, Recorder},
 };
@@ -244,7 +244,19 @@ impl AppState {
 
     /// The rules policy should apply, derived from current settings.
     pub async fn policy_rules(&self) -> Rules {
-        self.settings.read().await.policy_rules.clone()
+        // Assembled from both stores rather than held in one: the global
+        // defaults are settings a user types, and the per-torrent overrides
+        // are library records that have to be pruned with their torrent.
+        // `policy` sees the same `Rules` either way and does not know the
+        // difference.
+        let settings = self.settings.read().await;
+        Rules {
+            global: TorrentRules {
+                seed_ratio_limit: settings.seed_ratio_limit,
+                seed_time_limit_secs: settings.seed_time_limit_secs,
+            },
+            overrides: self.library.read().await.torrent_rules(),
+        }
     }
 
     /// A copy of the bookkeeping carried between policy evaluations.
@@ -433,6 +445,31 @@ impl AppState {
     /// when this map starts naming it.
     pub async fn pause_reasons(&self) -> std::collections::HashMap<String, PauseReason> {
         self.policy_state.read().await.pause_reasons().clone()
+    }
+
+    /// Sets or clears one torrent's seed-limit override.
+    ///
+    /// Persisted immediately rather than on the seed-time cadence: this is a
+    /// choice the user just made, and losing it to a crash would be a bug they
+    /// would reasonably call data loss. Accumulated seeding time is a
+    /// measurement and can afford to be a minute behind; this cannot.
+    pub async fn set_torrent_rules(&self, info_hash: &str, rules: Option<TorrentRules>) {
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.set_torrent_rules(info_hash, rules) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// Forgets that policy stopped a torrent.
+    ///
+    /// Used by the keep-seeding action, so the row stops claiming a limit
+    /// stopped a torrent that is now running with no limit to stop it.
+    pub async fn clear_pause_reason(&self, info_hash: &str) {
+        self.policy_state.write().await.clear_paused(info_hash);
     }
 
     /// Writes accumulated seeding time into the library record.

@@ -523,15 +523,19 @@ fn a_manual_resume_currently_defeats_the_limit_until_the_record_clears() {
     // stop, but the reason already on record makes `evaluate` treat it as
     // handled and issue nothing.
     //
-    // That is defensible as an override -- the user asked for it -- but it is
-    // implicit rather than designed, and the stale record means the torrent
-    // can never be stopped by that rule again. #55's "keep seeding" action is
-    // where this gets decided properly: clearing the limit for the torrent
-    // says the same thing deliberately, and leaves no stale bookkeeping.
+    // `keep_seeding` is now the sanctioned way to say this, and says it
+    // properly: it writes an empty override, clears the record, and leaves
+    // nothing stale. Both UI paths for a limit-stopped torrent -- the expanded
+    // panel and the context menu -- offer that instead of a plain Resume, so
+    // reaching this state from the app takes deliberate effort.
     //
-    // Pinned here so that decision is a visible change rather than a silent
-    // one. The row stays honest either way -- a seeding torrent describes
-    // itself as seeding, per `a_pause_reason_only_speaks_for_a_paused_torrent`.
+    // Still pinned, because `evaluate` must not start re-pausing behind
+    // whatever did the resuming. A torrent resumed by some other route is
+    // running because something asked it to, and policy silently undoing that
+    // one second later is worse than the stale record.
+    //
+    // The row stays honest either way -- a seeding torrent describes itself as
+    // seeding, per `a_pause_reason_only_speaks_for_a_paused_torrent`.
     let resumed = seeding("a", 1, 5_000, 1_000); // ratio 5.0, running again
     let mut state = PolicyState::default();
     state.mark_paused("a", PauseReason::RatioReached);
@@ -547,5 +551,147 @@ fn a_manual_resume_currently_defeats_the_limit_until_the_record_clears() {
         out.state.paused_reason("a"),
         Some(PauseReason::RatioReached),
         "and the record stays set, which is the part that needs deciding"
+    );
+}
+
+// --- Per-torrent overrides and keep-seeding (#55) ---------------------------
+
+#[tokio::test]
+async fn rules_are_assembled_from_settings_and_the_library() {
+    // The globals are settings a user types; the overrides are library records
+    // pruned with their torrent. `policy` sees one `Rules` and cannot tell.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        seed_ratio_limit: Some(2.0),
+        seed_time_limit_secs: Some(3_600),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+    state
+        .set_torrent_rules("a", Some(TorrentRules::default()))
+        .await;
+
+    let rules = state.policy_rules().await;
+
+    assert_eq!(rules.global.seed_ratio_limit, Some(2.0));
+    assert_eq!(rules.global.seed_time_limit_secs, Some(3_600));
+    assert_eq!(
+        rules.for_torrent("a"),
+        TorrentRules::default(),
+        "an override replaces the globals wholesale rather than merging"
+    );
+    assert_eq!(
+        rules.for_torrent("b").seed_ratio_limit,
+        Some(2.0),
+        "a torrent without an override still gets the globals"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_override_means_seed_forever() {
+    // The whole reason overrides replace rather than merge. If `{}` inherited
+    // the global limit back, keep-seeding could not be expressed at all.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        seed_ratio_limit: Some(2.0),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+    state
+        .set_torrent_rules("a", Some(TorrentRules::default()))
+        .await;
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 50_000, 1_000)]), // ratio 50
+        &state.policy_rules().await,
+        &PolicyState::default(),
+        1,
+    );
+
+    assert!(
+        out.actions.is_empty(),
+        "a torrent told to seed forever must not be stopped, got {:?}",
+        out.actions
+    );
+}
+
+#[tokio::test]
+async fn an_override_survives_a_restart_and_dies_with_its_torrent() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().to_path_buf();
+
+    let first = AppState::new(Settings::default(), dir.clone(), false);
+    first
+        .set_torrent_rules("a", Some(TorrentRules::default()))
+        .await;
+
+    let second = AppState::new(Settings::default(), dir, false);
+    assert!(
+        second.policy_rules().await.overrides.contains_key("a"),
+        "an override the user set must outlive a quit"
+    );
+
+    // The reason it lives on the library record: removal prunes it, where
+    // nothing prunes a map in settings.json.
+    second.forget_torrent("a").await;
+    assert!(
+        !second.policy_rules().await.overrides.contains_key("a"),
+        "removing the torrent must take its override with it"
+    );
+}
+
+#[tokio::test]
+async fn clearing_an_override_returns_a_torrent_to_the_globals() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        seed_ratio_limit: Some(2.0),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+    state
+        .set_torrent_rules("a", Some(TorrentRules::default()))
+        .await;
+
+    state.set_torrent_rules("a", None).await;
+
+    assert_eq!(
+        state.policy_rules().await.for_torrent("a").seed_ratio_limit,
+        Some(2.0)
+    );
+}
+
+#[tokio::test]
+async fn keep_seeding_clears_the_stop_as_well_as_the_limit() {
+    // Both halves matter. Without the cleared record the row would go on
+    // claiming a limit stopped a torrent that now has no limit to stop it --
+    // which is the stale-bookkeeping case slice 2 pinned.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        seed_ratio_limit: Some(2.0),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+    let mut stopped = PolicyState::default();
+    stopped.mark_paused("a", PauseReason::RatioReached);
+    state.set_policy_state(stopped).await;
+
+    state
+        .set_torrent_rules("a", Some(TorrentRules::default()))
+        .await;
+    state.clear_pause_reason("a").await;
+
+    assert_eq!(state.policy_state().await.paused_reason("a"), None);
+    assert!(state.pause_reasons().await.is_empty());
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 50_000, 1_000)]),
+        &state.policy_rules().await,
+        &state.policy_state().await,
+        1,
+    );
+    assert!(
+        out.actions.is_empty(),
+        "it must not be stopped straight back again, got {:?}",
+        out.actions
     );
 }

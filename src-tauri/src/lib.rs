@@ -106,6 +106,8 @@ pub fn run() {
             commands::set_only_files,
             commands::get_torrent_files,
             commands::get_torrent_detail,
+            commands::set_torrent_rules,
+            commands::keep_seeding,
             commands::get_diagnostics,
             commands::check_egress,
             commands::list_egress_interfaces,

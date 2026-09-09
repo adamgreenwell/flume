@@ -15,6 +15,7 @@ use crate::{
         CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
         TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
     },
+    policy::TorrentRules,
     settings::{Settings, SettingsError},
     state::AppState,
     usage::{AddSource, CountBucket, EventKind, FailureKind, SettingKey},
@@ -570,6 +571,55 @@ pub async fn get_torrent_detail(
     // info hash, and the engine is the only side holding the id-to-hash
     // mapping. Passing the map lets it do the lookup with what it already has.
     Ok(engine.torrent_detail(id, &state.pause_reasons().await)?)
+}
+
+/// Sets or clears one torrent's seed-limit override.
+///
+/// `rules` of `None` removes the override and returns the torrent to the
+/// global limits. `Some` replaces them wholesale — including
+/// `TorrentRules::default()`, which is how "no limit for this one" is said.
+///
+/// Stored in the library record rather than in settings, so it is pruned when
+/// the torrent is removed. See [`crate::library::Record::rules`].
+///
+/// # Errors
+///
+/// Never fails on an unknown torrent: a record may legitimately be written for
+/// a torrent librqbit has not restored yet, and refusing would make the order
+/// of a restore observable.
+#[tauri::command]
+pub async fn set_torrent_rules(
+    state: State<'_, AppState>,
+    info_hash: String,
+    rules: Option<TorrentRules>,
+) -> Result<(), CommandError> {
+    state.set_torrent_rules(&info_hash, rules).await;
+    Ok(())
+}
+
+/// Keeps a torrent seeding past the limit that stopped it.
+///
+/// Two things, and both are needed. Writing an empty override says "no limit
+/// for this torrent" in a way the user can see and undo; clearing the pause
+/// record stops the row still claiming a limit stopped it. Resuming alone
+/// would leave the limit in force and the record stale — the torrent would
+/// keep seeding, but for the wrong reason and with no way to tell.
+///
+/// # Errors
+///
+/// `unknownTorrent` if no such torrent exists.
+#[tauri::command]
+pub async fn keep_seeding(
+    state: State<'_, AppState>,
+    id: usize,
+    info_hash: String,
+) -> Result<(), CommandError> {
+    let engine = require_engine(&state).await?;
+    state
+        .set_torrent_rules(&info_hash, Some(TorrentRules::default()))
+        .await;
+    state.clear_pause_reason(&info_hash).await;
+    Ok(engine.resume(id).await?)
 }
 
 /// Builds a redacted diagnostics bundle for the user to paste into an issue.

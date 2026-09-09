@@ -309,10 +309,10 @@ const SETTINGS: Settings = {
   downloadLimitBps: null,
   uploadLimitBps: 2_097_152,
   proxyUrl: null,
-  policyRules: {
-    global: { seedRatioLimit: null, seedTimeLimitSecs: null },
-    overrides: {},
-  },
+  // A ratio limit is set so the mock's stopped torrent has something that
+  // explains it, and the settings screen has a row with a value in it.
+  seedRatioLimit: 2,
+  seedTimeLimitSecs: null,
   theme: "system",
   density: "comfortable",
   rail: "expanded",
@@ -698,6 +698,22 @@ export function install(): void {
           return detailFor(
             (args as { id?: number } | undefined)?.id ?? TORRENTS[0].id,
           );
+        case "set_torrent_rules":
+          return null;
+        case "keep_seeding": {
+          // Mirrors the real command closely enough to be worth having: the
+          // torrent starts seeding and stops claiming a limit stopped it. A
+          // mock that only resumed would show the contradiction the real
+          // command exists to avoid.
+          const hash = (args as { infoHash?: string } | undefined)?.infoHash;
+          const target = TORRENTS.find((t) => t.infoHash === hash);
+          if (target) {
+            target.state = "seeding";
+            target.pauseReason = null;
+            target.detail = "seeding to 0 of 0 peers · ratio 2.00";
+          }
+          return null;
+        }
         default:
           return null;
       }

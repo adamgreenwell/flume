@@ -47,6 +47,7 @@ import {
   VIEWS,
   matchesQuery,
   matchesView,
+  stoppedByALimit,
   viewCounts,
   type ViewId,
 } from "@/lib/views";
@@ -55,6 +56,7 @@ import {
   isFirstRun,
   pauseTorrent,
   removeTorrent,
+  keepSeeding as keepSeedingCall,
   resumeTorrent,
   updateSettings,
 } from "@/lib/ipc/client";
@@ -275,6 +277,18 @@ export default function Home() {
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
   }, []);
+
+  const keepSeeding = useCallback(
+    async (t: TorrentSummary) => {
+      setActionError(null);
+      try {
+        await keepSeedingCall(t.id, t.infoHash);
+      } catch (caught: unknown) {
+        report(caught, "Could not clear that torrent's seed limit.");
+      }
+    },
+    [report],
+  );
 
   const toggle = useCallback(
     async (t: TorrentSummary) => {
@@ -497,6 +511,7 @@ export default function Home() {
                     detail={expanded.detail}
                     error={expanded.error}
                     onToggle={(x) => void toggle(x)}
+                    onKeepSeeding={(x) => void keepSeeding(x)}
                     onReveal={(x) => void reveal(x)}
                     onOpen={setDetailOf}
                   />
@@ -545,11 +560,24 @@ export default function Home() {
           onClose={() => setMenu(null)}
           items={
             [
-              {
-                label: menu.torrent.state === "paused" ? "Resume" : "Pause",
-                icon: menu.torrent.state === "paused" ? "play" : "pause",
-                run: () => void toggle(menu.torrent),
-              },
+              // The same swap the expanded panel makes, for the same reason:
+              // a plain Resume on a limit-stopped torrent leaves the limit in
+              // force, so it would stop again within a second. Two paths for
+              // one intent must not disagree about what that intent does.
+              stoppedByALimit(menu.torrent)
+                ? {
+                    label: "Keep seeding",
+                    icon: "play" as const,
+                    run: () => void keepSeeding(menu.torrent),
+                  }
+                : {
+                    label: menu.torrent.state === "paused" ? "Resume" : "Pause",
+                    icon:
+                      menu.torrent.state === "paused"
+                        ? ("play" as const)
+                        : ("pause" as const),
+                    run: () => void toggle(menu.torrent),
+                  },
               {
                 label: "Files and details",
                 icon: "files",

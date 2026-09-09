@@ -79,6 +79,7 @@ function show(peers: PeerInfo[]) {
       detail={detail(peers)}
       error={null}
       onToggle={() => {}}
+      onKeepSeeding={() => {}}
       onReveal={() => {}}
       onOpen={() => {}}
     />,
@@ -108,5 +109,83 @@ describe("ExpandedRow contributors", () => {
   it("says so plainly when nobody is connected", () => {
     show([]);
     expect(screen.getByText("No peers connected.")).toBeDefined();
+  });
+});
+
+describe("keeping a torrent seeding", () => {
+  it("offers Keep seeding instead of Resume when a limit stopped it", () => {
+    // Instead of, not beside. Resume alone leaves the limit in force, so the
+    // torrent would stop again within a second and the button would look
+    // broken.
+    render(
+      <ExpandedRow
+        torrent={torrent({ state: "paused", pauseReason: "ratioReached" })}
+        detail={null}
+        error={null}
+        onToggle={() => {}}
+        onKeepSeeding={() => {}}
+        onReveal={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Keep seeding")).toBeTruthy();
+    expect(screen.queryByText("Resume")).toBeNull();
+  });
+
+  it("still offers Resume for a torrent the user paused", () => {
+    render(
+      <ExpandedRow
+        torrent={torrent({ state: "paused", pauseReason: null })}
+        detail={null}
+        error={null}
+        onToggle={() => {}}
+        onKeepSeeding={() => {}}
+        onReveal={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Resume")).toBeTruthy();
+    expect(screen.queryByText("Keep seeding")).toBeNull();
+  });
+
+  it("does not offer it for a queued torrent", () => {
+    // A queue slot is not something the user can lift. Offering to fix it
+    // would be offering to fix something that is not broken.
+    render(
+      <ExpandedRow
+        torrent={torrent({ state: "paused", pauseReason: "queued" })}
+        detail={null}
+        error={null}
+        onToggle={() => {}}
+        onKeepSeeding={() => {}}
+        onReveal={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText("Keep seeding")).toBeNull();
+  });
+
+  it("passes the torrent to the handler", () => {
+    let got: string | null = null;
+    render(
+      <ExpandedRow
+        torrent={torrent({ state: "paused", pauseReason: "seedTimeReached" })}
+        detail={null}
+        error={null}
+        onToggle={() => {}}
+        onKeepSeeding={(t) => {
+          got = t.infoHash;
+        }}
+        onReveal={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+
+    screen.getByText("Keep seeding").click();
+
+    expect(got).toBe("a".repeat(40));
   });
 });

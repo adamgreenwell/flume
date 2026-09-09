@@ -1,6 +1,7 @@
 "use client";
 
 import { formatBytes } from "@/lib/format";
+import { stoppedByALimit } from "@/lib/views";
 import type { PeerInfo, TorrentDetail, TorrentSummary } from "@/lib/ipc/types";
 
 import { Chip } from "./Chip";
@@ -130,6 +131,14 @@ export interface ExpandedRowProps {
   onReveal: (t: TorrentSummary) => void;
   /** Open the full inspector. */
   onOpen: (t: TorrentSummary) => void;
+  /**
+   * Clear this torrent's seed limit and start it again.
+   *
+   * Only ever offered for a torrent a *limit* stopped. A queued torrent starts
+   * on its own when a slot opens, so a button that says "keep seeding" would
+   * be offering to fix something that is not broken.
+   */
+  onKeepSeeding: (t: TorrentSummary) => void;
 }
 
 /**
@@ -148,12 +157,16 @@ export function ExpandedRow({
   onToggle,
   onReveal,
   onOpen,
+  onKeepSeeding,
 }: ExpandedRowProps) {
   const remaining = Math.max(torrent.totalBytes - torrent.progressBytes, 0);
   const ratio =
     torrent.progressBytes === 0
       ? 0
       : torrent.uploadedBytes / torrent.progressBytes;
+
+  // A limit the user can lift, as opposed to a queue slot they cannot hurry.
+  const canKeepSeeding = stoppedByALimit(torrent);
 
   return (
     <div className="border-line bg-bg-1 flex flex-col gap-3.5 border-b py-4 pr-[18px] pl-[52px]">
@@ -177,9 +190,16 @@ export function ExpandedRow({
         </div>
 
         <div className="ml-auto flex shrink-0 gap-1.5">
-          <Chip onClick={() => onToggle(torrent)}>
-            {torrent.state === "paused" ? "Resume" : "Pause"}
-          </Chip>
+          {canKeepSeeding ? (
+            // Offered instead of Resume, not beside it. Resuming alone leaves
+            // the limit in force, so the torrent would stop again within a
+            // second and the button would look broken.
+            <Chip onClick={() => onKeepSeeding(torrent)}>Keep seeding</Chip>
+          ) : (
+            <Chip onClick={() => onToggle(torrent)}>
+              {torrent.state === "paused" ? "Resume" : "Pause"}
+            </Chip>
+          )}
           <Chip onClick={() => onReveal(torrent)}>Reveal in folder</Chip>
           <Chip selected onClick={() => onOpen(torrent)}>
             Open details
