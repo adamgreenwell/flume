@@ -6,10 +6,17 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 [kac]: https://keepachangelog.com/en/1.1.0/
 [semver]: https://semver.org/spec/v2.0.0.html
 
-## [Unreleased]
+## [1.2.0] — 2026-09-09
 
 ### Fixed
 
+- **"Recently added" now sorts by when a torrent actually arrived.** It sorted
+  by session id, which is not the same thing: librqbit persists no timestamp
+  and computes the next id as one past the highest still present, so removing
+  the newest torrent hands its number to the next one added. Flume now keeps
+  its own record of when each torrent arrived, keyed by info hash. Torrents
+  added before this release have no recorded time and sort last rather than
+  being given an invented one.
 - **A torrent whose `.torrent` file went missing could hang Flume's startup
   indefinitely.** librqbit reads a missing sidecar as empty bytes rather than
   as an error and restores the row as a magnet, and that path has no timeout —
@@ -30,6 +37,23 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   dropped.
 
 ### Added
+
+- **Seed ratio and seed time limits.** Flume can now be told when to stop
+  seeding, globally under Settings → Seeding or for one torrent from its
+  inspector. Both limits are optional and independent, and whichever is reached
+  first wins. Seeding time counts time actually spent seeding rather than time
+  since the torrent was added, and it survives quitting — a limit set in hours
+  means the same thing across a restart.
+
+  A torrent stopped this way says so, in the list and in its detail panel,
+  rather than showing a bare "paused" that looks indistinguishable from a
+  failure. **Keep seeding** lifts the limit for that torrent and starts it
+  again; it appears in place of Resume, because resuming alone would leave the
+  limit in force and stop the torrent a second later.
+
+  A per-torrent limit replaces the global one outright rather than merging with
+  it, which is what makes "seed this one forever" expressible. Per-torrent
+  limits are removed along with their torrent.
 
 - **Collapsible sidebar.** The rail collapses to a 56px icon rail and back,
   from a toggle beside the wordmark or from Settings → Appearance, and the
@@ -109,6 +133,8 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.2.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.2.0
+[1.1.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.1.0
 [r644]: https://github.com/ikatson/rqbit/pull/644
 [r645]: https://github.com/ikatson/rqbit/pull/645
 [1.0.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.0.0
