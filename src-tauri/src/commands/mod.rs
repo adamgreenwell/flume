@@ -470,6 +470,13 @@ pub async fn discard_preview(
 #[tauri::command]
 pub async fn pause_torrent(state: State<'_, AppState>, id: usize) -> Result<(), CommandError> {
     let engine = require_engine(&state).await?;
+    // The user taking ownership. Without clearing it, a torrent the queue had
+    // parked would still read as `Queued` after the user paused it by hand --
+    // and the queue would start it again the moment a slot freed, undoing the
+    // one action the precedence rules promise never to override.
+    if let Some(info_hash) = engine.info_hash_of(id) {
+        state.clear_pause_reason(&info_hash).await;
+    }
     Ok(engine.pause(id).await?)
 }
 

@@ -58,9 +58,14 @@ export interface CoreStatus {
  * Deliberately coarser than librqbit's internal states: the engine
  * distinguishes "live" from "finished", but a user thinks in terms of
  * downloading versus seeding.
+ *
+ * `"queued"` is distinct from `"paused"` because the two behave oppositely: a
+ * paused torrent stays paused until the user says otherwise, and a queued one
+ * starts on its own when a slot frees. librqbit has no queue — the backend
+ * derives this from its paused bit plus a {@link PauseReason}.
  */
 export type TorrentState =
-  "checking" | "downloading" | "seeding" | "paused" | "error";
+  "checking" | "downloading" | "seeding" | "paused" | "queued" | "error";
 
 /**
  * Why a torrent is stopped, when something other than the user stopped it.

@@ -31,6 +31,44 @@ impl TorrentRules {
     }
 }
 
+/// How many torrents may run at once.
+///
+/// Session-wide rather than per-torrent: a slot limit is a statement about
+/// this machine's connection and disk, not about any one torrent. `None` on a
+/// field means no limit, so a default `QueueLimits` queues nothing.
+///
+/// Downloads and seeds are counted separately because they cost different
+/// things — a finished torrent spends upload, an unfinished one spends both —
+/// and `max_active_total` caps the two together for the case where the real
+/// constraint is peer connections rather than either direction.
+///
+/// **Checking and errored torrents occupy no slot.** Verification is disk work
+/// a peer cannot see, and a torrent re-hashing 40 GB would otherwise hold a
+/// download slot open for minutes doing nothing. An errored torrent cannot run
+/// at all, so counting it would let a failure shrink the queue.
+///
+/// Mirrored in `src/lib/ipc/types.ts`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueueLimits {
+    /// Most torrents that may be downloading at once.
+    pub max_active_downloads: Option<u32>,
+    /// Most torrents that may be seeding at once.
+    pub max_active_seeds: Option<u32>,
+    /// Most torrents that may be running at all, downloads and seeds together.
+    pub max_active_total: Option<u32>,
+}
+
+impl QueueLimits {
+    /// Whether any limit is set.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.max_active_downloads.is_none()
+            && self.max_active_seeds.is_none()
+            && self.max_active_total.is_none()
+    }
+}
+
 /// Global rules, plus per-torrent overrides.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -44,6 +82,10 @@ pub struct Rules {
     /// reason about: "unlimited for this one torrent" becomes impossible to
     /// express if an unset field inherits the global value.
     pub overrides: HashMap<String, TorrentRules>,
+    /// How many torrents may run at once. Not overridable per torrent — a slot
+    /// limit is about the machine, and "unlimited for this one" is what the
+    /// queue order is for.
+    pub queue: QueueLimits,
 }
 
 impl Rules {
@@ -111,7 +153,10 @@ pub(super) fn should_start(
     let Some(reason) = state.paused_reason(&torrent.info_hash) else {
         return false;
     };
-    if torrent.state != TorrentState::Paused {
+    // `Queued` counts as stopped here: a torrent waiting on a slot whose ratio
+    // limit was just raised is still not something this function starts -- the
+    // queue owns it, and `PauseReason::Queued` falls through to `false` below.
+    if !matches!(torrent.state, TorrentState::Paused | TorrentState::Queued) {
         return false;
     }
 

@@ -46,6 +46,22 @@ pub struct Note {
     pub body: String,
 }
 
+/// The note for a torrent waiting on a queue slot.
+///
+/// Shared by [`TorrentState::Queued`] and the `PauseReason::Queued` arm so the
+/// two cannot drift: they describe the same situation one tick apart.
+fn queued_note(done: &str) -> Note {
+    Note {
+        severity: NoteSeverity::Neutral,
+        title: "Waiting for a slot".to_string(),
+        body: format!(
+            "Your active-torrent limit is already met, so this one is queued \
+             rather than stopped. Your {done} is verified on disk, and it \
+             starts on its own as soon as a slot opens."
+        ),
+    }
+}
+
 /// Formats a byte count the way the frontend does.
 ///
 /// Decimal, three significant figures — see `formatBytes` in
@@ -193,6 +209,10 @@ pub fn describe(summary: &TorrentSummary, swarm: &SwarmStats) -> Note {
         // being reached is the feature working. What changes is the claim in
         // the title, because "Paused, nothing lost" invites the user to resume
         // something that would immediately stop itself again.
+        // Waiting rather than stopped, and the copy must not ask the user to
+        // do anything: this is the one inert state that resolves itself.
+        TorrentState::Queued => queued_note(&done),
+
         TorrentState::Paused => match summary.pause_reason {
             Some(PauseReason::RatioReached) => Note {
                 severity: NoteSeverity::Neutral,
@@ -216,15 +236,10 @@ pub fn describe(summary: &TorrentSummary, swarm: &SwarmStats) -> Note {
                      seeding again."
                 ),
             },
-            Some(PauseReason::Queued) => Note {
-                severity: NoteSeverity::Neutral,
-                title: "Waiting for a slot".to_string(),
-                body: format!(
-                    "Your active-torrent limit is already met, so this one is \
-                     queued rather than stopped. Your {done} is verified on \
-                     disk, and it starts on its own as soon as a slot opens."
-                ),
-            },
+            // Reached only in the tick between the queue deciding and the
+            // state catching up; `TorrentState::Queued` carries this
+            // ordinarily, and the two must say the same thing.
+            Some(PauseReason::Queued) => queued_note(&done),
             None => Note {
                 severity: NoteSeverity::Neutral,
                 title: "Paused, nothing lost".to_string(),

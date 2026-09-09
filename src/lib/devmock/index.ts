@@ -191,6 +191,30 @@ const TORRENTS: TorrentSummary[] = [
     outputFolder: "/Volumes/Media/Linux",
   },
   {
+    // Waiting on a slot, not stopped. Sits beside the plain pause and the
+    // rule-stopped torrent so all three read differently at a glance -- which
+    // is the distinction #56 exists to make.
+    id: 10,
+    infoHash: "ff10b8d8ea35a5b4e52837468fc8f03d55ce5555",
+    name: "Debian 13.2.0 arm64 netinst",
+    state: "queued",
+    progressBytes: 402_000_000,
+    totalBytes: 1_190_000_000,
+    uploadedBytes: 0,
+    downloadBps: 0,
+    uploadBps: 0,
+    livePeers: 0,
+    knownPeers: 0,
+    health: "idle",
+    detail: "queued — starts on its own when a slot frees",
+    etaSeconds: null,
+    finished: false,
+    addedAt: null,
+    pauseReason: "queued",
+    error: null,
+    outputFolder: "/Volumes/Media/Linux",
+  },
+  {
     // Stopped by a rule rather than by the user, so the two sit next to each
     // other in the mock: id 5 above is a plain pause, and this one has to read
     // differently at a glance or #55 has not landed.

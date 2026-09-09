@@ -110,3 +110,39 @@ describe("a torrent stopped by a rule", () => {
     ).toBeTruthy();
   });
 });
+
+describe("a queued torrent", () => {
+  it("is announced as waiting rather than as paused", () => {
+    // The distinction #56 exists to make: a paused torrent stays put, a
+    // queued one starts itself. A screen reader gets only this label.
+    const plain = row({ state: "paused" });
+    expect(screen.getByText("Paused")).toBeTruthy();
+    plain.unmount();
+
+    row({ state: "queued", pauseReason: "queued" });
+
+    expect(screen.queryByText("Paused")).toBeNull();
+    expect(screen.getByText(/Queued, waiting for a slot/)).toBeTruthy();
+  });
+
+  it("does not draw the pause glyph", () => {
+    // Queued shares its tone with paused, deliberately — neither is a
+    // condition — so the glyph is the only thing separating them by sight.
+    // Compared by path data because that is what actually differs; the icons
+    // carry no test hook, and adding one to assert on would be testing the
+    // hook rather than the drawing.
+    const glyph = (over: Partial<TorrentSummary>) => {
+      const { container, unmount } = row(over);
+      const d = container.querySelector("svg path")?.getAttribute("d") ?? null;
+      unmount();
+      return d;
+    };
+
+    const pause = glyph({ state: "paused" });
+    const queued = glyph({ state: "queued", pauseReason: "queued" });
+
+    expect(pause).toBeTruthy();
+    expect(queued).toBeTruthy();
+    expect(queued).not.toBe(pause);
+  });
+});

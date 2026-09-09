@@ -734,6 +734,16 @@ impl Engine {
             .ok_or(EngineError::UnknownTorrent(id))
     }
 
+    /// The info hash of a torrent, by session id.
+    ///
+    /// Exists because policy keys its bookkeeping on the hash while commands
+    /// arrive with an id, and the session is the only thing holding the
+    /// mapping. `None` for a torrent that is not in the session.
+    #[must_use]
+    pub fn info_hash_of(&self, id: usize) -> Option<String> {
+        self.handle(id).ok().map(|h| h.info_hash().as_string())
+    }
+
     /// Pauses a torrent, stopping transfer but keeping it in the session.
     ///
     /// # Errors

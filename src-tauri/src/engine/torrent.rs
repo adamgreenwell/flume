@@ -25,6 +25,16 @@ pub enum TorrentState {
     Seeding,
     /// Stopped by the user.
     Paused,
+    /// Waiting for a slot under the active-torrent limits.
+    ///
+    /// A distinct state rather than a flavour of [`Self::Paused`], because the
+    /// two behave oppositely: a paused torrent stays paused until the user says
+    /// otherwise, and a queued one starts on its own the moment a slot frees.
+    /// Conflating them is the mistake #56 exists to avoid.
+    ///
+    /// Derived rather than reported: librqbit has no queue, so this is
+    /// `Paused` plus a [`PauseReason::Queued`] supplied by the caller.
+    Queued,
     /// Stopped by a failure; see [`TorrentSummary::error`].
     Error,
 }
@@ -286,7 +296,10 @@ pub(super) fn classify_health(
 ) -> SwarmHealth {
     match state {
         TorrentState::Seeding => SwarmHealth::Seeding,
-        TorrentState::Paused | TorrentState::Checking | TorrentState::Error => SwarmHealth::Idle,
+        TorrentState::Paused
+        | TorrentState::Queued
+        | TorrentState::Checking
+        | TorrentState::Error => SwarmHealth::Idle,
         // Nobody to ask is the one negative verdict that needs no bitfield.
         TorrentState::Downloading if live_peers == 0 => SwarmHealth::None,
         TorrentState::Downloading => match availability {
@@ -338,6 +351,9 @@ pub(super) fn describe(summary: &TorrentSummary) -> String {
             None => "stopped by a failure".to_string(),
         },
         TorrentState::Checking => "re-checking data already on disk".to_string(),
+        // Waiting for a slot, not stopped. Its own state now, so the arm
+        // below no longer has to carry the queue case.
+        TorrentState::Queued => "queued — starts on its own when a slot frees".to_string(),
         // A limit Flume enforced has to say so. Left as a bare "paused", a
         // torrent Flume stopped on the user's behalf is indistinguishable from
         // one they stopped themselves, and reads as something having gone
@@ -349,9 +365,10 @@ pub(super) fn describe(summary: &TorrentSummary) -> String {
             Some(PauseReason::SeedTimeReached) => {
                 "stopped at your seed time limit — everything is verified on disk".to_string()
             }
-            Some(PauseReason::Queued) => {
-                "queued — waiting for a slot under your active-torrent limit".to_string()
-            }
+            // Reached only in the tick between the queue deciding and the
+            // state catching up, since `summarize` turns this pairing into
+            // `Queued` above.
+            Some(PauseReason::Queued) => "queued — starts on its own when a slot frees".to_string(),
             None => "paused — everything downloaded is verified on disk".to_string(),
         },
         TorrentState::Seeding => {
@@ -393,6 +410,24 @@ pub(super) struct Supplied {
     pub pause_reason: Option<PauseReason>,
 }
 
+/// Folds the caller's pause reason into the state librqbit reported.
+///
+/// librqbit has no queue, so `Queued` is derived rather than reported: its
+/// paused bit plus a [`PauseReason::Queued`] the caller supplied. Done once,
+/// here, so every consumer -- the row, the notes, the views, the policy engine
+/// itself -- reads one state instead of each re-deriving the pairing and one of
+/// them getting it wrong.
+///
+/// Only that one pairing changes anything. A reason attached to a torrent that
+/// is not paused is stale bookkeeping from a tick ago and must not relabel a
+/// running torrent.
+fn resolve_state(base: TorrentState, pause_reason: Option<PauseReason>) -> TorrentState {
+    match (base, pause_reason) {
+        (TorrentState::Paused, Some(PauseReason::Queued)) => TorrentState::Queued,
+        (state, _) => state,
+    }
+}
+
 /// Builds a [`TorrentSummary`] from librqbit's per-torrent stats.
 pub(super) fn summarize(
     id: usize,
@@ -421,7 +456,7 @@ pub(super) fn summarize(
         None => (0, 0, 0, 0),
     };
 
-    let state = classify_state(&stats.state, stats.finished);
+    let state = resolve_state(classify_state(&stats.state, stats.finished), pause_reason);
     let eta = eta_seconds(stats.progress_bytes, stats.total_bytes, download_bps);
 
     let mut summary = TorrentSummary {
@@ -599,6 +634,49 @@ mod tests {
         assert!(connected_idle.contains('6'));
         assert_ne!(no_peers_known, none_answering);
         assert_ne!(none_answering, connected_idle);
+    }
+
+    #[test]
+    fn a_paused_torrent_the_queue_stopped_reads_as_queued() {
+        assert_eq!(
+            resolve_state(TorrentState::Paused, Some(PauseReason::Queued)),
+            TorrentState::Queued
+        );
+    }
+
+    #[test]
+    fn only_the_queue_reason_changes_the_state() {
+        // A ratio-stopped torrent is genuinely paused: it will not start on its
+        // own, so calling it queued would promise something false.
+        for reason in [PauseReason::RatioReached, PauseReason::SeedTimeReached] {
+            assert_eq!(
+                resolve_state(TorrentState::Paused, Some(reason)),
+                TorrentState::Paused,
+                "{reason:?} should not become Queued"
+            );
+        }
+        assert_eq!(
+            resolve_state(TorrentState::Paused, None),
+            TorrentState::Paused
+        );
+    }
+
+    #[test]
+    fn a_stale_queue_reason_does_not_relabel_a_running_torrent() {
+        // The reason map is a tick behind the snapshot, so a torrent resumed
+        // this tick still carries Queued. It is running; it must read that way.
+        for base in [
+            TorrentState::Downloading,
+            TorrentState::Seeding,
+            TorrentState::Checking,
+            TorrentState::Error,
+        ] {
+            assert_eq!(
+                resolve_state(base, Some(PauseReason::Queued)),
+                base,
+                "{base:?} should be left alone"
+            );
+        }
     }
 
     #[test]

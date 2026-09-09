@@ -56,7 +56,10 @@ export function matchesView(t: TorrentSummary, view: ViewId): boolean {
     case "completed":
       return t.finished;
     case "paused":
-      return t.state === "paused";
+      // Both, as the view has been named since before either existed. They
+      // are different states and belong in one place: what a user looks for
+      // here is "everything not currently moving".
+      return t.state === "paused" || t.state === "queued";
   }
 }
 

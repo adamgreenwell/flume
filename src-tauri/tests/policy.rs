@@ -15,7 +15,7 @@ use flume_lib::{
         TorrentState, TorrentSummary,
     },
     library::Library,
-    policy::{Action, PolicyState, Rules, TorrentRules, evaluate},
+    policy::{Action, PolicyState, QueueLimits, Rules, TorrentRules, evaluate},
     settings::Settings,
     state::AppState,
 };
@@ -76,6 +76,7 @@ fn ratio_limit(limit: f64) -> Rules {
             ..Default::default()
         },
         overrides: HashMap::new(),
+        queue: QueueLimits::default(),
     }
 }
 
@@ -86,7 +87,59 @@ fn seed_time_limit(secs: u64) -> Rules {
             ..Default::default()
         },
         overrides: HashMap::new(),
+        queue: QueueLimits::default(),
     }
+}
+
+fn downloading(hash: &str, id: usize, added_at: Option<u64>) -> TorrentSummary {
+    TorrentSummary {
+        state: TorrentState::Downloading,
+        finished: false,
+        progress_bytes: 500,
+        total_bytes: 1_000,
+        added_at,
+        ..seeding(hash, id, 0, 1_000)
+    }
+}
+
+fn seed(hash: &str, id: usize, added_at: Option<u64>) -> TorrentSummary {
+    TorrentSummary {
+        added_at,
+        ..seeding(hash, id, 0, 1_000)
+    }
+}
+
+fn queue(downloads: Option<u32>, seeds: Option<u32>, total: Option<u32>) -> Rules {
+    Rules {
+        queue: QueueLimits {
+            max_active_downloads: downloads,
+            max_active_seeds: seeds,
+            max_active_total: total,
+        },
+        ..Rules::default()
+    }
+}
+
+/// Ids of the torrents an outcome pauses, in order.
+fn paused(out: &flume_lib::policy::Outcome) -> Vec<usize> {
+    out.actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Pause { id, .. } => Some(*id),
+            Action::Resume { .. } => None,
+        })
+        .collect()
+}
+
+/// Ids of the torrents an outcome resumes, in order.
+fn resumed(out: &flume_lib::policy::Outcome) -> Vec<usize> {
+    out.actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Resume { id } => Some(*id),
+            Action::Pause { .. } => None,
+        })
+        .collect()
 }
 
 // --- The foundation contract -----------------------------------------------
@@ -244,6 +297,7 @@ fn an_override_replaces_the_global_rules_wholesale() {
             ..Default::default()
         },
         overrides,
+        queue: QueueLimits::default(),
     };
 
     let out = evaluate(
@@ -270,6 +324,7 @@ fn torrents_without_an_override_use_the_global_rules() {
             ..Default::default()
         },
         overrides,
+        queue: QueueLimits::default(),
     };
 
     let out = evaluate(
@@ -693,5 +748,312 @@ async fn keep_seeding_clears_the_stop_as_well_as_the_limit() {
         out.actions.is_empty(),
         "it must not be stopped straight back again, got {:?}",
         out.actions
+    );
+}
+
+// --- Queue management (#56) -------------------------------------------------
+
+#[test]
+fn no_limit_means_no_queue() {
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(1)),
+            downloading("b", 2, Some(2)),
+            downloading("c", 3, Some(3)),
+        ]),
+        &Rules::default(),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert!(out.actions.is_empty(), "got {:?}", out.actions);
+}
+
+#[test]
+fn downloads_beyond_the_limit_are_queued_oldest_first() {
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("c", 3, Some(300)),
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+        ]),
+        &queue(Some(2), None, None),
+        &PolicyState::default(),
+        1,
+    );
+
+    // Snapshot order is deliberately shuffled: the queue must sort by arrival,
+    // not by however the engine happened to hand them over.
+    assert_eq!(
+        paused(&out),
+        vec![3],
+        "the newest should be the one to wait"
+    );
+    assert_eq!(
+        out.state.paused_reason("c"),
+        Some(PauseReason::Queued),
+        "and it should say why"
+    );
+}
+
+#[test]
+fn seeds_and_downloads_have_separate_limits() {
+    // Two of each, one slot each. Neither kind should eat the other's slot.
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+            seed("c", 3, Some(300)),
+            seed("d", 4, Some(400)),
+        ]),
+        &queue(Some(1), Some(1), None),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert_eq!(paused(&out), vec![2, 4]);
+}
+
+#[test]
+fn the_total_limit_caps_both_kinds_together() {
+    // Generous per-kind limits, but only two slots overall.
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            seed("b", 2, Some(200)),
+            downloading("c", 3, Some(300)),
+        ]),
+        &queue(Some(9), Some(9), Some(2)),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert_eq!(paused(&out), vec![3]);
+}
+
+#[test]
+fn a_torrent_the_user_paused_is_never_admitted() {
+    // Rule 1. The slot is free and this torrent is the oldest, and it still
+    // must not be started -- the user's pause outranks the queue.
+    let mut user_paused = downloading("a", 1, Some(100));
+    user_paused.state = TorrentState::Paused;
+
+    let out = evaluate(
+        &snapshot(vec![user_paused, downloading("b", 2, Some(200))]),
+        &queue(Some(5), None, None),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert!(resumed(&out).is_empty(), "got {:?}", out.actions);
+}
+
+#[test]
+fn the_queue_does_not_start_a_torrent_a_limit_stopped() {
+    // Rule 2, and the interaction #56 names explicitly. The seed is over its
+    // ratio, there is a free slot, and it must stay stopped.
+    let mut rules = queue(Some(5), Some(5), None);
+    rules.global.seed_ratio_limit = Some(2.0);
+
+    let mut stopped = seeding("a", 1, 9_000, 1_000); // ratio 9.0
+    stopped.state = TorrentState::Paused;
+    let mut state = PolicyState::default();
+    state.mark_paused("a", PauseReason::RatioReached);
+
+    let out = evaluate(&snapshot(vec![stopped]), &rules, &state, 1);
+
+    assert!(resumed(&out).is_empty(), "got {:?}", out.actions);
+    assert_eq!(
+        out.state.paused_reason("a"),
+        Some(PauseReason::RatioReached),
+        "and the reason must not be overwritten with Queued"
+    );
+}
+
+#[test]
+fn a_torrent_stopped_by_a_limit_does_not_hold_a_slot() {
+    // The other half of the same interaction: a ratio-stopped torrent is not
+    // running, so it must not count against the limit and starve a torrent
+    // that could run.
+    let mut rules = queue(None, Some(1), None);
+    rules.global.seed_ratio_limit = Some(2.0);
+
+    let mut stopped = seeding("a", 1, 9_000, 1_000);
+    stopped.state = TorrentState::Paused;
+    stopped.added_at = Some(100);
+    let mut state = PolicyState::default();
+    state.mark_paused("a", PauseReason::RatioReached);
+
+    let out = evaluate(
+        &snapshot(vec![stopped, seed("b", 2, Some(200))]),
+        &rules,
+        &state,
+        1,
+    );
+
+    assert!(
+        paused(&out).is_empty(),
+        "b should keep the free slot, got {:?}",
+        out.actions
+    );
+}
+
+#[test]
+fn checking_and_errored_torrents_occupy_no_slot_and_are_left_alone() {
+    let mut checking = downloading("a", 1, Some(100));
+    checking.state = TorrentState::Checking;
+    let mut errored = downloading("b", 2, Some(200));
+    errored.state = TorrentState::Error;
+
+    let out = evaluate(
+        &snapshot(vec![checking, errored, downloading("c", 3, Some(300))]),
+        &queue(Some(1), None, None),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert!(
+        out.actions.is_empty(),
+        "neither should be touched, nor should they crowd out c: {:?}",
+        out.actions
+    );
+}
+
+#[test]
+fn a_freed_slot_starts_the_next_torrent_in_line() {
+    // b was queued; a has gone away. b should be resumed, not left waiting.
+    let mut waiting = downloading("b", 2, Some(200));
+    waiting.state = TorrentState::Paused;
+    let mut state = PolicyState::default();
+    state.mark_paused("b", PauseReason::Queued);
+
+    let out = evaluate(
+        &snapshot(vec![waiting]),
+        &queue(Some(1), None, None),
+        &state,
+        1,
+    );
+
+    assert_eq!(resumed(&out), vec![2]);
+    assert_eq!(
+        out.state.paused_reason("b"),
+        None,
+        "and it is no longer queued"
+    );
+}
+
+#[test]
+fn a_settled_queue_does_not_flap() {
+    // Once the queue has settled, every later tick must be silent. Pausing an
+    // already-queued torrent every second would flood the log and the engine.
+    let mut waiting = downloading("c", 3, Some(300));
+    waiting.state = TorrentState::Paused;
+    let mut state = PolicyState::default();
+    state.mark_paused("c", PauseReason::Queued);
+
+    let snap = snapshot(vec![
+        downloading("a", 1, Some(100)),
+        downloading("b", 2, Some(200)),
+        waiting,
+    ]);
+    let rules = queue(Some(2), None, None);
+
+    let out = evaluate(&snap, &rules, &state, 1);
+    assert!(out.actions.is_empty(), "first tick: {:?}", out.actions);
+
+    let again = evaluate(&snap, &rules, &out.state, 1);
+    assert!(again.actions.is_empty(), "second tick: {:?}", again.actions);
+}
+
+#[test]
+fn torrents_with_no_arrival_time_queue_last() {
+    // An unknown arrival time is not evidence of being early. A pre-1.2.0
+    // torrent must not jump ahead of one Flume actually recorded.
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, None),
+            downloading("b", 2, Some(999)),
+        ]),
+        &queue(Some(1), None, None),
+        &PolicyState::default(),
+        1,
+    );
+
+    assert_eq!(paused(&out), vec![1], "the one with no time should wait");
+}
+
+#[test]
+fn a_torrent_reported_as_queued_stays_queued() {
+    // The dangerous case. Once `summarize` reports `Queued`, the per-torrent
+    // pass sees a state it did not see before -- and if its `Leave` arm treats
+    // that as "running normally" it clears the reason, the queue then finds an
+    // unclaimed torrent and resumes the one it just parked. Every tick.
+    let mut waiting = downloading("c", 3, Some(300));
+    waiting.state = TorrentState::Queued;
+    let mut state = PolicyState::default();
+    state.mark_paused("c", PauseReason::Queued);
+
+    let snap = snapshot(vec![
+        downloading("a", 1, Some(100)),
+        downloading("b", 2, Some(200)),
+        waiting,
+    ]);
+    let rules = queue(Some(2), None, None);
+
+    let out = evaluate(&snap, &rules, &state, 1);
+    assert!(out.actions.is_empty(), "tick 1: {:?}", out.actions);
+    assert_eq!(
+        out.state.paused_reason("c"),
+        Some(PauseReason::Queued),
+        "the reason must survive the per-torrent pass"
+    );
+
+    let two = evaluate(&snap, &rules, &out.state, 1);
+    assert!(two.actions.is_empty(), "tick 2: {:?}", two.actions);
+    let three = evaluate(&snap, &rules, &two.state, 1);
+    assert!(three.actions.is_empty(), "tick 3: {:?}", three.actions);
+}
+
+#[test]
+fn a_queued_torrent_is_resumed_when_a_slot_frees() {
+    // Same state, but the torrents ahead of it are gone.
+    let mut waiting = downloading("c", 3, Some(300));
+    waiting.state = TorrentState::Queued;
+    let mut state = PolicyState::default();
+    state.mark_paused("c", PauseReason::Queued);
+
+    let out = evaluate(
+        &snapshot(vec![waiting]),
+        &queue(Some(2), None, None),
+        &state,
+        1,
+    );
+
+    assert_eq!(resumed(&out), vec![3]);
+    assert_eq!(out.state.paused_reason("c"), None);
+}
+
+#[test]
+fn a_queued_torrent_that_passes_its_ratio_is_restated_not_resumed() {
+    // A finished torrent waiting on a seed slot, whose ratio limit it has
+    // already exceeded. When a slot frees it must not start: the stop rule
+    // claims it first and the reason changes from Queued to RatioReached.
+    let mut waiting = seed("a", 1, Some(100));
+    waiting.state = TorrentState::Queued;
+    waiting.uploaded_bytes = 9_000;
+    waiting.progress_bytes = 1_000;
+    let mut state = PolicyState::default();
+    state.mark_paused("a", PauseReason::Queued);
+
+    let mut rules = queue(None, Some(5), None);
+    rules.global.seed_ratio_limit = Some(2.0);
+
+    let out = evaluate(&snapshot(vec![waiting]), &rules, &state, 1);
+
+    assert!(resumed(&out).is_empty(), "got {:?}", out.actions);
+    assert_eq!(
+        out.state.paused_reason("a"),
+        Some(PauseReason::RatioReached),
+        "the stop rule should take it over from the queue"
     );
 }

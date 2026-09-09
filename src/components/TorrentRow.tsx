@@ -21,6 +21,9 @@ const STATE_ICON: Record<TorrentState, IconName> = {
   downloading: "arrow-down",
   seeding: "arrow-up",
   paused: "pause",
+  // A clock, not a second pause glyph. The whole point of the state is that
+  // nobody has to come back and start it.
+  queued: "clock",
   checking: "check",
   error: "alert-circle",
 };
@@ -30,6 +33,7 @@ const STATE_TONE: Record<TorrentState, string> = {
   downloading: "text-acc",
   seeding: "text-ok",
   paused: "text-fg-3",
+  queued: "text-fg-3",
   checking: "text-warn",
   error: "text-err",
 };
@@ -40,6 +44,7 @@ const FILL_BY_STATE: Record<TorrentState, string> = {
   downloading: "bg-acc",
   seeding: "bg-ok",
   paused: "bg-fg-3",
+  queued: "bg-fg-3",
   error: "bg-err",
 };
 
@@ -48,6 +53,7 @@ const STATE_LABEL: Record<TorrentState, string> = {
   downloading: "Downloading",
   seeding: "Seeding",
   paused: "Paused",
+  queued: "Queued, waiting for a slot",
   checking: "Checking",
   error: "Error",
 };
