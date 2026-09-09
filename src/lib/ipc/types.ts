@@ -63,6 +63,17 @@ export type TorrentState =
   "checking" | "downloading" | "seeding" | "paused" | "error";
 
 /**
+ * Why a torrent is stopped, when something other than the user stopped it.
+ * Mirrors Rust `PauseReason`.
+ *
+ * `null` covers both "not stopped" and "the user stopped it" — which
+ * {@link TorrentState} tells apart. The distinction is the point: a bare
+ * "paused" is indistinguishable from a failure, and a torrent Flume stopped on
+ * the user's behalf has to say so or it reads as something broken.
+ */
+export type PauseReason = "ratioReached" | "seedTimeReached" | "queued";
+
+/**
  * A verdict on whether a torrent will actually finish. Mirrors Rust
  * `SwarmHealth`.
  *
@@ -137,6 +148,13 @@ export interface TorrentSummary {
    * torrent hands its number to the next one added.
    */
   addedAt: number | null;
+  /**
+   * Why Flume stopped this torrent, when Flume rather than the user did.
+   *
+   * `null` when it is running, or when the user paused it themselves. Set by
+   * the backend from the policy bookkeeping — the engine does not decide it.
+   */
+  pauseReason: PauseReason | null;
   /** Failure message when {@link TorrentSummary.state} is `"error"`. */
   error: string | null;
   /** Absolute directory the files are written to. */
@@ -443,14 +461,6 @@ export interface TorrentDetail {
    */
   note: Note;
 }
-
-/**
- * Why the policy engine stopped a torrent. Mirrors Rust `PauseReason`.
- *
- * Recorded so a stopped torrent can be explained, rather than showing a bare
- * "paused" indistinguishable from a failure or a user action.
- */
-export type PauseReason = "ratioReached" | "seedTimeReached" | "queued";
 
 /** Limits that can be set globally or per torrent. Mirrors Rust `TorrentRules`. */
 export interface TorrentRules {

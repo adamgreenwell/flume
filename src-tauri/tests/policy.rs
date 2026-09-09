@@ -11,11 +11,11 @@ use std::collections::HashMap;
 
 use flume_lib::{
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, SwarmHealth, TelemetrySnapshot, TorrentState,
-        TorrentSummary,
+        CoreStatus, DhtStatus, EngineHealth, PauseReason, SwarmHealth, TelemetrySnapshot,
+        TorrentState, TorrentSummary,
     },
     library::Library,
-    policy::{Action, PauseReason, PolicyState, Rules, TorrentRules, evaluate},
+    policy::{Action, PolicyState, Rules, TorrentRules, evaluate},
     settings::Settings,
     state::AppState,
 };
@@ -53,6 +53,7 @@ fn seeding(hash: &str, id: usize, uploaded: u64, downloaded: u64) -> TorrentSumm
         // never the swarm verdict or the rendered detail line.
         health: SwarmHealth::Unknown,
         detail: String::new(),
+        pause_reason: None,
         eta_seconds: None,
         finished: true,
         added_at: None,
@@ -512,5 +513,39 @@ async fn a_flush_with_nothing_accumulated_writes_no_file() {
     assert!(
         !tmp.path().join("library.json").exists(),
         "an empty flush should not have written anything"
+    );
+}
+
+#[test]
+fn a_manual_resume_currently_defeats_the_limit_until_the_record_clears() {
+    // Characterisation, not endorsement. A user who resumes a torrent policy
+    // stopped gets to keep seeding past the limit: `should_stop` still says
+    // stop, but the reason already on record makes `evaluate` treat it as
+    // handled and issue nothing.
+    //
+    // That is defensible as an override -- the user asked for it -- but it is
+    // implicit rather than designed, and the stale record means the torrent
+    // can never be stopped by that rule again. #55's "keep seeding" action is
+    // where this gets decided properly: clearing the limit for the torrent
+    // says the same thing deliberately, and leaves no stale bookkeeping.
+    //
+    // Pinned here so that decision is a visible change rather than a silent
+    // one. The row stays honest either way -- a seeding torrent describes
+    // itself as seeding, per `a_pause_reason_only_speaks_for_a_paused_torrent`.
+    let resumed = seeding("a", 1, 5_000, 1_000); // ratio 5.0, running again
+    let mut state = PolicyState::default();
+    state.mark_paused("a", PauseReason::RatioReached);
+
+    let out = evaluate(&snapshot(vec![resumed]), &ratio_limit(2.0), &state, 1);
+
+    assert!(
+        out.actions.is_empty(),
+        "today policy does not re-stop it, got {:?}",
+        out.actions
+    );
+    assert_eq!(
+        out.state.paused_reason("a"),
+        Some(PauseReason::RatioReached),
+        "and the record stays set, which is the part that needs deciding"
     );
 }

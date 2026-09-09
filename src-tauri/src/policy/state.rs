@@ -4,20 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Why policy stopped a torrent.
-///
-/// Recorded so the UI can explain a stopped torrent rather than showing a bare
-/// "paused" that looks indistinguishable from a failure or a user action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PauseReason {
-    /// Reached its seed ratio limit.
-    RatioReached,
-    /// Reached its seed time limit.
-    SeedTimeReached,
-    /// Waiting for a slot under the active-torrent limits.
-    Queued,
-}
+use crate::engine::PauseReason;
 
 /// State carried between policy evaluations.
 ///
@@ -73,6 +60,16 @@ impl PolicyState {
     /// Why policy stopped this torrent, if it did.
     pub fn paused_reason(&self, info_hash: &str) -> Option<PauseReason> {
         self.paused.get(info_hash).copied()
+    }
+
+    /// Every torrent policy stopped, and why.
+    ///
+    /// Handed to the engine so a stopped torrent can say what stopped it. The
+    /// engine never asks for this -- it is passed in, like arrival times --
+    /// which is what keeps `engine` free of any dependency on `policy`.
+    #[must_use]
+    pub fn pause_reasons(&self) -> &HashMap<String, PauseReason> {
+        &self.paused
     }
 
     /// Adds to a torrent's accumulated seeding time.

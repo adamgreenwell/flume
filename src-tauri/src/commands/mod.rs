@@ -152,7 +152,7 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = require_engine(&state).await?;
-    Ok(engine.telemetry_with(&state.added_times().await))
+    Ok(engine.telemetry_with(&state.added_times().await, &state.pause_reasons().await))
 }
 
 impl From<SettingsError> for CommandError {
@@ -566,7 +566,10 @@ pub async fn get_torrent_detail(
     id: usize,
 ) -> Result<TorrentDetail, CommandError> {
     let engine = require_engine(&state).await?;
-    Ok(engine.torrent_detail(id)?)
+    // The whole map rather than one reason: policy keys its bookkeeping on the
+    // info hash, and the engine is the only side holding the id-to-hash
+    // mapping. Passing the map lets it do the lookup with what it already has.
+    Ok(engine.torrent_detail(id, &state.pause_reasons().await)?)
 }
 
 /// Builds a redacted diagnostics bundle for the user to paste into an issue.
