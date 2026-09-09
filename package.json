@@ -58,7 +58,7 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^8.2.2",
-    "vitest": "4.1.11"
+    "vitest": "5.0.0"
   },
   "description": "A beautiful, cross-platform BitTorrent client.",
   "license": "Apache-2.0",
