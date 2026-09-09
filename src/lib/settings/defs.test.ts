@@ -12,10 +12,8 @@ const SETTINGS: Settings = {
   downloadLimitBps: null,
   uploadLimitBps: 2_000_000,
   proxyUrl: null,
-  policyRules: {
-    global: { seedRatioLimit: null, seedTimeLimitSecs: null },
-    overrides: {},
-  },
+  seedRatioLimit: 2,
+  seedTimeLimitSecs: 86_400,
   theme: "system",
   density: "comfortable",
   rail: "expanded",
@@ -24,29 +22,12 @@ const SETTINGS: Settings = {
   usageReporting: null,
 };
 
-// Fields the definition table deliberately does not cover.
-//
-// Kept as an explicit list rather than a looser assertion, because the
-// guarantee below is worth keeping sharp: every other field of `Settings` is
-// a scalar with exactly one row on the settings screen, and a field that
-// quietly has none is a setting the user cannot reach.
-const UNREACHABLE_BY_DESIGN = new Set<keyof Settings>([
-  // `{ global, overrides }`, and `overrides` is keyed by info hash -- there
-  // is no single global row that could represent it. The rules that earn it
-  // rows are seed ratio and seed time (#55) and queue limits (#56); this
-  // commit ships the framework with no user-facing rule, deliberately.
-  // Whichever lands first gives the two limits their own definitions and
-  // removes this entry.
-  "policyRules",
-]);
-
 describe("the definition table", () => {
   it("covers every field of Settings", () => {
     // The screen is generated from this table, so a field missing here is a
     // setting the user simply cannot reach — and nothing else would notice.
     const defined = new Set(SETTING_DEFS.map((d) => d.id));
     for (const key of Object.keys(SETTINGS) as (keyof Settings)[]) {
-      if (UNREACHABLE_BY_DESIGN.has(key)) continue;
       expect(defined.has(key), `${key} has no definition`).toBe(true);
     }
   });
@@ -193,6 +174,8 @@ describe("searchSettings", () => {
     expect(found.map((d) => d.id)).toEqual([
       "downloadLimitBps",
       "uploadLimitBps",
+      "seedRatioLimit",
+      "seedTimeLimitSecs",
     ]);
   });
 });

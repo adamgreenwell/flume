@@ -39,6 +39,8 @@
         "ui.theme",
         "ui.density",
         "ui.rail",
+        "seeding.ratioLimit",
+        "seeding.timeLimit",
         "privacy.usage"
       ]
     },

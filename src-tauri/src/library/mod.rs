@@ -52,6 +52,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::policy::TorrentRules;
+
 pub use session_file::{persisted_info_hashes, persisted_without_sidecar};
 
 /// Filename inside the app-data directory.
@@ -62,7 +64,9 @@ const LIBRARY_FILE: &str = "library.json";
 /// Every field is optional and additive on purpose: a record created by
 /// reconciliation knows only that the torrent exists, and a record written by
 /// an older build must survive a newer one reading it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` is deliberately absent, for the same reason `Settings` drops it:
+// `rules` carries a seed-ratio `f64`, and floats are not `Eq` because of NaN.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Record {
     /// When Flume first added this torrent, in whole seconds since the epoch.
@@ -85,6 +89,20 @@ pub struct Record {
     /// distinction is not worth preserving: a torrent that has never seeded
     /// and one added before this field existed both have nothing to report.
     pub seed_seconds: Option<u64>,
+    /// Seed limits that replace the global ones for this torrent.
+    ///
+    /// `None` means no override and the global rules apply. `Some` replaces
+    /// them **wholesale** rather than merging field by field -- so
+    /// `Some(TorrentRules::default())` is how "seed this one forever" is
+    /// expressed, and is what the keep-seeding action writes. Merging would
+    /// make that impossible to say, because an unset field would inherit the
+    /// global limit right back.
+    ///
+    /// Here rather than in `settings` because it is keyed by info hash and has
+    /// to disappear with the torrent. Nothing prunes a map in `settings.json`,
+    /// so overrides kept there would accumulate the info hash of every torrent
+    /// the user ever set a limit on, for as long as the install lives.
+    pub rules: Option<TorrentRules>,
 }
 
 /// What [`Library::note_added`] did.
@@ -364,6 +382,38 @@ impl Library {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Every per-torrent seed-limit override, keyed by info hash.
+    ///
+    /// Torrents without an override are omitted, so the map the policy engine
+    /// receives contains only real overrides and its `for_torrent` falls back
+    /// to the global rules for everything else.
+    #[must_use]
+    pub fn torrent_rules(&self) -> HashMap<String, TorrentRules> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| record.rules.clone().map(|r| (hash.clone(), r)))
+            .collect()
+    }
+
+    /// Sets or clears one torrent's seed-limit override.
+    ///
+    /// `None` removes the override and returns the torrent to the global
+    /// rules. Returns whether anything changed, so the caller can skip a write.
+    pub fn set_torrent_rules(&mut self, info_hash: &str, rules: Option<TorrentRules>) -> bool {
+        if !self.healthy {
+            return false;
+        }
+        let record = self
+            .records
+            .entry(info_hash.to_ascii_lowercase())
+            .or_default();
+        if record.rules == rules {
+            return false;
+        }
+        record.rules = rules;
+        true
     }
 
     /// Stores accumulated seeding times, replacing what each record held.

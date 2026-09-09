@@ -470,19 +470,18 @@ export interface TorrentRules {
   seedTimeLimitSecs: number | null;
 }
 
-/**
- * Policy rules, global plus per-torrent overrides. Mirrors Rust `Rules`.
+/*
+ * Rust's `Rules` — global plus per-torrent overrides — has no mirror here on
+ * purpose. It never crosses IPC: it is assembled in `AppState::policy_rules`
+ * from the two globals below and the per-torrent overrides on the library
+ * record, because those have to be pruned when a torrent is removed and
+ * nothing prunes a map in settings.json.
  *
- * An override replaces the global rules wholesale rather than merging field by
- * field — otherwise "unlimited for this one torrent" is impossible to express,
- * because an unset field would inherit the global value.
+ * The wholesale-replacement rule still holds and still matters: an override
+ * replaces the global limits entirely rather than merging field by field,
+ * which is what makes `{}` mean "seed this one forever" instead of inheriting
+ * the global limit right back. That is what the keep-seeding action writes.
  */
-export interface Rules {
-  /** Applied to any torrent without an override. */
-  global: TorrentRules;
-  /** Per-torrent rules, keyed by info hash. */
-  overrides: Record<string, TorrentRules>;
-}
 
 /** UI colour scheme preference. Mirrors Rust `Theme`. */
 export type Theme = "system" | "light" | "dark";
@@ -695,12 +694,23 @@ export interface Settings {
    */
   proxyUrl: string | null;
   /**
-   * Rules the policy engine applies.
+   * Stop seeding once uploaded ÷ downloaded reaches this; `null` is no limit.
    *
-   * Evaluated on every telemetry tick, so changes take effect within a second
-   * and need no session restart.
+   * The global default. A torrent can override it, but that override lives on
+   * the library record rather than here.
+   *
+   * Evaluated on every telemetry tick, so a change takes effect within a
+   * second and needs no session restart.
    */
-  policyRules: Rules;
+  seedRatioLimit: number | null;
+  /**
+   * Stop seeding after this many seconds of actual seeding; `null` is no
+   * limit.
+   *
+   * Counts time spent seeding, not time since the torrent was added, and
+   * survives restarts — so this means the same thing across a quit.
+   */
+  seedTimeLimitSecs: number | null;
   /** UI colour scheme. */
   theme: Theme;
   /**

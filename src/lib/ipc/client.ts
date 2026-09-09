@@ -19,6 +19,7 @@ import type {
   TorrentFileState,
   TelemetrySnapshot,
   TorrentPreview,
+  TorrentRules,
   TorrentSource,
 } from "./types";
 
@@ -128,6 +129,37 @@ export async function removeTorrent(
  */
 export async function setOnlyFiles(id: number, files: number[]): Promise<void> {
   return invoke<void>("set_only_files", { id, files });
+}
+
+/**
+ * Sets or clears one torrent's seed-limit override.
+ *
+ * @param infoHash - The torrent's info hash. Session ids are recycled, so the
+ *   hash is what a rule that outlives a restart has to be keyed on.
+ * @param rules - The override, or `null` to return the torrent to the global
+ *   limits. An override replaces those limits wholesale, so `{ seedRatioLimit:
+ *   null, seedTimeLimitSecs: null }` means "seed this one forever" rather than
+ *   inheriting the global limit back.
+ */
+export async function setTorrentRules(
+  infoHash: string,
+  rules: TorrentRules | null,
+): Promise<void> {
+  return invoke<void>("set_torrent_rules", { infoHash, rules });
+}
+
+/**
+ * Keeps a torrent seeding past the limit that stopped it.
+ *
+ * Records "no limit for this torrent" and clears the stop, then resumes.
+ * Resuming alone would leave the limit in force and the reason on record — the
+ * torrent would run, but the row would still claim a limit had stopped it.
+ *
+ * @param id - Session id from the telemetry stream.
+ * @param infoHash - The torrent's info hash, which the override is keyed on.
+ */
+export async function keepSeeding(id: number, infoHash: string): Promise<void> {
+  return invoke<void>("keep_seeding", { id, infoHash });
 }
 
 /**

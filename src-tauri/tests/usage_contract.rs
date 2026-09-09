@@ -77,6 +77,8 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::UiTheme,
         SettingKey::UiDensity,
         SettingKey::UiRail,
+        SettingKey::SeedingRatioLimit,
+        SettingKey::SeedingTimeLimit,
         SettingKey::PrivacyUsage,
     ] {
         events.push(EventKind::SettingChanged { key });

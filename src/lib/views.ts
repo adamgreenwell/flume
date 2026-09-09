@@ -95,3 +95,18 @@ export function viewCounts(
   }
   return counts;
 }
+
+/**
+ * Whether a limit the user can lift is what stopped this torrent.
+ *
+ * Shared so the expanded panel and the context menu cannot disagree about
+ * when to offer "Keep seeding". A queued torrent is deliberately excluded: it
+ * starts on its own when a slot opens, so offering to fix it would be offering
+ * to fix something that is not broken.
+ */
+export function stoppedByALimit(torrent: TorrentSummary): boolean {
+  return (
+    torrent.pauseReason === "ratioReached" ||
+    torrent.pauseReason === "seedTimeReached"
+  );
+}
