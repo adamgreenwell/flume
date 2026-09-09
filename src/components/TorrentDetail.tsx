@@ -16,6 +16,7 @@ import { Button } from "./Button";
 import { Chip } from "./Chip";
 import { FragmentStrip } from "./FragmentStrip";
 import { NoteCard } from "./NoteCard";
+import { SeedLimitsPanel } from "./SeedLimitsPanel";
 import { PeerList } from "./PeerList";
 import { BottleneckPanel } from "./BottleneckPanel";
 import { PieceStrip } from "./PieceStrip";
@@ -334,6 +335,8 @@ export function TorrentDetail({
                     </div>
                   </dl>
                 </section>
+
+                <SeedLimitsPanel infoHash={torrent.infoHash} />
               </aside>
             </>
           ) : null}

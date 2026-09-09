@@ -14,6 +14,7 @@ import type {
   GuardStatus,
   Hop,
   ImportOutcome,
+  SeedLimits,
   Settings,
   TorrentDetail,
   TorrentFileState,
@@ -129,6 +130,15 @@ export async function removeTorrent(
  */
 export async function setOnlyFiles(id: number, files: number[]): Promise<void> {
   return invoke<void>("set_only_files", { id, files });
+}
+
+/**
+ * Reads one torrent's seed limits, and the globals behind them.
+ *
+ * @param infoHash - The torrent's info hash.
+ */
+export async function getSeedLimits(infoHash: string): Promise<SeedLimits> {
+  return invoke<SeedLimits>("get_seed_limits", { infoHash });
 }
 
 /**

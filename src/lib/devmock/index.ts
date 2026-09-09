@@ -28,6 +28,7 @@ import type {
   TorrentDetail,
   TorrentFileState,
   TorrentPreview,
+  TorrentRules,
   TorrentSummary,
 } from "@/lib/ipc/types";
 
@@ -61,6 +62,28 @@ const CORE: CoreStatus = {
  * `detail` and `health` are normally derived in Rust. The strings here are
  * what that derivation produces for the same inputs.
  */
+/** Note titles per pause reason, mirroring `engine::note::describe`. */
+const PAUSE_TITLES: Record<string, string> = {
+  user: "Paused, nothing lost",
+  ratioReached: "Stopped at your seed ratio limit",
+  seedTimeReached: "Stopped at your seed time limit",
+  queued: "Waiting for a slot",
+};
+
+/** Note bodies per pause reason, mirroring `engine::note::describe`. */
+const PAUSE_BODIES: Record<string, string> = {
+  user: "Your data is verified on disk. Resuming reconnects to the swarm and picks up from there — nothing is downloaded twice.",
+  ratioReached:
+    "You have uploaded more than your limit allows against what you downloaded. Your data is verified on disk and nothing has been deleted. Raising the limit or clearing it for this torrent starts it seeding again.",
+  seedTimeReached:
+    "This torrent has served its time seeding. Your data is verified on disk and nothing has been deleted. Raising the limit or clearing it for this torrent starts it seeding again.",
+  queued:
+    "Your active-torrent limit is already met, so this one is queued rather than stopped. Your data is verified on disk, and it starts on its own as soon as a slot opens.",
+};
+
+/** Per-torrent seed-limit overrides the mock remembers, keyed by info hash. */
+const OVERRIDES = new Map<string, TorrentRules>();
+
 const TORRENTS: TorrentSummary[] = [
   {
     id: 1,
@@ -439,7 +462,12 @@ function detailFor(id: number): TorrentDetail {
           : torrent.health === "none"
             ? "Nobody reachable has the rest of this"
             : torrent.state === "paused"
-              ? "Paused, nothing lost"
+              ? // The real note branches on the pause reason -- see
+                // `engine::note::describe`. Without the same branch here the
+                // mock contradicts itself: the header says a limit stopped
+                // this torrent and the note says "Paused, nothing lost",
+                // which is the exact confusion #169 removed.
+                PAUSE_TITLES[torrent.pauseReason ?? "user"]
               : torrent.state === "checking"
                 ? "Checking what is already on disk"
                 : torrent.state === "seeding"
@@ -451,7 +479,7 @@ function detailFor(id: number): TorrentDetail {
           : torrent.health === "none"
             ? `${torrent.knownPeers} peers are known for this torrent and none of them is answering right now. Flume keeps asking the DHT and the trackers every few minutes.`
             : torrent.state === "paused"
-              ? "Your data is verified on disk. Resuming reconnects to the swarm and picks up from there — nothing is downloaded twice."
+              ? PAUSE_BODIES[torrent.pauseReason ?? "user"]
               : torrent.state === "checking"
                 ? "Flume is re-hashing to find out what survived. Anything that verifies is kept; only pieces that fail are downloaded again."
                 : `${remaining.toLocaleString()} bytes to go at the current rate.`,
@@ -698,8 +726,34 @@ export function install(): void {
           return detailFor(
             (args as { id?: number } | undefined)?.id ?? TORRENTS[0].id,
           );
-        case "set_torrent_rules":
+        case "get_seed_limits": {
+          const hash = (args as { infoHash?: string } | undefined)?.infoHash;
+          return {
+            torrent: hash ? (OVERRIDES.get(hash) ?? null) : null,
+            global: {
+              seedRatioLimit: SETTINGS.seedRatioLimit,
+              seedTimeLimitSecs: SETTINGS.seedTimeLimitSecs,
+            },
+          };
+        }
+        case "set_torrent_rules": {
+          // Kept in the mock so the panel round-trips: switching to "just this
+          // torrent" and back has to survive reopening the inspector, or the
+          // control looks like it does nothing.
+          const a = args as { infoHash?: string; rules?: unknown } | undefined;
+          if (a?.infoHash) {
+            if (a.rules == null) OVERRIDES.delete(a.infoHash);
+            else
+              OVERRIDES.set(
+                a.infoHash,
+                a.rules as {
+                  seedRatioLimit: number | null;
+                  seedTimeLimitSecs: number | null;
+                },
+              );
+          }
           return null;
+        }
         case "keep_seeding": {
           // Mirrors the real command closely enough to be worth having: the
           // torrent starts seeding and stops claiming a limit stopped it. A

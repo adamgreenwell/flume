@@ -4,6 +4,8 @@ import type { Hop } from "@/lib/ipc/types";
 import type { Control } from "@/lib/settings/defs";
 import { formatDuration, formatSpeed } from "@/lib/format";
 
+import { RATIO_STEPS, SEED_TIME_STEPS, SteppedSlider } from "./SteppedSlider";
+
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
 
@@ -15,109 +17,6 @@ import { Icon } from "./Icon";
  * is being careful. `null` is the top of the scale rather than a checkbox
  * beside it, because "no limit" is the same decision as "a high limit".
  */
-/**
- * Seed-ratio stops, coarsening as they climb.
- *
- * Same reasoning as {@link RATE_STEPS}: the difference between 1.0 and 1.5 is
- * a real decision and the difference between 8 and 10 is not. `null` sits at
- * the top because "seed forever" is the same decision as "seed to a very high
- * ratio", not a separate mode.
- */
-const RATIO_STEPS: ReadonlyArray<number | null> = [
-  0.5,
-  1,
-  1.5,
-  2,
-  2.5,
-  3,
-  4,
-  5,
-  8,
-  10,
-  null,
-];
-
-/**
- * Seed-time stops in seconds, from an hour to a fortnight.
- *
- * Counts time spent seeding rather than time since the torrent was added, so
- * these are longer than they look: a day here is a day of actual seeding.
- */
-const SEED_TIME_STEPS: ReadonlyArray<number | null> = [
-  3_600,
-  6 * 3_600,
-  12 * 3_600,
-  86_400,
-  2 * 86_400,
-  3 * 86_400,
-  7 * 86_400,
-  14 * 86_400,
-  null,
-];
-
-/**
- * Renders a stepped slider over `steps`, with `null` meaning no limit.
- *
- * Factored out of the rate control when the seed limits arrived: three
- * sliders that snap to the nearest stop and show their value beside them,
- * differing only in the stops and how the value reads.
- */
-function SteppedSlider({
-  steps,
-  value,
-  label,
-  format,
-  onChange,
-  width,
-}: {
-  steps: ReadonlyArray<number | null>;
-  value: number | null;
-  label: string;
-  format: (value: number) => string;
-  onChange: (next: number | null) => void;
-  width: string;
-}) {
-  // Nearest step, so a value set from outside this slider still lands
-  // somewhere sensible on it rather than snapping to the start.
-  let index = steps.length - 1;
-  if (value !== null) {
-    let best = Number.POSITIVE_INFINITY;
-    steps.forEach((step, i) => {
-      if (step === null) return;
-      const distance = Math.abs(step - value);
-      if (distance < best) {
-        best = distance;
-        index = i;
-      }
-    });
-  }
-
-  const text = value === null ? "No limit" : format(value);
-
-  return (
-    <div className="flex items-center gap-2.5">
-      <input
-        type="range"
-        min={0}
-        max={steps.length - 1}
-        step={1}
-        value={index}
-        aria-label={label}
-        aria-valuetext={text}
-        onChange={(event) =>
-          onChange(steps[Number(event.target.value)] ?? null)
-        }
-        className="accent-acc w-[150px]"
-      />
-      <span
-        className={`flume-num text-fg-0 ${width} shrink-0 text-right text-[11.5px]`}
-      >
-        {text}
-      </span>
-    </div>
-  );
-}
-
 const RATE_STEPS: ReadonlyArray<number | null> = [
   250_000,
   500_000,

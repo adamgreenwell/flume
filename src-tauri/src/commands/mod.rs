@@ -573,6 +573,48 @@ pub async fn get_torrent_detail(
     Ok(engine.torrent_detail(id, &state.pause_reasons().await)?)
 }
 
+/// One torrent's seed limits, and the globals they would otherwise follow.
+///
+/// Returned together because the UI cannot describe either alone: "follows
+/// your global limits" is only meaningful beside what those limits are, and an
+/// override is only meaningful as a departure from them.
+///
+/// Not part of [`TorrentDetail`], deliberately. That type is built by
+/// `engine`, and `policy` imports `engine` — so a field of it typed on
+/// `TorrentRules` would invert that dependency. Seed limits are also not an
+/// engine fact: the engine neither stores nor applies them.
+///
+/// Mirrored in `src/lib/ipc/types.ts`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeedLimits {
+    /// This torrent's override, or `None` when it follows the globals.
+    pub torrent: Option<TorrentRules>,
+    /// The global limits from settings.
+    pub global: TorrentRules,
+}
+
+/// Reads one torrent's seed limits.
+///
+/// # Errors
+///
+/// Never fails: a torrent with no record simply follows the globals, which is
+/// also the honest answer for one that has not been restored yet.
+#[tauri::command]
+pub async fn get_seed_limits(
+    state: State<'_, AppState>,
+    info_hash: String,
+) -> Result<SeedLimits, CommandError> {
+    let rules = state.policy_rules().await;
+    Ok(SeedLimits {
+        torrent: rules
+            .overrides
+            .get(&info_hash.to_ascii_lowercase())
+            .cloned(),
+        global: rules.global,
+    })
+}
+
 /// Sets or clears one torrent's seed-limit override.
 ///
 /// `rules` of `None` removes the override and returns the torrent to the
