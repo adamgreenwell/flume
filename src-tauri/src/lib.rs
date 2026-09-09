@@ -215,6 +215,12 @@ pub fn run() {
                     duration_bucket: usage::DurationBucket::of(state.uptime()),
                 });
                 tauri::async_runtime::block_on(async {
+                    // Before the network flush, not after: this is a local
+                    // write that takes microseconds, and the usage flush below
+                    // is allowed to spend seconds waiting on a socket. Seeding
+                    // time should not be the thing a slow network costs.
+                    state.persist_seed_times().await;
+
                     // The last flush gets one shot, and the timeout is
                     // shorter than the request's own on purpose: a quit that
                     // hangs on a network request is a far worse bug than a

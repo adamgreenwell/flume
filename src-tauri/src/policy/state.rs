@@ -35,6 +35,31 @@ pub struct PolicyState {
 }
 
 impl PolicyState {
+    /// Restores accumulated seeding time from persisted per-torrent records.
+    ///
+    /// Only the seeding time is restored. Pause reasons deliberately are not:
+    /// they describe a decision about a *running* session, and librqbit's
+    /// paused bit carries no reason, so a restored reason could not be
+    /// checked against anything. The first evaluation after launch re-derives
+    /// them from the rules and the snapshot, which is the only source that
+    /// can be trusted to still be true.
+    #[must_use]
+    pub fn with_seed_times(seed_seconds: HashMap<String, u64>) -> Self {
+        Self {
+            paused: HashMap::new(),
+            seed_seconds,
+        }
+    }
+
+    /// Accumulated seeding time for every torrent that has any.
+    ///
+    /// Borrowed rather than cloned: the one caller writes it straight into the
+    /// library record under a lock it already holds.
+    #[must_use]
+    pub fn seed_times(&self) -> &HashMap<String, u64> {
+        &self.seed_seconds
+    }
+
     /// Records that policy stopped a torrent for `reason`.
     pub fn mark_paused(&mut self, info_hash: &str, reason: PauseReason) {
         self.paused.insert(info_hash.to_owned(), reason);

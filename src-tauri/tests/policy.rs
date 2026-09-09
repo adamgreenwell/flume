@@ -14,7 +14,10 @@ use flume_lib::{
         CoreStatus, DhtStatus, EngineHealth, SwarmHealth, TelemetrySnapshot, TorrentState,
         TorrentSummary,
     },
+    library::Library,
     policy::{Action, PauseReason, PolicyState, Rules, TorrentRules, evaluate},
+    settings::Settings,
+    state::AppState,
 };
 
 fn core() -> CoreStatus {
@@ -69,6 +72,16 @@ fn ratio_limit(limit: f64) -> Rules {
     Rules {
         global: TorrentRules {
             seed_ratio_limit: Some(limit),
+            ..Default::default()
+        },
+        overrides: HashMap::new(),
+    }
+}
+
+fn seed_time_limit(secs: u64) -> Rules {
+    Rules {
+        global: TorrentRules {
+            seed_time_limit_secs: Some(secs),
             ..Default::default()
         },
         overrides: HashMap::new(),
@@ -305,4 +318,199 @@ fn a_torrent_with_nothing_downloaded_has_no_ratio() {
         1,
     );
     assert!(out.actions.is_empty());
+}
+
+// --- Restored seeding time (#55) -------------------------------------------
+
+#[test]
+fn a_torrent_already_past_its_limit_on_load_stops_on_the_first_evaluation() {
+    // The case #55 names: Flume quits with a torrent at 20 hours, the limit
+    // is 10, and the very first tick after launch must stop it rather than
+    // start counting again from zero.
+    let restored = PolicyState::with_seed_times(HashMap::from([("a".to_owned(), 72_000)]));
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &seed_time_limit(36_000),
+        &restored,
+        1,
+    );
+
+    assert!(
+        matches!(
+            out.actions.as_slice(),
+            [Action::Pause {
+                id: 1,
+                reason: PauseReason::SeedTimeReached
+            }]
+        ),
+        "expected one seed-time pause, got {:?}",
+        out.actions
+    );
+}
+
+#[test]
+fn restored_seeding_time_is_added_to_rather_than_replaced() {
+    // A restart must not reset the count, and must not double it either.
+    let restored = PolicyState::with_seed_times(HashMap::from([("a".to_owned(), 1_000)]));
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &Rules::default(),
+        &restored,
+        60,
+    );
+
+    assert_eq!(out.state.seed_seconds("a"), 1_060);
+}
+
+#[test]
+fn a_torrent_under_its_restored_limit_is_left_running() {
+    // The other half of the acceptance criterion: not reaching the limit has
+    // to be as reliable as reaching it.
+    let restored = PolicyState::with_seed_times(HashMap::from([("a".to_owned(), 35_999)]));
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &seed_time_limit(36_000),
+        &restored,
+        0,
+    );
+
+    assert!(
+        out.actions.is_empty(),
+        "one second short is still short, got {:?}",
+        out.actions
+    );
+}
+
+#[test]
+fn restoring_carries_seeding_time_without_carrying_pause_reasons() {
+    // Only seeding time is persisted. A restored pause reason could not be
+    // checked against anything -- librqbit's paused bit carries no reason --
+    // so the first evaluation re-derives it from the rules and the snapshot.
+    let restored = PolicyState::with_seed_times(HashMap::from([("a".to_owned(), 500)]));
+
+    assert_eq!(restored.seed_seconds("a"), 500);
+    assert_eq!(restored.paused_reason("a"), None);
+}
+
+#[test]
+fn restored_time_for_a_torrent_that_is_gone_is_dropped() {
+    // `retain` runs against the snapshot, so a torrent removed while Flume
+    // was closed does not keep its bookkeeping alive for ever.
+    let restored = PolicyState::with_seed_times(HashMap::from([
+        ("a".to_owned(), 500),
+        ("gone".to_owned(), 900),
+    ]));
+
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &Rules::default(),
+        &restored,
+        0,
+    );
+
+    assert_eq!(
+        out.state.seed_seconds("a"),
+        500,
+        "the survivor keeps its time"
+    );
+    assert_eq!(
+        out.state.seed_seconds("gone"),
+        0,
+        "the absent one is dropped"
+    );
+}
+
+#[test]
+fn what_evaluate_returns_is_what_gets_persisted() {
+    // The flush writes `PolicyState::seed_times()` straight into the library
+    // record, so that map has to be the same figure the rules read.
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &Rules::default(),
+        &PolicyState::default(),
+        90,
+    );
+
+    assert_eq!(out.state.seed_times().get("a"), Some(&90));
+    assert_eq!(out.state.seed_seconds("a"), 90);
+}
+
+// --- The wiring, end to end -------------------------------------------------
+//
+// The tests above prove `evaluate` handles restored time and the library
+// tests prove the record round-trips. Neither notices if the two are never
+// connected, which is the whole feature.
+
+#[tokio::test]
+async fn app_state_restores_seeding_time_from_the_library_on_construction() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let mut library = Library::default();
+    library.record_seed_times(&HashMap::from([("a".to_owned(), 4_242)]));
+    library.save(tmp.path()).expect("save");
+
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    assert_eq!(
+        state.policy_state().await.seed_seconds("a"),
+        4_242,
+        "a limit in hours means nothing if the count restarts at launch"
+    );
+}
+
+#[tokio::test]
+async fn a_flush_writes_seeding_time_back_to_the_library() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+    state
+        .set_policy_state(PolicyState::with_seed_times(HashMap::from([(
+            "a".to_owned(),
+            900,
+        )])))
+        .await;
+
+    state.persist_seed_times().await;
+
+    let (reloaded, problem) = Library::load(tmp.path());
+    assert!(problem.is_none());
+    assert_eq!(reloaded.seed_times().get("a"), Some(&900));
+}
+
+#[tokio::test]
+async fn seeding_time_survives_a_full_quit_and_relaunch() {
+    // The acceptance criterion, exercised through the same calls the app
+    // makes: accumulate, flush on exit, construct again.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().to_path_buf();
+
+    let first = AppState::new(Settings::default(), dir.clone(), false);
+    let out = evaluate(
+        &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+        &Rules::default(),
+        &first.policy_state().await,
+        3_600,
+    );
+    first.set_policy_state(out.state).await;
+    first.persist_seed_times().await;
+
+    let second = AppState::new(Settings::default(), dir, false);
+
+    assert_eq!(second.policy_state().await.seed_seconds("a"), 3_600);
+}
+
+#[tokio::test]
+async fn a_flush_with_nothing_accumulated_writes_no_file() {
+    // Once a minute forever, so the quiet case has to stay quiet -- and a
+    // library file that never existed must not be created by a flush.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    state.persist_seed_times().await;
+
+    assert!(
+        !tmp.path().join("library.json").exists(),
+        "an empty flush should not have written anything"
+    );
 }
