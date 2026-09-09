@@ -38,7 +38,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@storybook/addon-a11y": "^10.5.10",
+    "@storybook/addon-a11y": "^10.6.0",
     "@storybook/addon-docs": "^10.6.0",
     "@storybook/nextjs-vite": "^10.5.10",
     "@tailwindcss/postcss": "^4",
