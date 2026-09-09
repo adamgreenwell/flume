@@ -111,10 +111,16 @@ impl AppState {
             held: settings.egress_guard == EgressGuard::Hold,
             resumes_in_seconds: None,
         };
+        // Seeding time is restored before any engine exists, so the first
+        // policy evaluation already knows how long each torrent has seeded.
+        // Without this a seed-time limit would restart its count on every
+        // launch and never fire for anyone who quits Flume daily.
+        let policy_state = PolicyState::with_seed_times(library.seed_times());
+
         Self {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
-            policy_state: RwLock::default(),
+            policy_state: RwLock::new(policy_state),
             session_dir,
             first_run,
             usage,
@@ -417,6 +423,32 @@ impl AppState {
     pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
         let library = self.library.read().await;
         library.added_times()
+    }
+
+    /// Writes accumulated seeding time into the library record.
+    ///
+    /// Called on a slow cadence and once more on exit, never per tick: the
+    /// figure changes every second for every seeding torrent, and the record
+    /// is written atomically -- a temp file and a rename -- so a write per
+    /// tick would be constant disk churn for a background app.
+    ///
+    /// The cost of the cadence is bounded and small: a crash loses at most the
+    /// seconds since the last flush, which understates seeding time rather
+    /// than overstating it. Erring that way means a limit fires slightly late
+    /// rather than stopping a torrent that has not yet earned it.
+    pub async fn persist_seed_times(&self) {
+        let times = self.policy_state.read().await.seed_times().clone();
+        if times.is_empty() {
+            return;
+        }
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.record_seed_times(&times) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
     }
 
     /// Shuts the engine down if one is running, and clears it.

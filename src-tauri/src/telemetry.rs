@@ -28,6 +28,18 @@ pub const TELEMETRY_EVENT: &str = "flume://telemetry";
 /// that the webview is not re-rendering constantly while seeding.
 pub const TELEMETRY_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Telemetry ticks between flushes of accumulated seeding time to disk.
+///
+/// Seeding time advances every tick for every seeding torrent, but the library
+/// record is written atomically, so persisting per tick would mean a temp file
+/// and a rename every second for as long as anything seeds. A minute bounds
+/// the loss from a crash to under a minute of seeding time per torrent, which
+/// makes a limit fire fractionally late rather than early -- the safe
+/// direction, since firing early stops a torrent that has not earned it.
+///
+/// Exit flushes as well, so an ordinary quit loses nothing at all.
+const SEED_TIME_FLUSH_TICKS: u32 = 60;
+
 /// Spawns the telemetry loop, which runs until the app exits.
 ///
 /// Ticks are skipped silently while the engine is still starting: the UI shows
@@ -46,6 +58,10 @@ pub fn spawn(app: AppHandle) {
         // must seed this set rather than trigger a burst of notifications for
         // downloads the user completed days ago.
         let mut seeded = false;
+        // Counts up to SEED_TIME_FLUSH_TICKS. Ticks skipped while the engine
+        // is down do not advance it, which is correct: nothing is seeding
+        // then, so there is nothing new to write.
+        let mut since_flush: u32 = 0;
 
         loop {
             ticker.tick().await;
@@ -89,6 +105,12 @@ pub fn spawn(app: AppHandle) {
                 }
 
                 state.set_policy_state(outcome.state).await;
+            }
+
+            since_flush += 1;
+            if since_flush >= SEED_TIME_FLUSH_TICKS {
+                since_flush = 0;
+                state.persist_seed_times().await;
             }
 
             let finished = snapshot

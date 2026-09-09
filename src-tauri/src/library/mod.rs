@@ -74,6 +74,17 @@ pub struct Record {
     /// the same data. A backfill would invent a different fictional order every
     /// time.
     pub added_at: Option<u64>,
+    /// Seconds this torrent has spent seeding, accumulated across runs.
+    ///
+    /// Belongs here rather than in `settings` -- where #54 assumed it would
+    /// go -- because it is per-torrent knowledge keyed by info hash and
+    /// reconciled every launch, which is exactly what this record already is.
+    /// Settings are values a user types; this is a measurement Flume takes.
+    ///
+    /// `None` and `Some(0)` mean the same thing to every reader, and the
+    /// distinction is not worth preserving: a torrent that has never seeded
+    /// and one added before this field existed both have nothing to report.
+    pub seed_seconds: Option<u64>,
 }
 
 /// What [`Library::note_added`] did.
@@ -339,6 +350,52 @@ impl Library {
             .collect()
     }
 
+    /// Every accumulated seeding time, keyed by info hash.
+    ///
+    /// Zero is omitted along with absent, for the same reason `added_times`
+    /// omits `None`: the caller is building a lookup in which a missing key
+    /// and a zero mean the same thing.
+    #[must_use]
+    pub fn seed_times(&self) -> HashMap<String, u64> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| match record.seed_seconds {
+                Some(secs) if secs > 0 => Some((hash.clone(), secs)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Stores accumulated seeding times, replacing what each record held.
+    ///
+    /// An upsert rather than insert-if-absent, which is the opposite of
+    /// [`Self::note_added`] and right for the opposite reason: an arrival time
+    /// is a fact established once, while seeding time is a running total whose
+    /// newest value is always the correct one.
+    ///
+    /// Only touches torrents named in `times`. A record absent from the map is
+    /// left alone rather than zeroed, so a flush taken while nothing is
+    /// running cannot erase the history of every torrent that is not.
+    ///
+    /// Suppressed when the record did not load cleanly, like every other write
+    /// here -- see [`Self::load`].
+    ///
+    /// Returns whether anything changed, so the caller can skip a write.
+    pub fn record_seed_times(&mut self, times: &HashMap<String, u64>) -> bool {
+        if !self.healthy {
+            return false;
+        }
+        let mut changed = false;
+        for (hash, &secs) in times {
+            let record = self.records.entry(hash.to_ascii_lowercase()).or_default();
+            if record.seed_seconds != Some(secs) {
+                record.seed_seconds = Some(secs);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Drops a record, for the one caller that knows a torrent was removed.
     ///
     /// The only deletion path. It exists because a *removal* is knowledge,
@@ -461,6 +518,98 @@ mod tests {
             reloaded.get(A).and_then(|r| r.added_at),
             Some(1_700_000_000)
         );
+    }
+
+    #[test]
+    fn seeding_time_round_trips_through_disk() {
+        // The whole point of the field: a limit expressed in hours has to
+        // mean the same thing across a quit.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let mut library = Library::default();
+        assert!(library.record_seed_times(&HashMap::from([(A.to_owned(), 3_600)])));
+        library.save(tmp.path()).expect("save");
+
+        let reloaded = loaded(tmp.path());
+
+        assert_eq!(reloaded.seed_times().get(A), Some(&3_600));
+    }
+
+    #[test]
+    fn recording_seeding_time_is_an_upsert() {
+        // The opposite of `note_added`, deliberately: an arrival time is
+        // established once, a running total is only ever superseded.
+        let mut library = Library::default();
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 10)]));
+
+        assert!(library.record_seed_times(&HashMap::from([(A.to_owned(), 90)])));
+
+        assert_eq!(library.seed_times().get(A), Some(&90));
+    }
+
+    #[test]
+    fn an_unchanged_seeding_time_reports_no_change() {
+        // The caller skips an atomic write on this, once a minute, forever.
+        let mut library = Library::default();
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 10)]));
+
+        assert!(!library.record_seed_times(&HashMap::from([(A.to_owned(), 10)])));
+    }
+
+    #[test]
+    fn a_flush_leaves_torrents_it_does_not_mention_alone() {
+        // A flush taken while only one torrent is seeding must not zero every
+        // other torrent's history.
+        let mut library = Library::default();
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 500), (B.to_owned(), 900)]));
+
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 600)]));
+
+        assert_eq!(library.seed_times().get(A), Some(&600));
+        assert_eq!(library.seed_times().get(B), Some(&900), "B is untouched");
+    }
+
+    #[test]
+    fn seeding_time_and_arrival_time_do_not_disturb_each_other() {
+        // They are written by different callers on different cadences into
+        // the same record, so each has to survive the other's write.
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1_700_000_000));
+
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 42)]));
+
+        let record = library.get(A).expect("record");
+        assert_eq!(record.added_at, Some(1_700_000_000));
+        assert_eq!(record.seed_seconds, Some(42));
+    }
+
+    #[test]
+    fn zero_seeding_time_is_omitted_like_an_absent_one() {
+        // A lookup cannot tell them apart, and carrying zeroes would write a
+        // record for every torrent that has never seeded.
+        let mut library = Library::default();
+        library.record_seed_times(&HashMap::from([(A.to_owned(), 0)]));
+
+        assert!(library.seed_times().is_empty());
+    }
+
+    #[test]
+    fn seeding_time_hashes_match_whatever_case_they_arrive_in() {
+        let mut library = Library::default();
+        library.record_seed_times(&HashMap::from([(A.to_ascii_uppercase(), 7)]));
+
+        assert_eq!(library.seed_times().get(A), Some(&7));
+    }
+
+    #[test]
+    fn a_corrupt_file_refuses_seeding_times_too() {
+        // Same rule as every other write here: an unreadable file is never
+        // overwritten by one built from an empty map.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(tmp.path().join(LIBRARY_FILE), "{ not json").expect("write");
+        let (mut library, _) = Library::load(tmp.path());
+
+        assert!(!library.record_seed_times(&HashMap::from([(A.to_owned(), 10)])));
+        assert!(library.seed_times().is_empty());
     }
 
     #[test]
@@ -636,6 +785,29 @@ mod tests {
 
         assert!(problem.is_none());
         assert_eq!(library.get(A).and_then(|r| r.added_at), Some(9));
+    }
+
+    #[test]
+    fn a_record_written_before_seeding_time_existed_still_loads() {
+        // Backward compatibility, the mirror of the test above: every torrent
+        // in an existing library predates this field, so the upgrade path is
+        // the common case rather than the edge one.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            tmp.path().join(LIBRARY_FILE),
+            format!(r#"{{"torrents":{{"{A}":{{"addedAt":9}}}}}}"#),
+        )
+        .expect("write");
+
+        let (library, problem) = Library::load(tmp.path());
+
+        assert!(problem.is_none());
+        assert_eq!(library.get(A).and_then(|r| r.added_at), Some(9));
+        assert_eq!(library.get(A).and_then(|r| r.seed_seconds), None);
+        assert!(
+            library.seed_times().is_empty(),
+            "an absent field reads as no seeding time, not as an error"
+        );
     }
 
     // --- the atomic write --------------------------------------------------
