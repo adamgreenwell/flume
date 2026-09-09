@@ -79,6 +79,9 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::UiRail,
         SettingKey::SeedingRatioLimit,
         SettingKey::SeedingTimeLimit,
+        SettingKey::QueueMaxDownloads,
+        SettingKey::QueueMaxSeeds,
+        SettingKey::QueueMaxTotal,
         SettingKey::PrivacyUsage,
     ] {
         events.push(EventKind::SettingChanged { key });

@@ -217,6 +217,15 @@ pub enum SettingKey {
     /// Seed time limit set or cleared.
     #[serde(rename = "seeding.timeLimit")]
     SeedingTimeLimit,
+    /// Max active downloads set or cleared.
+    #[serde(rename = "queue.maxDownloads")]
+    QueueMaxDownloads,
+    /// Max active seeds set or cleared.
+    #[serde(rename = "queue.maxSeeds")]
+    QueueMaxSeeds,
+    /// Max active torrents overall set or cleared.
+    #[serde(rename = "queue.maxTotal")]
+    QueueMaxTotal,
     /// Usage reporting itself.
     #[serde(rename = "privacy.usage")]
     PrivacyUsage,
@@ -270,6 +279,18 @@ impl SettingKey {
         note(
             previous.seed_time_limit_secs != next.seed_time_limit_secs,
             Self::SeedingTimeLimit,
+        );
+        note(
+            previous.max_active_downloads != next.max_active_downloads,
+            Self::QueueMaxDownloads,
+        );
+        note(
+            previous.max_active_seeds != next.max_active_seeds,
+            Self::QueueMaxSeeds,
+        );
+        note(
+            previous.max_active_total != next.max_active_total,
+            Self::QueueMaxTotal,
         );
         note(
             previous.egress_guard != next.egress_guard,

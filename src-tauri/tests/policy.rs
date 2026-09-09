@@ -1057,3 +1057,70 @@ fn a_queued_torrent_that_passes_its_ratio_is_restated_not_resumed() {
         "the stop rule should take it over from the queue"
     );
 }
+
+#[tokio::test]
+async fn queue_limits_come_from_settings() {
+    // Session-wide, so unlike the seed limits there is no per-torrent half to
+    // fold in -- settings is the whole source.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        max_active_downloads: Some(3),
+        max_active_seeds: Some(2),
+        max_active_total: Some(4),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let rules = state.policy_rules().await;
+
+    assert_eq!(rules.queue.max_active_downloads, Some(3));
+    assert_eq!(rules.queue.max_active_seeds, Some(2));
+    assert_eq!(rules.queue.max_active_total, Some(4));
+}
+
+#[tokio::test]
+async fn a_fresh_install_queues_nothing() {
+    // The limits must be absent by default: an upgrade that silently started
+    // parking torrents would be indistinguishable from a bug.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    let rules = state.policy_rules().await;
+    assert!(rules.queue.is_empty());
+
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+            downloading("c", 3, Some(300)),
+        ]),
+        &rules,
+        &PolicyState::default(),
+        1,
+    );
+    assert!(out.actions.is_empty(), "got {:?}", out.actions);
+}
+
+#[tokio::test]
+async fn a_limit_set_in_settings_actually_queues() {
+    // The whole point of this slice: settings reach the decision.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+        ]),
+        &state.policy_rules().await,
+        &PolicyState::default(),
+        1,
+    );
+
+    assert_eq!(paused(&out), vec![2]);
+    assert_eq!(out.state.paused_reason("b"), Some(PauseReason::Queued));
+}

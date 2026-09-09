@@ -130,6 +130,28 @@ pub struct Settings {
     /// this means the same thing across a quit.
     pub seed_time_limit_secs: Option<u64>,
 
+    /// Most torrents that may download at once; `None` is no limit.
+    ///
+    /// Session-wide rather than per-torrent, and deliberately not overridable:
+    /// a slot limit is a statement about this machine, and "let this one
+    /// through" is what the queue order is for.
+    ///
+    /// Applied live, like the seed limits above.
+    pub max_active_downloads: Option<u32>,
+
+    /// Most torrents that may seed at once; `None` is no limit.
+    ///
+    /// Counted separately from downloads because they cost different things:
+    /// a finished torrent spends upload, an unfinished one spends both.
+    pub max_active_seeds: Option<u32>,
+
+    /// Most torrents that may run at all, downloads and seeds together;
+    /// `None` is no limit.
+    ///
+    /// For the case where the real constraint is peer connections rather than
+    /// either direction. Whichever limit binds first wins.
+    pub max_active_total: Option<u32>,
+
     /// UI colour scheme. Frontend-only; persisted here so it survives restarts.
     pub theme: Theme,
 
@@ -184,6 +206,9 @@ impl Default for Settings {
             proxy_url: None,
             seed_ratio_limit: None,
             seed_time_limit_secs: None,
+            max_active_downloads: None,
+            max_active_seeds: None,
+            max_active_total: None,
             theme: Theme::System,
             density: Density::Comfortable,
             rail: RailState::Expanded,

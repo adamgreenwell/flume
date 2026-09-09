@@ -41,6 +41,9 @@
         "ui.rail",
         "seeding.ratioLimit",
         "seeding.timeLimit",
+        "queue.maxDownloads",
+        "queue.maxSeeds",
+        "queue.maxTotal",
         "privacy.usage"
       ]
     },
