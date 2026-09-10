@@ -3,10 +3,18 @@
 What it takes to ship Flume so that a user's operating system does not treat it
 as suspicious, and what to tell them when it does.
 
-> **Current state: builds are unsigned.** The release pipeline selects between
-> a signed and an unsigned build depending on whether `APPLE_CERTIFICATE` is
-> set, so anyone can build Flume without certificates. See
-> [Setting up macOS signing](#setting-up-macos-signing) to enable it.
+> **Current state, per platform:**
+>
+> - **macOS — signed and notarized.** The Apple secrets are set, so the release
+>   workflow takes the signed path.
+> - **Windows — unsigned, with an application to SignPath Foundation pending as
+>   of 2026-09-10.** This reverses an earlier decision; see [Windows](#windows).
+> - **Linux — unsigned.** Normal for direct download; the distributions that
+>   would require a signature are the ones Flume is not in.
+>
+> The pipeline selects between a signed and an unsigned build depending on
+> whether `APPLE_CERTIFICATE` is set, so anyone can still build Flume without
+> certificates. See [Setting up macOS signing](#setting-up-macos-signing).
 
 ## What signing actually buys
 
@@ -181,108 +189,126 @@ open on a machine with no internet connection.
 
 ## Windows
 
-**Decision: Flume does not sign Windows builds.** Taken deliberately; the
-reasoning is below so it does not get re-argued from scratch.
+**Decision: sign, via SignPath Foundation.** Applied 2026-09-10; approval is
+theirs to give, so this section describes a decision made and an outcome
+pending.
 
-### Why not
+This reverses the earlier "deliberately unsigned" decision. The reasoning is
+kept below rather than deleted, because the thing that changed is not a
+preference — it is that two of the load-bearing facts stopped being true.
 
-**An OV certificate would change nothing at Flume's download volume.**
-SmartScreen reputation accrues _per certificate_, from downloads. A new OV
-certificate starts at zero, so users keep seeing the warning while the
-certificate is paid for. EV clears SmartScreen immediately — that is most of
-what the extra cost buys — but it is several hundred a year for a free app.
+### Why the old reasoning is void
 
-This is the trap worth naming, because it inverts the Apple intuition:
-**Apple sells trust, Microsoft makes you earn it.** A Developer ID certificate
-silences Gatekeeper from the first download. An OV certificate is a ticket to
-_start accumulating_ reputation, not the reputation itself.
+It rested on this: _"EV clears SmartScreen immediately — that is most of what
+the extra cost buys."_ That was correct when written and is not correct now.
+Microsoft removed the behaviour in 2024 and
+[says so directly][smartscreen]:
 
-**The private key cannot live in a GitHub secret.** Since the CA/Browser Forum
-tightened requirements in June 2023, code signing keys must be held on FIPS
-140-2 Level 2 hardware — a USB token or an HSM. Certificate authorities no
-longer issue an exportable `.pfx`. So the approach that works for macOS, where
-the `.p12` is base64'd into a secret, is not available here at any price.
+> EV certificates no longer bypass SmartScreen. Years ago, signing files with
+> an Extended Validation (EV) code signing certificate would result in positive
+> SmartScreen reputation by default, but this behavior no longer exists.
 
-### If this is revisited
+So the old conclusion — don't buy EV — survives, but inverted. It is not that
+EV costs too much for what it gives; it is that it now gives **nothing over
+OV**. No certificate at any price buys instant trust outside the Microsoft
+Store. "Sign so it is not flagged" is no longer a purchasable outcome.
 
-[Azure Trusted Signing][ats] is the option that would fit: roughly $10/month,
-key in Microsoft's HSM, signing driven by an API, so CI keeps working and there
-is no token to plug in. Two things to confirm _before_ paying, because they
-decide whether it is worth anything:
+### What made signing worth doing anyway
 
-1. **Does it confer SmartScreen reputation immediately, or accrue it like OV?**
-   If the latter, it buys a valid signature and the same warning.
-2. **Identity validation.** Historically the friction was proving
-   organisational history.
+The old decision measured signing against a single warning on an occasional
+manual download. Two things make that the wrong measure.
 
-Certificates from it are short-lived and rotate every few days. That is by
-design and safe: signatures are timestamped, and a timestamped signature stays
-valid after its certificate expires.
+**Unsigned reputation restarts from zero on every release.**
+[Microsoft][smartscreen]:
 
-An EV certificate plus a self-hosted Windows runner also works, and costs real
-money and real operational burden.
+> When a file is not signed, SmartScreen reputation must build for each new
+> version of your files, starting with zero reputation. Reputation cannot
+> transfer from previous versions unless both were signed using the same
+> publisher identity.
 
-[ats]: https://learn.microsoft.com/azure/trusted-signing/
+Signed with a stable identity, reputation accumulates _across_ versions.
+Unsigned, every release is a new stranger. The in-place updater ([#176]) turns
+that from a nuisance into the defining cost, because its whole purpose is to
+ship more releases to more people.
 
-### Costs, for reference
+**Smart App Control blocks rather than warns.** On Windows 11 it will refuse to
+execute unsigned files without positive reputation, and it applies to every
+executable rather than only downloaded ones. A dismissible warning and a
+refusal to run are not the same problem.
 
-| Requirement                 | Cost                                         |
-| --------------------------- | -------------------------------------------- |
-| OV code signing certificate | ~$200-400/year                               |
-| EV code signing certificate | ~$300-600/year, often needs a hardware token |
+### SignPath Foundation, and its one real catch
 
-The difference matters more than the price. **SmartScreen reputation** is built
-per-certificate from download volume: an OV certificate starts with none, so
-early users still see warnings until enough downloads accumulate. An EV
-certificate gets reputation immediately.
+Free code signing for open-source projects — OV-level, key on their HSM, driven
+from CI, no hardware token, no personal identification. They verify the binary
+was built from the public repository. Stellarium, Flameshot, LiteDB and
+GitExtensions use it, and Microsoft lists it as the open-source route.
 
-For a project with modest download numbers, an OV certificate can warn users
-for a long time. That is worth knowing before spending the money.
+**The certificate is issued to SignPath Foundation, not to Flume.** Their own
+description: _"we verify that the binary was built from your open source
+repository and vouch for that with our name."_ So the publisher string in the
+UAC dialog and the SmartScreen panel reads **SignPath Foundation**. That is the
+price, and it is not nothing for a BitTorrent client, where an unfamiliar third
+party on the installer is not obviously more reassuring than the name that
+matches the repository and the website.
 
-### What a user sees without it
+The upside of the same fact is that the certificate has been signing known
+software for years, and certificate reputation can carry a new file past the
+warning. **Unverified** — do not plan around it until a signed build is
+observed in the wild.
 
-A blue **"Windows protected your PC"** dialog. The **Run anyway** button is
-hidden behind **More info**, which is deliberate and catches people out.
+It also means shared fate in both directions. Negative reputation earned on
+that certificate by anyone is Flume's problem too, and vice versa. P2P software
+is the category most likely to attract it through no fault of the code, which
+is also the likeliest reason the application is declined.
 
-Some browsers also flag the download itself as untrusted.
+Note that the foundation is operated by SignPath GmbH, the commercial vendor.
+Independence is stated as an aspiration, not a current fact.
 
-## Linux
+### What was rejected
 
-No signing gate. Users install a `.deb` or `.rpm` and it works.
+| Option                 | Why not                                                                                                                                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Azure Artifact Signing | ~$120/year. Would work — individual tier covers the USA, and it puts Flume's own identity on the binary. Declined on cost. This is the fallback if SignPath says no                             |
+| OV certificate         | $150–300/year plus a token or cloud HSM, for behaviour identical to the free option                                                                                                             |
+| EV certificate         | $400+/year for behaviour identical to OV since 2024                                                                                                                                             |
+| Microsoft Store (MSIX) | The only zero-warning path, and Microsoft re-signs — but Tauri emits no MSIX. Its documented Store route lists a Win32 installer, which the Store does **not** re-sign, so it buys nothing here |
+| Self-signed            | Treated as worse than unsigned                                                                                                                                                                  |
 
-If Flume is ever published to a repository, packages are signed with a GPG key
-and users import the public key — a different model, and a much cheaper one.
+### Do not start on one identity and move to another
 
-The AppImage format supports embedded signatures, but almost nothing verifies
-them, so it buys little.
+[Microsoft][smartscreen] again: _"Use a consistent signing identity — changing
+your signing certificate affects the publisher trust signal."_ Reputation
+belongs to the identity, so switching discards whatever was accumulated. That
+is why this was decided once rather than by trying the free option and falling
+back — if SignPath declines, the fallback starts from zero either way, but
+switching _after_ building reputation would throw real value away.
 
-## Checksums, which cost nothing
+### Two signing systems, and they are not related
 
-Whatever happens with certificates, publishing SHA-256 checksums alongside
-releases lets a careful user verify their download:
+Easy to conflate and expensive to conflate:
 
-```bash
-shasum -a 256 -c flume_0.1.0_aarch64.dmg.sha256
-```
+- **Authenticode** is this section — who Windows says published the installer.
+- **`TAURI_SIGNING_PRIVATE_KEY`** is the updater's minisign key ([#176]), which
+  proves an update came from Flume. Different algorithm, different key,
+  different purpose, no hardware requirement. Windows never looks at it and
+  SmartScreen has never heard of it.
 
-This is free, and it is the only verification available to users of unsigned
-builds. The release workflow publishes `SHA256SUMS.txt` covering every asset:
+Signing Windows builds does not give Flume an updater, and shipping an updater
+does not sign anything.
 
-```bash
-sha256sum -c SHA256SUMS.txt --ignore-missing
-```
+### The key-on-hardware problem, and why it stopped mattering
 
-It is generated by downloading the assets back off the release rather than from
-the build artifacts, so the checksums describe what a user actually gets.
+Since the CA/Browser Forum tightened requirements in June 2023, code signing
+private keys must be held on FIPS 140-2 Level 2 hardware — a token or an HSM —
+and CAs no longer issue an exportable `.pfx`. The macOS approach, where the
+`.p12` is base64'd into a GitHub secret, is unavailable here at any price.
 
-## Recommendation
+Both surviving options solve this by never handing over the key: SignPath and
+Azure each hold it in their own HSM and sign on request from CI. An OV or EV
+certificate would have meant a physical token and therefore a self-hosted
+Windows runner.
 
-1. **Ship unsigned first**, with checksums and clear instructions. Wait for
-   real users before spending money.
-2. **macOS signing is the highest-value purchase** if demand appears: the
-   gatekeeping is the most aggressive and the fix is the most obscure.
-3. **Windows EV over OV**, or neither. An OV certificate that still shows
-   SmartScreen warnings for months is the worst value of the three options.
-4. **Never work around gatekeeping in the installer.** Any instruction that
-   disables a security feature globally, rather than for this one app, is worse
-   than the warning.
+[smartscreen]: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation
+[options]: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options
+[signpath]: https://signpath.org/
+[#176]: https://github.com/adamgreenwell/flume/issues/176
