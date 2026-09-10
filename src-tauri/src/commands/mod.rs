@@ -476,11 +476,20 @@ pub async fn pause_torrent(state: State<'_, AppState>, id: usize) -> Result<(), 
     // one action the precedence rules promise never to override.
     if let Some(info_hash) = engine.info_hash_of(id) {
         state.clear_pause_reason(&info_hash).await;
+        // The other half of "manual actions win until the user says
+        // otherwise". Pausing *is* saying otherwise, so a torrent forced past
+        // the queue rejoins it here rather than staying exempt forever.
+        state.set_forced(&info_hash, false).await;
     }
     Ok(engine.pause(id).await?)
 }
 
 /// Resumes a paused torrent.
+///
+/// Resuming a torrent the *queue* parked also takes it out of the queue's
+/// hands, permanently, until the user pauses it again. Without that the resume
+/// is undone inside a second: the torrent comes back eligible, sorts past the
+/// limit, and is parked again on the very next tick.
 ///
 /// # Errors
 ///
@@ -488,6 +497,9 @@ pub async fn pause_torrent(state: State<'_, AppState>, id: usize) -> Result<(), 
 #[tauri::command]
 pub async fn resume_torrent(state: State<'_, AppState>, id: usize) -> Result<(), CommandError> {
     let engine = require_engine(&state).await?;
+    if let Some(info_hash) = engine.info_hash_of(id) {
+        state.force_out_of_queue(&info_hash).await;
+    }
     Ok(engine.resume(id).await?)
 }
 

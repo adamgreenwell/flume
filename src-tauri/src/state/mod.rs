@@ -115,7 +115,8 @@ impl AppState {
         // policy evaluation already knows how long each torrent has seeded.
         // Without this a seed-time limit would restart its count on every
         // launch and never fire for anyone who quits Flume daily.
-        let policy_state = PolicyState::with_seed_times(library.seed_times());
+        let policy_state =
+            PolicyState::with_seed_times(library.seed_times()).with_forced(library.forced());
 
         Self {
             engine: RwLock::new(None),
@@ -469,6 +470,59 @@ impl AppState {
             library.to_json()
         };
         self.persist_library(json);
+    }
+
+    /// Records that the user started a torrent out of the queue by hand.
+    ///
+    /// Writes both halves: the policy state the next tick reads, and the
+    /// library record that survives a restart. Persisted immediately rather
+    /// than on the seed-time cadence because this is a discrete thing the user
+    /// did, not a running total -- the same reasoning as a seed-limit
+    /// override.
+    pub async fn set_forced(&self, info_hash: &str, forced: bool) {
+        {
+            let mut state = self.policy_state.write().await;
+            if forced {
+                state.mark_forced(info_hash);
+            } else {
+                state.clear_forced(info_hash);
+            }
+        }
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.set_forced(info_hash, forced) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+    }
+
+    /// Takes a torrent the queue parked out of the queue's hands.
+    ///
+    /// Only acts when the queue is what stopped it. Resuming a torrent the
+    /// *user* paused is just un-pausing -- it rejoins the queue and waits its
+    /// turn like anything else. Resuming one the queue parked is the only
+    /// action that can mean "not this one, I want it now", so it is the only
+    /// one that forces.
+    ///
+    /// Returns whether it forced anything, so a caller can word what it tells
+    /// the user.
+    pub async fn force_out_of_queue(&self, info_hash: &str) -> bool {
+        if self.policy_state.read().await.paused_reason(info_hash) != Some(PauseReason::Queued) {
+            return false;
+        }
+        // Cleared as well as forced: the reason is what makes the row say
+        // "queued", and a torrent running past the limit is not waiting for a
+        // slot.
+        self.clear_pause_reason(info_hash).await;
+        self.set_forced(info_hash, true).await;
+        true
+    }
+
+    /// Whether the user forced this torrent past the queue.
+    pub async fn is_forced(&self, info_hash: &str) -> bool {
+        self.policy_state.read().await.is_forced(info_hash)
     }
 
     /// Forgets that policy stopped a torrent.
