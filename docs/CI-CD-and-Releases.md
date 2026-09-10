@@ -106,10 +106,13 @@ is not worth risking to save a few minutes of compile time.
 
 ## Secrets
 
-| Secret                                                             | Purpose                        |
-| ------------------------------------------------------------------ | ------------------------------ |
-| `TAURI_SIGNING_PRIVATE_KEY`                                        | Updater signature              |
-| `APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | macOS signing and notarization |
-| `WINDOWS_CERTIFICATE`                                              | Windows Authenticode           |
+| Secret                                                             | Purpose                         |
+| ------------------------------------------------------------------ | ------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`                                        | Updater signature — **not set** |
+| `APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | macOS signing and notarization  |
+| `WINDOWS_CERTIFICATE`                                              | Windows Authenticode            |
 
 None are required for CI to pass; absence disables signing, not the build.
+`TAURI_SIGNING_PRIVATE_KEY` is the exception, and is listed here because it is the
+one the updater will need: it has never been generated, and until it is there is no
+updater to sign for. See [#176](https://github.com/adamgreenwell/flume/issues/176).

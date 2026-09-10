@@ -50,6 +50,17 @@ batched events before the torrent count grows.
 - ~~Signing, notarization, and troubleshooting docs~~ ✅ ([#18](https://github.com/adamgreenwell/flume/issues/18))
 - ~~Release build blocked by a proc-macro failure~~ ✅ ([#22](https://github.com/adamgreenwell/flume/issues/22))
 
+Open, and not blocked on anything:
+
+- In-place updates ([#176](https://github.com/adamgreenwell/flume/issues/176)) — the
+  pipeline ships four package formats and no way to move anyone between versions, so the
+  install base is whatever people downloaded once. Two tiers rather than one: replace in
+  place on macOS and AppImage, notify-and-link on Windows, `.deb` and `.rpm`, because an
+  auto-update that downloads and runs an unsigned Windows installer raises UAC and
+  SmartScreen every time — it looks exactly like the thing it is trying not to be. The
+  consent model is the decision the rest hangs off: an update check would be the second
+  thing in Flume that talks to the network, and the first one is opt-in.
+
 Still open, all blocked on something outside the code:
 
 - Sequential download ([#16](https://github.com/adamgreenwell/flume/issues/16)) — **not
