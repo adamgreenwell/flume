@@ -6,6 +6,40 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 [kac]: https://keepachangelog.com/en/1.1.0/
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## [1.3.0] — 2026-09-10
+
+### Added
+
+- **Queue management.** Flume can be told how many torrents run at once, under
+  Settings → Queue. Three limits rather than one, because downloading and
+  seeding do not cost the same thing: a download uses the connection in both
+  directions and writes to disk, while a finished torrent only uploads. Set
+  either or both, and a total as a ceiling over them; leave one unset and it
+  does not apply.
+
+  Torrents beyond a limit **wait** rather than stop. Queued is its own state,
+  not a paused one — it draws a clock rather than a pause mark, says "queued —
+  starts on its own when a slot frees", and reads that way to a screen reader
+  too. The distinction matters because the two look identical and behave
+  oppositely: a paused torrent stays put, a queued one starts itself the moment
+  a slot frees. Admission is oldest first, and a torrent added before Flume
+  recorded arrival times sorts last rather than first.
+
+  A torrent stopped by a seed limit is never started by the queue, and does not
+  hold a slot it is not using. That precedence is decided once, in one place,
+  rather than per feature.
+
+- **Resuming a queued torrent runs it now, and keeps it running.** Resuming
+  something the queue parked takes it out of the queue for good — it keeps
+  running past the limit until you pause it again, which is how you say
+  otherwise. It runs on top of the limits rather than displacing anything, so
+  starting one torrent never stops a different one you did not touch. Resuming
+  a torrent **you** paused is unchanged and simply un-pauses it: it rejoins the
+  queue and waits its turn.
+
+  The choice survives quitting. Without that, the queue would park the torrent
+  again on the next launch — the same surprise, one restart later.
+
 ## [1.2.0] — 2026-09-09
 
 ### Fixed

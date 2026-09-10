@@ -426,8 +426,9 @@ Per-torrent limits join the order if and when upstream answers.
 
 ## Known limitations
 
-- **Windows and Linux unverified locally.** Developed on macOS 27. CI builds
-  for all platforms, but first-run behaviour needs a manual pass.
+- **Windows and Linux verified by use, not by checklist.** Developed on macOS 27. The 1.2.0 release was installed and exercised on both and worked, which
+  is what this entry used to be waiting for. A line-by-line pass of
+  [[Smoke-Test-Checklist]] on each is still outstanding.
 - **Polling, not events.** The Phase 0 status hook polls at 1 Hz. Fine for one
   status card, wrong for a torrent list.
 
