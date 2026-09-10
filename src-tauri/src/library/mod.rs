@@ -45,7 +45,7 @@
 mod session_file;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -103,6 +103,24 @@ pub struct Record {
     /// so overrides kept there would accumulate the info hash of every torrent
     /// the user ever set a limit on, for as long as the install lives.
     pub rules: Option<TorrentRules>,
+    /// Whether the user started this torrent out of the queue by hand.
+    ///
+    /// Set by resuming a torrent the queue had parked, cleared by pausing it
+    /// -- the "until the user says otherwise" the queue rules promise. A
+    /// forced torrent is skipped by the queue entirely: neither admitted nor
+    /// counted, so forcing one runs it *on top of* the limits rather than
+    /// displacing something already running.
+    ///
+    /// The alternative -- counting it and admitting it first -- keeps the
+    /// limit literally true, but pays for it by pausing a torrent the user
+    /// never touched, in response to an action on a different one. Force Start
+    /// in the clients this is parity with does not do that either.
+    ///
+    /// Persisted rather than held in memory because the astonishment it exists
+    /// to prevent survives a restart: an unpersisted force would be re-parked
+    /// by the queue on the next launch, which is the same surprise one quit
+    /// later.
+    pub forced: bool,
 }
 
 /// What [`Library::note_added`] did.
@@ -444,6 +462,39 @@ impl Library {
             }
         }
         changed
+    }
+
+    /// Every torrent the user forced past the queue, by info hash.
+    ///
+    /// A set rather than a map because the only thing worth knowing is
+    /// membership, and because the policy engine asks the question once per
+    /// torrent per tick.
+    #[must_use]
+    pub fn forced(&self) -> HashSet<String> {
+        self.records
+            .iter()
+            .filter(|(_, record)| record.forced)
+            .map(|(hash, _)| hash.clone())
+            .collect()
+    }
+
+    /// Marks or unmarks a torrent as forced past the queue.
+    ///
+    /// Suppressed when the record did not load cleanly, like every other write
+    /// here. Returns whether anything changed, so the caller can skip a write.
+    pub fn set_forced(&mut self, info_hash: &str, forced: bool) -> bool {
+        if !self.healthy {
+            return false;
+        }
+        let record = self
+            .records
+            .entry(info_hash.to_ascii_lowercase())
+            .or_default();
+        if record.forced == forced {
+            return false;
+        }
+        record.forced = forced;
+        true
     }
 
     /// Drops a record, for the one caller that knows a torrent was removed.

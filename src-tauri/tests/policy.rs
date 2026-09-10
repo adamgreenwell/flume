@@ -1124,3 +1124,167 @@ async fn a_limit_set_in_settings_actually_queues() {
     assert_eq!(paused(&out), vec![2]);
     assert_eq!(out.state.paused_reason("b"), Some(PauseReason::Queued));
 }
+
+// --- Manual override of the queue (#56) -------------------------------------
+
+#[test]
+fn a_manual_resume_out_of_the_queue_survives_the_next_tick() {
+    // The defect this closes, and the reason the rule is stated in both
+    // directions. Before the force existed the sequence was: the user resumes
+    // a queued torrent, it comes back `Downloading` with no reason on record,
+    // the queue finds it eligible, sorts it past the limit, and parks it again
+    // -- all inside one second.
+    //
+    // `c` is the newest of three with room for two, so arrival order alone
+    // would stop it. The force is the only thing keeping it running.
+    let mut state = PolicyState::default();
+    state.mark_forced("c");
+
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+            downloading("c", 3, Some(300)),
+        ]),
+        &queue(Some(2), None, None),
+        &state,
+        1,
+    );
+
+    assert!(
+        paused(&out).is_empty(),
+        "the forced torrent was re-parked: {:?}",
+        out.actions
+    );
+}
+
+#[test]
+fn a_forced_torrent_does_not_take_a_slot_from_the_queue() {
+    // Forcing runs a torrent *on top of* the limits rather than displacing
+    // one. If the force consumed its slot, `b` would be parked to pay for a
+    // decision the user made about `c` -- an action on one torrent stopping a
+    // different one, which is the surprise this shape exists to avoid.
+    let mut state = PolicyState::default();
+    state.mark_forced("c");
+
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+            downloading("c", 3, Some(300)),
+        ]),
+        &queue(Some(2), None, None),
+        &state,
+        1,
+    );
+
+    assert!(
+        paused(&out).is_empty(),
+        "a forced torrent consumed a slot: {:?}",
+        out.actions
+    );
+
+    // And the limit still binds for everything that is not forced: a fourth,
+    // unforced torrent is beyond the two slots `a` and `b` hold.
+    let out = evaluate(
+        &snapshot(vec![
+            downloading("a", 1, Some(100)),
+            downloading("b", 2, Some(200)),
+            downloading("c", 3, Some(300)),
+            downloading("d", 4, Some(400)),
+        ]),
+        &queue(Some(2), None, None),
+        &state,
+        1,
+    );
+
+    assert_eq!(
+        paused(&out),
+        vec![4],
+        "the limit stopped binding for unforced torrents: {:?}",
+        out.actions
+    );
+}
+
+#[tokio::test]
+async fn only_a_queued_torrent_is_forced_by_resuming_it() {
+    // The distinction the whole feature turns on. Resuming something the queue
+    // parked means "not this one, I want it now". Resuming something the
+    // *user* paused is just un-pausing, and it rejoins the queue and waits its
+    // turn -- otherwise every ordinary Resume would quietly punch a permanent
+    // hole in the limit.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    // Parked by the queue.
+    state
+        .set_policy_state({
+            let mut s = PolicyState::default();
+            s.mark_paused("queued", PauseReason::Queued);
+            s
+        })
+        .await;
+
+    assert!(
+        state.force_out_of_queue("queued").await,
+        "a queued torrent should be forced by a resume"
+    );
+    assert!(state.is_forced("queued").await);
+    assert_eq!(
+        state.policy_state().await.paused_reason("queued"),
+        None,
+        "and it should stop claiming to be waiting for a slot"
+    );
+
+    // Paused by the user: no record at all, which is what a hand pause leaves.
+    assert!(
+        !state.force_out_of_queue("by-hand").await,
+        "an ordinary resume must not force"
+    );
+    assert!(!state.is_forced("by-hand").await);
+}
+
+#[tokio::test]
+async fn a_force_survives_a_full_quit_and_relaunch() {
+    // An unpersisted force would be re-parked by the queue on the next launch,
+    // which is the same astonishment one quit later. Exercised through the
+    // calls the app makes, like the seeding-time round trip above.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().to_path_buf();
+
+    let first = AppState::new(Settings::default(), dir.clone(), false);
+    first.set_forced("a", true).await;
+
+    let second = AppState::new(Settings::default(), dir.clone(), false);
+    assert!(
+        second.is_forced("a").await,
+        "the force was lost across a restart"
+    );
+
+    // And pausing gives the torrent back to the queue, permanently.
+    second.set_forced("a", false).await;
+    let third = AppState::new(Settings::default(), dir, false);
+    assert!(
+        !third.is_forced("a").await,
+        "the release was lost across a restart"
+    );
+}
+
+#[tokio::test]
+async fn forgetting_a_torrent_drops_its_force() {
+    // Nothing in the library outlives its torrent; a force is no exception,
+    // or a re-add of the same info hash would inherit an exemption the user
+    // granted to something they removed.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().to_path_buf();
+
+    let state = AppState::new(Settings::default(), dir.clone(), false);
+    state.set_forced("a", true).await;
+    state.forget_torrent("a").await;
+
+    let next = AppState::new(Settings::default(), dir, false);
+    assert!(
+        !next.is_forced("a").await,
+        "a removed torrent kept its force"
+    );
+}

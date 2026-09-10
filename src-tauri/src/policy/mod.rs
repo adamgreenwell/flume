@@ -29,9 +29,17 @@
 //!
 //! So precedence is defined here, once, in [`evaluate`]:
 //!
-//! 1. **A torrent the user paused is never resumed by policy.** Manual intent
-//!    outranks every rule. Without this, a queue slot opening would silently
-//!    undo a deliberate pause.
+//! 1. **Manual intent outranks every rule, in both directions.** A torrent
+//!    the user paused is never resumed by policy — without this, a queue slot
+//!    opening would silently undo a deliberate pause. And a torrent the user
+//!    started out of the queue is never re-parked by it: resuming something
+//!    the queue had stopped marks it *forced*, and the queue then leaves it
+//!    alone until the user pauses it again.
+//!
+//!    Only half of that was written at first, and the missing half was a
+//!    defect rather than an omission: a manual resume was undone within one
+//!    tick, because the torrent came back eligible, sorted past the limit, and
+//!    was parked again before the user's finger left the mouse.
 //! 2. **Stop rules outrank start rules.** If any rule says a torrent should
 //!    stop, it stops, regardless of what a start rule wants.
 //! 3. Within stop rules, the first matching reason is reported, so the UI can
@@ -182,6 +190,11 @@ pub fn evaluate(
 ///
 /// * A torrent **the user paused** is never admitted. Rule 1, and the reason
 ///   the queue cannot simply count running torrents and start the difference.
+/// * A torrent **the user forced** is skipped entirely — neither admitted nor
+///   counted. It runs *on top of* the limits rather than displacing something
+///   already running, which is the reading that cannot surprise anyone: the
+///   alternative pauses a torrent the user never touched, in response to an
+///   action on a different one.
 /// * A torrent **stopped by another rule** is not admitted, and not counted
 ///   against the limits either — it is not using a slot.
 /// * **Checking and errored** torrents are left entirely alone: they occupy no
@@ -215,6 +228,11 @@ fn apply_queue(
     let mut eligible: Vec<&TorrentSummary> = snapshot
         .torrents
         .iter()
+        // Checked before the state match rather than inside it: a forced
+        // torrent is out of the queue's hands whatever it is currently doing,
+        // including while it is still `Paused` for the one tick between the
+        // resume and the next snapshot.
+        .filter(|t| !state.is_forced(&t.info_hash))
         .filter(|t| match t.state {
             TorrentState::Downloading | TorrentState::Seeding => state
                 .paused_reason(&t.info_hash)
