@@ -355,12 +355,12 @@ See `docs/Roadmap.md` and the project board for what follows.
 
 ## Known gaps
 
-- Per-platform coverage is uneven. Development is on macOS 27; the add flow —
-  both routes, including clipboard magnet detection — has been exercised on
-  macOS, Windows and Linux, and Windows additionally through the file-locking
-  work in #9. What has not happened is a deliberate walk of the smoke checklist
-  in `docs/Platform-Notes.md` on each, so the gaps that remain are the ones
-  nobody has gone looking for.
+- Per-platform coverage is no longer the biggest unknown. Development is on
+  macOS 27, but the 1.2.0 release was installed and exercised on Windows and
+  Linux and worked — which retires the long-standing "unverified locally" gap.
+  What is still not recorded is a line-by-line pass of
+  `docs/Smoke-Test-Checklist.md` on each, so "it works" is established and
+  "every item was checked" is not.
 - Telemetry is pushed, not polled (`src-tauri/src/telemetry.rs` emits, the
   frontend `listen()`s), but the snapshot is still _computed_ every second
   whether or not anyone is looking — including while the window is hidden.

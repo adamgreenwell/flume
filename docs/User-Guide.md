@@ -46,18 +46,45 @@ checksum files when you want one image.
 Removal always asks before deleting data. Deleting a partially downloaded ISO
 by accident is a bad afternoon.
 
+**Queued is not paused.** If you have set a limit on how many torrents run at
+once, anything beyond it waits its turn and shows a clock rather than a pause
+mark. A queued torrent starts on its own when a slot frees; a paused one stays
+put until you say otherwise.
+
+Resuming a _queued_ torrent runs it straight away and takes it out of the queue
+for good — it keeps running even when the limit says it should not, until you
+pause it again. Resuming a torrent that **you** paused is just un-pausing: it
+rejoins the queue and waits its turn like everything else.
+
 ## Settings
 
-| Setting             | Notes                                    |
-| ------------------- | ---------------------------------------- |
-| Download folder     | Where completed and in-progress files go |
-| Rate limits         | Global, plus per-torrent overrides       |
-| Max active torrents | Limits concurrent transfers              |
-| Listen port         | Default 42221                            |
-| UPnP                | Automatic router port forwarding         |
-| DHT                 | Required for magnet links                |
-| Theme               | Light, dark, or follow system            |
-| Tunnel check        | Off, warn, or hold transfer — see below  |
+| Setting         | Notes                                              |
+| --------------- | -------------------------------------------------- |
+| Download folder | Where completed and in-progress files go           |
+| Rate limits     | Global, plus per-torrent overrides                 |
+| Queue           | How many downloads, seeds and torrents run at once |
+| Seed limits     | Stop seeding at a ratio or after a time            |
+| Listen port     | Default 42221                                      |
+| UPnP            | Automatic router port forwarding                   |
+| DHT             | Required for magnet links                          |
+| Theme           | Light, dark, or follow system                      |
+| Tunnel check    | Off, warn, or hold transfer — see below            |
+
+### How many run at once
+
+Three separate limits, because downloading and seeding do not cost the same
+thing. A download uses your connection in both directions and writes to disk; a
+finished torrent only uploads. Setting **max active downloads** to 3 and **max
+active seeds** to 10 is a reasonable shape for most connections. **Max active
+total** is a ceiling over both, for when the machine rather than the connection
+is the limit.
+
+Leave any of them unset and that limit does not apply. With none of them set
+there is no queue at all and everything runs.
+
+Torrents are admitted oldest first. A torrent that was added before Flume
+started recording arrival times sorts last rather than first — an unknown
+arrival time is not evidence of being early.
 
 ## Only transfer through a tunnel
 
@@ -177,8 +204,28 @@ number would be worse than none.
 Flume seeds completed torrents while running. Seeding requires an open
 listening port — see the firewall notes in [[Getting-Started]].
 
-Seeding Linux ISOs back is genuinely useful; distro mirrors carry real
-bandwidth costs.
+### Seed limits
+
+By default a completed torrent seeds for as long as Flume runs. Two limits can
+stop it, and either one firing is enough:
+
+- **Ratio** — stop once you have uploaded this many times what you downloaded.
+  A ratio of 2.00 means uploading twice the size of the torrent.
+- **Time** — stop after this much time spent actually seeding. Time spent
+  paused, downloading or with Flume closed does not count, and the total
+  survives quitting.
+
+A torrent stopped by a limit says which limit stopped it, rather than reading
+as a plain pause. Nothing is deleted and everything stays verified on disk —
+**Keep seeding** starts it again with no limit on that one torrent.
+
+### Limits for one torrent
+
+Open a torrent and its **Seed limits** panel switches between _follow global_
+and _just this torrent_. An override replaces the global limits **wholesale**
+rather than merging with them, so a torrent cannot take its ratio from here and
+its time from Settings. That is also how "seed this one forever" is said:
+override with both limits cleared.
 
 ## Troubleshooting
 
