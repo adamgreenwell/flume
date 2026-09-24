@@ -17,7 +17,7 @@
 //! more than the data is worth and give a torrent client a distinctive
 //! outbound traffic pattern.
 
-use std::{sync::Arc, time::Duration};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use rand::RngExt;
 
@@ -33,38 +33,74 @@ pub const ENDPOINT: Option<&str> = option_env!("FLUME_USAGE_ENDPOINT");
 
 /// The scheme a collector endpoint must use.
 ///
-/// Deliberately identical to the `https://*` gate in
-/// `.github/workflows/release.yml`, so a value cannot pass one and fail the
-/// other. A predicate stricter than CI's would ship a build that compiles
-/// inert after a green release; looser, and CI is the only thing standing
-/// between a fork and a Flume that reports over plaintext.
+/// Deliberately identical to the release validator's required scheme. A
+/// manually built client should not report a placeholder as configured.
 const REQUIRED_SCHEME: &str = "https://";
+const REQUIRED_PATH: &str = "/v1/usage";
 
 /// Whether a compiled-in value is something this build could actually POST to.
 ///
-/// Written as a byte walk rather than `starts_with` so it stays a `const fn`:
-/// `str::starts_with` is not const, and [`should_warn`] is const through
-/// [`is_configured`].
-///
-/// Requires at least one byte past the scheme, because a bare `https://` has
-/// no host and fails every request exactly as `""` does — the failure this
-/// whole predicate exists to stop.
-const fn is_usable(url: &str) -> bool {
-    let bytes = url.as_bytes();
-    let scheme = REQUIRED_SCHEME.as_bytes();
-
-    if bytes.len() <= scheme.len() {
+/// This mirrors `scripts/validate-usage-endpoint.mjs` for local builds, where
+/// the release workflow's secret gate does not run.
+fn is_usable(url: &str) -> bool {
+    if !url.starts_with(REQUIRED_SCHEME) || url.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((authority, literal_path)) = url[REQUIRED_SCHEME.len()..].split_once('/') else {
+        return false;
+    };
+    if authority.is_empty() || authority.contains('@') || literal_path != "v1/usage" {
         return false;
     }
 
-    let mut i = 0;
-    while i < scheme.len() {
-        if bytes[i] != scheme[i] {
-            return false;
-        }
-        i += 1;
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    let bare_host = host.trim_start_matches('[').trim_end_matches(']');
+    let parsed_address = bare_host.parse::<IpAddr>().ok();
+    let labels: Vec<&str> = host.split('.').collect();
+    let valid_dns_host = labels.len() >= 2
+        && labels.iter().all(|label| {
+            label.len() <= 63
+                && label.starts_with(|c: char| c.is_ascii_alphanumeric())
+                && label.ends_with(|c: char| c.is_ascii_alphanumeric())
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    if parsed.scheme() != "https"
+        || !host.chars().any(|c| c.is_ascii_alphanumeric())
+        || parsed.path() != REQUIRED_PATH
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
     }
-    true
+
+    valid_dns_host
+        && parsed_address.is_none()
+        && !matches!(host.as_str(), "localhost")
+        && ![".example", ".invalid", ".test", ".localhost"]
+            .iter()
+            .any(|suffix| host.ends_with(suffix))
+        && !host.split('.').any(|label| {
+            matches!(
+                label,
+                "example"
+                    | "placeholder"
+                    | "replace"
+                    | "replace-me"
+                    | "your-domain"
+                    | "your-subdomain"
+                    | "your-worker"
+            )
+        })
 }
 
 /// The endpoint this build can POST to, or `None` if it has none it can use.
@@ -76,7 +112,7 @@ const fn is_usable(url: &str) -> bool {
 /// disagreed: the diagnostics report said the endpoint was missing while
 /// [`spawn`] built a sender and POSTed to the empty string forever, at debug
 /// level. One accessor means they cannot diverge again.
-const fn endpoint() -> Option<&'static str> {
+fn endpoint() -> Option<&'static str> {
     // A let chain rather than nested `if`s: edition 2024, and clippy asks.
     if let Some(url) = ENDPOINT
         && is_usable(url)
@@ -92,7 +128,7 @@ const fn endpoint() -> Option<&'static str> {
 /// build that cannot send is a sentence that describes nothing happening, and
 /// the bundle is where someone would go looking for why.
 #[must_use]
-pub const fn is_configured() -> bool {
+pub fn is_configured() -> bool {
     endpoint().is_some()
 }
 
@@ -108,7 +144,7 @@ pub const fn is_configured() -> bool {
 /// be the moment the contradiction appears: a build with no endpoint can be
 /// launched with consent already on, or consent can be switched on in one.
 #[must_use]
-pub const fn should_warn(enabled: bool) -> bool {
+pub fn should_warn(enabled: bool) -> bool {
     enabled && !is_configured()
 }
 
@@ -121,8 +157,9 @@ pub fn warn_if_unconfigured(enabled: bool) {
     if should_warn(enabled) {
         log::warn!(
             "usage reporting is switched on, but this build has no usable collector \
-             endpoint -- FLUME_USAGE_ENDPOINT was unset, empty, or not an https:// \
-             URL when it was built. Events will queue on disk and never be sent."
+             endpoint -- FLUME_USAGE_ENDPOINT was unset or did not point to \
+             an HTTPS /v1/usage route when it was built. Events will queue on \
+             disk and never be sent."
         );
     }
 }
@@ -454,20 +491,10 @@ mod tests {
 
     #[test]
     fn only_a_real_https_url_counts_as_usable() {
-        // Table-driven and over literals, so it holds whatever this build was
-        // compiled with -- the previous test asserted
-        // `is_configured() == ENDPOINT.is_some()`, which is the exact
-        // equivalence that was wrong, and it passed under `Some("")` by
-        // agreeing with the bug.
+        // Keep this matrix in step with the release validator's Node test.
         for good in [
-            "https://flume-usage.example.workers.dev/v1/usage",
-            "https://x",
-            // Trailing whitespace is left alone deliberately: the `url` crate
-            // reqwest parses with normalises it away, and rejecting it here
-            // when `release.yml`'s glob accepts it would create the reverse
-            // drift -- a secret with a stray newline passing CI and shipping
-            // a build that compiles inert.
-            "https://x.dev/v1/usage\n",
+            "https://flume-usage.real-account.workers.dev/v1/usage",
+            "https://collector.flume.app:8443/v1/usage",
         ] {
             assert!(is_usable(good), "{good:?} should be usable");
         }
@@ -484,8 +511,28 @@ mod tests {
             "http://localhost:8787/v1/usage",
             // Scheme but no host: fails every POST exactly as "" does.
             "https://",
-            // Case matters, because `release.yml`'s glob is case-sensitive.
-            "HTTPS://x.dev",
+            "HTTPS://collector.flume.app/v1/usage",
+            "https://flume-usage.<your-subdomain>.workers.dev/v1/usage",
+            "https://flume-usage.your-subdomain.workers.dev/v1/usage",
+            "https://collector.example.com/v1/usage",
+            "https://localhost:8787/v1/usage",
+            "https://x/v1/usage",
+            "https://bad..flume.app/v1/usage",
+            "https://-bad.flume.app/v1/usage",
+            "https://127.0.0.1/v1/usage",
+            "https://[::1]/v1/usage",
+            "https://[::ffff:127.0.0.1]/v1/usage",
+            "https://8.8.8.8/v1/usage",
+            "https://[2001:4860:4860::8888]/v1/usage",
+            "https://collector.flume.app",
+            "https://collector.flume.app/v1/usage/",
+            "https://collector.flume.app/v1/x/../usage",
+            "https://user:pass@collector.flume.app/v1/usage",
+            "https://@collector.flume.app/v1/usage",
+            "https://collector.flume.app/v1/usage?",
+            "https://collector.flume.app/v1/usage?foo=bar",
+            "https://collector.flume.app/v1/usage#",
+            "https://collector.flume.app/v1/usage\n",
         ] {
             assert!(!is_usable(bad), "{bad:?} should not be usable");
         }
