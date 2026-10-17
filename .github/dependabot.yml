@@ -13,14 +13,17 @@ updates:
       tauri:
         patterns: ["tauri", "tauri-build", "tauri-plugin-*"]
     ignore:
-      # rust-ini 0.21.3 added two fields to the public `ParseOption` struct,
+      # rust-ini 0.21.2 added two fields to the public `ParseOption` struct,
       # which is not `#[non_exhaustive]` -- so every struct literal of it
       # stopped compiling, in a patch release. `tauri-plugin-deep-link` builds
-      # one at src/lib.rs:539, and the whole Linux build fails with E0063.
+      # one at src/lib.rs:539 setting exactly `enabled_quote` and
+      # `enabled_escape`, so the Linux build fails with E0063.
       #
-      # Held at 0.21.2 in Cargo.lock because of that. We do not depend on
-      # rust-ini ourselves and there is nothing to bump; the entry exists so a
-      # weekly lockfile bump cannot quietly put 0.21.3 back.
+      # Held at 0.21.1 in Cargo.lock, the last version whose `ParseOption` has
+      # exactly those two fields. We do not depend on rust-ini ourselves and
+      # there is nothing to bump; the entry exists so a weekly lockfile bump
+      # cannot quietly move it forward again. `cargo audit` is clean at 0.21.1,
+      # so this costs no advisory fix.
       #
       # Only visible on Linux: deep-link's ini use is behind
       # `cfg(target_os = "linux")`, so a macOS build and a macOS `cargo
