@@ -93,6 +93,67 @@ describe("a remembered destination", () => {
     );
   });
 
+  it("clears a remembered override when the add uses the session folder", async () => {
+    // Returning to the default has to *remove* the override, not store it as
+    // another one. Reporting only paths left the old one behind: the next add
+    // collapsed it to `null` without clearing it, so changing the global
+    // folder later revived a destination the user had moved away from.
+    previewTorrent.mockResolvedValue({
+      ...PREVIEW,
+      // Gone, so the remembered folder is dropped and the add falls back to
+      // the session folder — the same end state as choosing it by hand.
+      savePath: PREVIEW.savePath,
+    });
+    destinationPreflight.mockResolvedValue({
+      exists: false,
+      freeBytes: null,
+      alreadyOnDisk: [false],
+    });
+    const onFolderUsed = vi.fn();
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Gone"
+        onFolderUsed={onFolderUsed}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/not there any more/)).toBeDefined(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    await waitFor(() =>
+      expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
+    );
+    expect(onFolderUsed).toHaveBeenCalledWith(null);
+  });
+
+  it("does not write settings when the destination is unchanged", async () => {
+    // An ordinary add, with nothing remembered and nothing chosen, has
+    // nothing to say about destinations.
+    const onFolderUsed = vi.fn();
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        onFolderUsed={onFolderUsed}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    await waitFor(() => expect(confirmAdd).toHaveBeenCalled());
+    expect(onFolderUsed).not.toHaveBeenCalled();
+  });
+
   it("will not send a remembered folder that is no longer there", async () => {
     // The remembered folder can be on a volume that has since been
     // unmounted. The engine would create the path again on the local disk

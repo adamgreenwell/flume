@@ -71,7 +71,7 @@ export interface AddTorrentDialogProps {
    * Only on a successful add: remembering a destination the user abandoned
    * would make the next add default to a choice they backed out of.
    */
-  onFolderUsed?: (folder: string) => void;
+  onFolderUsed?: (folder: string | null) => void;
   /**
    * Recent download rate to estimate the finish time against, or `null`.
    *
@@ -322,6 +322,18 @@ export function AddTorrentDialog({
     const picked = await open({ directory: true, multiple: false });
     if (typeof picked !== "string" || !preview) return;
 
+    // Choosing the folder the session would have used anyway is not an
+    // override, it is the absence of one. Recording it as a path meant
+    // returning to the default persisted it as a custom destination -- and
+    // the next add then collapsed it back to `null` without ever clearing
+    // what was stored, so changing the global folder revived the old path.
+    if (sameFolder(picked, preview.savePath)) {
+      setFolder(null);
+      setChecked(null);
+      setFolderError(null);
+      return;
+    }
+
     setFolder(picked);
     await checkFolder(preview.infoHash, picked);
   };
@@ -337,18 +349,28 @@ export function AddTorrentDialog({
       // here. The two are the same today and would drift the moment the
       // setting changed while a dialog was open.
       await confirmAdd(preview.infoHash, all ? null : [...selected], folder);
-      // Remembered only now, with the add through: a destination recorded
+      // Reported only now, with the add through: a destination recorded
       // when it was picked would outlive a cancelled dialog.
+      //
+      // `null` is reported as readily as a path, and that is the point. It
+      // means this add used the session folder, which has to *clear* any
+      // remembered override -- otherwise returning to the default leaves the
+      // old path stored, and changing the global folder later revives it.
+      //
+      // Only when it differs from what was remembered, so an ordinary add
+      // does not write settings for no reason.
       //
       // The `alreadyAdded` half cannot currently fire -- that case shows no
       // Change button and adopts no default, so `folder` is always null
-      // there. It is here as the statement of the rule rather than as the
-      // thing enforcing it: the engine returns `AlreadyManaged` and leaves
-      // the files alone, so a folder chosen for one was never used, and
-      // remembering it would default the *next* add to it. If the row is
-      // ever shown for an existing torrent, this is what stops that
-      // regression.
-      if (folder && !preview.alreadyAdded) onFolderUsed?.(folder);
+      // there and equal to what was remembered. It is here as the statement
+      // of the rule: the engine returns `AlreadyManaged` and leaves the
+      // files alone, so a folder chosen for one was never used.
+      const remembered = defaultFolder ?? null;
+      const changed =
+        folder === null || remembered === null
+          ? folder !== remembered
+          : !sameFolder(folder, remembered);
+      if (changed && !preview.alreadyAdded) onFolderUsed?.(folder);
       pendingHashRef.current = null;
       onClose();
     } catch (caught: unknown) {

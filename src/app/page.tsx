@@ -550,6 +550,9 @@ export default function Home() {
           initialMagnet={incomingMagnet}
           rateBps={averageDownBps}
           defaultFolder={addFolder ?? undefined}
+          // `null` means the add used the session folder, which clears any
+          // remembered override rather than leaving it to be revived the
+          // next time the global folder changes.
           onFolderUsed={(picked) => {
             // Applied now so a second add in the same session defaults to
             // it, persisted behind the queue like every other setting here.
