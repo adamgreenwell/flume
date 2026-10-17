@@ -77,7 +77,11 @@ pub fn spawn(app: AppHandle) {
             // paused in the next one -- which is the tick this map first names
             // it. Decorating with the newer reasons would label a torrent
             // "stopped at your ratio limit" while it is still seeding.
-            let snapshot = state.telemetry(&engine).await;
+            // Stamped as it is taken: a removal between here and the
+            // evaluation below means this snapshot describes a library that
+            // no longer exists, and `evaluate_policy` drops it rather than
+            // write bookkeeping for a torrent that has gone.
+            let (snapshot, mark) = state.marked_telemetry(&engine).await;
 
             // Policy decides; this loop acts. The split is deliberate --
             // `evaluate` is pure and testable, and everything that touches the
@@ -90,7 +94,7 @@ pub fn spawn(app: AppHandle) {
                 // reorder -- or a force -- land in between and be overwritten
                 // by a value computed before it happened.
                 let actions = state
-                    .evaluate_policy(&snapshot, &rules, TELEMETRY_INTERVAL.as_secs())
+                    .evaluate_policy(&snapshot, &rules, TELEMETRY_INTERVAL.as_secs(), mark)
                     .await;
 
                 for action in &actions {

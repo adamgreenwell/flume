@@ -48,8 +48,6 @@
 mod rules;
 mod state;
 
-use std::collections::HashSet;
-
 use crate::engine::{PauseReason, TelemetrySnapshot, TorrentState, TorrentSummary};
 
 pub use rules::{QueueLimits, QueueLine, Rules, TorrentRules};
@@ -107,13 +105,15 @@ pub fn evaluate(
     let mut state = previous.clone();
     let mut actions = Vec::new();
 
-    // Torrents that vanished should not leave bookkeeping behind for ever.
-    let present: HashSet<&str> = snapshot
-        .torrents
-        .iter()
-        .map(|t| t.info_hash.as_str())
-        .collect();
-    state.retain(|info_hash| present.contains(info_hash));
+    // Nothing is pruned here, deliberately. A torrent missing from this
+    // snapshot has not necessarily gone anywhere: one whose drive is
+    // unmounted fails to restore and is absent from every snapshot of the
+    // run, and dropping its bookkeeping on that basis cost it the queue place
+    // and the force the user gave it. Pruning happens where a removal is
+    // actually known, in `AppState::forget_torrent`.
+    //
+    // It is also what keeps this function a pure function of its arguments
+    // rather than one with a side effect on how long state lives.
 
     for torrent in &snapshot.torrents {
         // Seeding time accrues only while actually seeding. A torrent paused
