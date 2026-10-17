@@ -6,8 +6,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { selectedBytes as sumSelected } from "@/lib/filetree";
 import { formatBytes } from "@/lib/format";
-import { confirmAdd, discardPreview, previewTorrent } from "@/lib/ipc/client";
-import { isCommandError, type TorrentPreview } from "@/lib/ipc/types";
+import {
+  confirmAdd,
+  destinationPreflight,
+  discardPreview,
+  previewTorrent,
+} from "@/lib/ipc/client";
+import {
+  isCommandError,
+  type DestinationPreflight,
+  type TorrentPreview,
+} from "@/lib/ipc/types";
 import { looksLikeMagnet } from "@/lib/magnet";
 
 import { Button } from "./Button";
@@ -23,6 +32,21 @@ export interface AddTorrentDialogProps {
   initialMagnet?: string;
   /** A `.torrent` path to resolve immediately, from a drag-and-drop. */
   droppedPath?: string;
+  /**
+   * Where this add will write, unless the user changes it.
+   *
+   * The last folder an add used, or the global download folder when there
+   * has not been one. Passed in rather than read here so the screen has one
+   * source for it.
+   */
+  defaultFolder?: string;
+  /**
+   * Called with the folder an add actually used, to be remembered.
+   *
+   * Only on a successful add: remembering a destination the user abandoned
+   * would make the next add default to a choice they backed out of.
+   */
+  onFolderUsed?: (folder: string) => void;
   /**
    * Recent download rate to estimate the finish time against, or `null`.
    *
@@ -52,6 +76,8 @@ export function AddTorrentDialog({
   initialMagnet = "",
   droppedPath,
   rateBps = null,
+  defaultFolder,
+  onFolderUsed,
 }: AddTorrentDialogProps) {
   const [magnet, setMagnet] = useState(initialMagnet);
   const [preview, setPreview] = useState<TorrentPreview | null>(null);
@@ -62,6 +88,16 @@ export function AddTorrentDialog({
   const [waitedSeconds, setWaitedSeconds] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The chosen destination, and the preflight re-answered for it.
+  //
+  // `null` in `checked` means nothing has been chosen, so the preview's own
+  // figures stand. Once a folder is picked they are replaced rather than
+  // adjusted: free space belongs to a volume and "already on disk" to a
+  // folder, so neither survives the change.
+  const [folder, setFolder] = useState<string | null>(null);
+  const [checked, setChecked] = useState<DestinationPreflight | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   // Kept in a ref so the unmount cleanup does not need `preview` as a dep,
@@ -172,13 +208,46 @@ export function AddTorrentDialog({
     await resolve({ kind: "file", path });
   };
 
+  /**
+   * Chooses a destination and re-answers the preflight for it.
+   *
+   * The selection is deliberately left alone. It started as "everything you
+   * do not already have", and a file that is absent from the new folder is
+   * now shown unmarked and unselected rather than being silently ticked --
+   * re-selecting files the user may have deselected on purpose would be
+   * worse than making them press Select all.
+   */
+  const chooseFolder = async () => {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked !== "string" || !preview) return;
+
+    setFolder(picked);
+    setFolderError(null);
+    try {
+      setChecked(await destinationPreflight(preview.infoHash, picked));
+    } catch (caught: unknown) {
+      // The figures are dropped rather than left describing the old folder.
+      // An honest "unknown" is what `PreflightTiles` renders for null, and
+      // it beats a number about somewhere else.
+      setChecked({ freeBytes: null, alreadyOnDisk: [] });
+      setFolderError(describe(caught, "Could not check that folder."));
+    }
+  };
+
   const confirm = async () => {
     if (!preview) return;
     setIsAdding(true);
     setError(null);
     try {
       const all = selected.size === preview.files.length;
-      await confirmAdd(preview.infoHash, all ? null : [...selected]);
+      // `null` when the user did not choose one, so the engine uses the
+      // session's own folder rather than a copy of the global setting made
+      // here. The two are the same today and would drift the moment the
+      // setting changed while a dialog was open.
+      await confirmAdd(preview.infoHash, all ? null : [...selected], folder);
+      // Remembered only now, with the add through. A destination recorded
+      // when it was picked would outlive a cancelled dialog.
+      if (folder) onFolderUsed?.(folder);
       pendingHashRef.current = null;
       onClose();
     } catch (caught: unknown) {
@@ -207,15 +276,27 @@ export function AddTorrentDialog({
 
   const chosenBytes = preview ? sumSelected(preview.files, selected) : 0;
 
+  // The destination in force, and the figures that describe it.
+  //
+  // `checked` wins once a folder has been chosen, because the preview's
+  // answers were about a different folder. Not merged -- there is nothing
+  // to merge, they are answers to the same two questions about somewhere
+  // else.
+  const destination = folder ?? defaultFolder ?? preview?.savePath ?? "";
+  const freeBytes = checked ? checked.freeBytes : (preview?.freeBytes ?? null);
+  const alreadyOnDisk = checked
+    ? checked.alreadyOnDisk
+    : (preview?.alreadyOnDisk ?? []);
+
   // Indices already present at full length, as a set for the tree to test.
   const onDisk = useMemo(
     () =>
       new Set(
         (preview?.files ?? [])
-          .filter((f) => preview?.alreadyOnDisk[f.index])
+          .filter((f) => alreadyOnDisk[f.index])
           .map((f) => f.index),
       ),
-    [preview],
+    [preview, alreadyOnDisk],
   );
 
   // Files the user has chosen anyway, despite already having them. The footer
@@ -375,13 +456,38 @@ export function AddTorrentDialog({
           </div>
         </div>
 
+        <div className="border-line flex shrink-0 items-center gap-2 border-b px-3.5 py-2">
+          <span className="text-fg-3 shrink-0 text-[10px] font-semibold tracking-[0.09em] uppercase">
+            Saving to
+          </span>
+          {/*
+            Truncated from the left, so the end of a long path -- the part
+            that says which folder this actually is -- stays visible. `dir`
+            is what makes the ellipsis land at the start.
+          */}
+          <span
+            dir="rtl"
+            title={destination}
+            className="text-fg-1 min-w-0 grow truncate text-left text-[12px]"
+          >
+            {destination}
+          </span>
+          <Button onClick={() => void chooseFolder()}>Change</Button>
+        </div>
+        {folderError === null ? null : (
+          <p className="text-warn shrink-0 px-3.5 py-1.5 text-[11px]">
+            {folderError} The figures below are shown as unknown rather than
+            describing the previous folder.
+          </p>
+        )}
+
         <PreflightTiles
           seenPeers={preview.seenPeers}
           selectedBytes={chosenBytes}
           totalBytes={preview.totalBytes}
           selectedCount={selected.size}
           totalCount={preview.files.length}
-          freeBytes={preview.freeBytes}
+          freeBytes={freeBytes}
           rateBps={rateBps}
         />
 

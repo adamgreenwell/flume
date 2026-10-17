@@ -372,6 +372,7 @@ const SETTINGS: Settings = {
   theme: "system",
   density: "comfortable",
   sort: { by: "activity", direction: "desc" },
+  lastAddFolder: null,
   rail: "expanded",
   egressGuard: "off",
   egressInterface: null,

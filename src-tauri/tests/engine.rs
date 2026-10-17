@@ -275,7 +275,7 @@ async fn the_session_file_reader_matches_what_librqbit_writes() {
         .expect("preview succeeds");
     let expected = preview.info_hash.clone();
     engine
-        .confirm_add(&expected, None)
+        .confirm_add(&expected, None, None)
         .await
         .expect("confirm add");
 
@@ -321,7 +321,7 @@ async fn the_missing_sidecar_check_matches_where_librqbit_writes() {
         .expect("preview succeeds");
     let expected = preview.info_hash.clone();
     engine
-        .confirm_add(&expected, None)
+        .confirm_add(&expected, None, None)
         .await
         .expect("confirm add");
 
@@ -388,7 +388,7 @@ async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
         .expect("preview");
 
     let id = engine
-        .confirm_add(&preview.info_hash, None)
+        .confirm_add(&preview.info_hash, None, None)
         .await
         .expect("add succeeds");
 
@@ -399,7 +399,7 @@ async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
 
     // The stashed metadata is single-use, so an abandoned dialog cannot leak it.
     assert!(matches!(
-        engine.confirm_add(&preview.info_hash, None).await,
+        engine.confirm_add(&preview.info_hash, None, None).await,
         Err(flume_lib::engine::EngineError::NoPendingPreview)
     ));
 
@@ -422,7 +422,7 @@ async fn discarding_a_preview_releases_it() {
     engine.discard_preview(&preview.info_hash).await;
 
     assert!(matches!(
-        engine.confirm_add(&preview.info_hash, None).await,
+        engine.confirm_add(&preview.info_hash, None, None).await,
         Err(flume_lib::engine::EngineError::NoPendingPreview)
     ));
 
@@ -500,7 +500,7 @@ async fn add_sample(tmp: &TempDir, engine: &Engine) -> (usize, std::path::PathBu
         .await
         .expect("preview");
     let id = engine
-        .confirm_add(&preview.info_hash, None)
+        .confirm_add(&preview.info_hash, None, None)
         .await
         .expect("add");
 
@@ -652,7 +652,7 @@ async fn magnet_resolves_real_metadata_over_the_dht() {
     // bytes, so this returns effectively instantly.
     let id = tokio::time::timeout(
         Duration::from_secs(10),
-        engine.confirm_add(&preview.info_hash, Some(vec![0])),
+        engine.confirm_add(&preview.info_hash, Some(vec![0]), None),
     )
     .await
     .expect("confirm should not re-fetch over the DHT")
@@ -680,7 +680,7 @@ async fn torrents_survive_a_restart() {
             .await
             .expect("preview");
         engine
-            .confirm_add(&preview.info_hash, None)
+            .confirm_add(&preview.info_hash, None, None)
             .await
             .expect("add");
 
@@ -727,7 +727,7 @@ async fn file_selection_survives_a_restart() {
             .await
             .expect("preview");
         let id = engine
-            .confirm_add(&preview.info_hash, Some(vec![0]))
+            .confirm_add(&preview.info_hash, Some(vec![0]), None)
             .await
             .expect("add");
 
@@ -1072,4 +1072,79 @@ async fn the_later_of_two_overlapping_restarts_is_the_one_left_running() {
              restart built"
         );
     }
+}
+
+/// A per-torrent folder overrides the session's, and the preflight follows it.
+///
+/// Also the test for the mutual exclusion `AddTorrentOptions` documents:
+/// librqbit errors when `output_folder` and `sub_folder` are both set, so an
+/// add that succeeds *and* lands in the requested folder proves only one of
+/// them was given. Flume has no code path that sets `sub_folder` at all,
+/// which is a stronger guarantee than validating a pair, but this is what
+/// catches someone adding one.
+#[tokio::test]
+async fn a_chosen_folder_overrides_the_session_default() {
+    let tmp = TempDir::new().expect("tempdir");
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+
+    let elsewhere = tmp.path().join("elsewhere");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+    let preview = engine
+        .preview(TorrentSource::File { path })
+        .await
+        .expect("preview");
+
+    // The preview answers against the session default, which is the thing a
+    // chosen destination invalidates.
+    // Compared as paths: librqbit hands back the list-only folder with a
+    // trailing separator, which is the same directory and not the same
+    // string.
+    assert_eq!(
+        std::path::Path::new(&preview.save_path),
+        tmp.path().join("downloads"),
+        "the preview is meant to describe the default folder"
+    );
+
+    // Re-answered for the chosen one. The file is not there, so this is the
+    // "do I have it already" question returning the honest no -- and it is a
+    // different no from the one the preview computed.
+    let checked = engine
+        .destination_preflight(&preview.info_hash, &elsewhere.display().to_string())
+        .await
+        .expect("preflight the chosen folder");
+    assert_eq!(checked.already_on_disk.len(), preview.files.len());
+    assert!(
+        checked.already_on_disk.iter().all(|there| !there),
+        "nothing is on disk in a folder that does not exist yet"
+    );
+
+    let id = engine
+        .confirm_add(
+            &preview.info_hash,
+            None,
+            Some(elsewhere.display().to_string()),
+        )
+        .await
+        .expect("add into the chosen folder");
+
+    let landed = elsewhere.join("ubuntu.iso");
+    assert!(
+        wait_for(&landed).await,
+        "the torrent should be laid down at {landed:?}, not under the session default"
+    );
+    assert!(
+        !tmp.path().join("downloads").join("ubuntu.iso").exists(),
+        "nothing should have been written to the session default"
+    );
+
+    // And the summary reports where it actually went, which is what the
+    // detail panel renders.
+    let summary = engine
+        .torrent_summaries()
+        .into_iter()
+        .find(|t| t.id == id)
+        .expect("the torrent is in the session");
+    assert_eq!(summary.output_folder, elsewhere.display().to_string());
 }

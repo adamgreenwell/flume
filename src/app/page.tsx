@@ -111,6 +111,10 @@ export default function Home() {
   } | null>(null);
   const [view, setView] = useState<ViewId>("all");
   const [query, setQuery] = useState("");
+  // Where the next add defaults to: the last folder one used, or the global
+  // download folder when there has not been one. Held here rather than read
+  // in the dialog so there is one source for it on this screen.
+  const [addFolder, setAddFolder] = useState<string | null>(null);
   // Mirrors the persisted `ui.sort` setting, like density and the rail. Held
   // here so the control stays instant, and written back so the choice -- key
   // and direction both -- survives a restart.
@@ -218,6 +222,7 @@ export default function Home() {
         applyTheme(s.theme);
         setCompact(s.density === "compact");
         setSort(s.sort);
+        setAddFolder(s.lastAddFolder ?? s.downloadDir);
         setRailCollapsed(s.rail === "collapsed");
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
@@ -371,6 +376,7 @@ export default function Home() {
               applyTheme(s.theme);
               setCompact(s.density === "compact");
               setSort(s.sort);
+              setAddFolder(s.lastAddFolder ?? s.downloadDir);
               setRailCollapsed(s.rail === "collapsed");
               setDownloadLimitBps(s.downloadLimitBps);
             })
@@ -539,6 +545,13 @@ export default function Home() {
           droppedPath={droppedPath}
           initialMagnet={incomingMagnet}
           rateBps={averageDownBps}
+          defaultFolder={addFolder ?? undefined}
+          onFolderUsed={(picked) => {
+            // Applied now so a second add in the same session defaults to
+            // it, persisted behind the queue like every other setting here.
+            setAddFolder(picked);
+            void patchSettings({ lastAddFolder: picked });
+          }}
           onClose={() => {
             setIsAdding(false);
             setDroppedPath(undefined);

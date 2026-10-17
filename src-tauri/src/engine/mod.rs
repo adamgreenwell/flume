@@ -34,7 +34,7 @@ use librqbit::{
     SessionOptions, SessionPersistenceConfig, api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
-pub use add::{TorrentFile, TorrentPreview, TorrentSource};
+pub use add::{DestinationPreflight, TorrentFile, TorrentPreview, TorrentSource};
 pub use bottleneck::{Bottleneck, LimitFactor};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, DEFAULT_PEER_LIMIT, EngineConfig};
 pub use detail::{
@@ -204,6 +204,20 @@ pub enum EngineError {
     Operation(#[source] anyhow::Error),
 }
 
+/// A resolved preview waiting for the user to confirm or discard it.
+///
+/// The file list is kept alongside the bytes, rather than re-derived, because
+/// choosing a destination has to re-answer the preflight questions against
+/// the new folder -- and both of those are pure functions of the file list.
+/// Re-parsing the torrent to get it back would be work to recover something
+/// that was in hand a moment ago.
+struct PendingAdd {
+    /// The `.torrent` bytes, handed to `add_torrent` on confirmation.
+    bytes: Vec<u8>,
+    /// Every file, in torrent order.
+    files: Vec<add::TorrentFile>,
+}
+
 /// An owned, running torrent session.
 ///
 /// Cloning is cheap: the underlying [`librqbit::Session`] is reference counted.
@@ -217,7 +231,7 @@ pub struct Engine {
     /// This is why confirming an add does not re-fetch a magnet's metadata
     /// from the DHT, and why those bytes never need to travel to the webview
     /// and back.
-    pending: Arc<tokio::sync::RwLock<HashMap<String, Vec<u8>>>>,
+    pending: Arc<tokio::sync::RwLock<HashMap<String, PendingAdd>>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -682,10 +696,13 @@ impl Engine {
             .get(TorrentIdOrHash::Hash(listed.info_hash))
             .is_some();
 
-        self.pending
-            .write()
-            .await
-            .insert(info_hash.clone(), listed.torrent_bytes.to_vec());
+        self.pending.write().await.insert(
+            info_hash.clone(),
+            PendingAdd {
+                bytes: listed.torrent_bytes.to_vec(),
+                files: files.clone(),
+            },
+        );
 
         // librqbit resolves the output folder for a list-only add without
         // creating it, so this is where the files would land.
@@ -724,8 +741,9 @@ impl Engine {
         &self,
         info_hash: &str,
         only_files: Option<Vec<usize>>,
+        output_folder: Option<String>,
     ) -> Result<usize, EngineError> {
-        let bytes = self
+        let pending = self
             .pending
             .write()
             .await
@@ -735,9 +753,18 @@ impl Engine {
         let response = self
             .session
             .add_torrent(
-                AddTorrent::from_bytes(bytes),
+                AddTorrent::from_bytes(pending.bytes),
                 Some(AddTorrentOptions {
                     only_files,
+                    // `None` means the session's own folder, which is the
+                    // global setting -- so the default costs nothing and
+                    // needs no special case.
+                    //
+                    // `sub_folder` is never set, here or anywhere. librqbit
+                    // errors if both are given, and the way to make that
+                    // impossible is to have exactly one of them in the
+                    // codebase rather than to validate a pair.
+                    output_folder,
                     // Required for librqbit to resume or seed over files that
                     // already exist on disk; without it a restarted download
                     // refuses to touch its own partial data.
@@ -754,6 +781,37 @@ impl Engine {
                 "session unexpectedly returned a listing"
             ))),
         }
+    }
+
+    /// What a chosen destination means for a torrent awaiting confirmation.
+    ///
+    /// Both questions the add dialog asks -- will it fit, and do I have some
+    /// of it already -- are answered relative to a folder, so choosing a
+    /// different one invalidates the answers the preview came with. Free
+    /// space especially: picking another disk is often *why* someone changes
+    /// the destination, and showing the original volume's figure would be
+    /// wrong exactly when it is being relied on.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::NoPendingPreview`] if nothing is awaiting confirmation
+    /// under this hash.
+    pub async fn destination_preflight(
+        &self,
+        info_hash: &str,
+        folder: &str,
+    ) -> Result<DestinationPreflight, EngineError> {
+        let pending = self.pending.read().await;
+        let files = &pending
+            .get(info_hash)
+            .ok_or(EngineError::NoPendingPreview)?
+            .files;
+
+        let folder = std::path::Path::new(folder);
+        Ok(DestinationPreflight {
+            free_bytes: preflight::free_bytes(folder),
+            already_on_disk: preflight::already_on_disk(folder, files),
+        })
     }
 
     /// Discards a pending preview the user cancelled.
