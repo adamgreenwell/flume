@@ -174,7 +174,15 @@ export function AddTorrentDialog({
       // described the one it was not using. Only when it actually differs
       // from where the session would put it: equal values should stay `null`
       // so the engine's own default remains the single source of that path.
-      if (defaultFolder && !sameFolder(defaultFolder, resolved.savePath)) {
+      // Not for a torrent already in the list. Adding it again replaces its
+      // file selection and leaves its data where it is, so a destination is
+      // not a choice there -- and preflighting one would check a folder
+      // nothing will be written to.
+      if (
+        !resolved.alreadyAdded &&
+        defaultFolder &&
+        !sameFolder(defaultFolder, resolved.savePath)
+      ) {
         setFolder(defaultFolder);
         void checkFolder(resolved.infoHash, defaultFolder);
       }
@@ -311,9 +319,18 @@ export function AddTorrentDialog({
       // here. The two are the same today and would drift the moment the
       // setting changed while a dialog was open.
       await confirmAdd(preview.infoHash, all ? null : [...selected], folder);
-      // Remembered only now, with the add through. A destination recorded
+      // Remembered only now, with the add through: a destination recorded
       // when it was picked would outlive a cancelled dialog.
-      if (folder) onFolderUsed?.(folder);
+      //
+      // The `alreadyAdded` half cannot currently fire -- that case shows no
+      // Change button and adopts no default, so `folder` is always null
+      // there. It is here as the statement of the rule rather than as the
+      // thing enforcing it: the engine returns `AlreadyManaged` and leaves
+      // the files alone, so a folder chosen for one was never used, and
+      // remembering it would default the *next* add to it. If the row is
+      // ever shown for an existing torrent, this is what stops that
+      // regression.
+      if (folder && !preview.alreadyAdded) onFolderUsed?.(folder);
       pendingHashRef.current = null;
       onClose();
     } catch (caught: unknown) {
@@ -522,24 +539,33 @@ export function AddTorrentDialog({
           </div>
         </div>
 
-        <div className="border-line flex shrink-0 items-center gap-2 border-b px-3.5 py-2">
-          <span className="text-fg-3 shrink-0 text-[10px] font-semibold tracking-[0.09em] uppercase">
-            Saving to
-          </span>
-          {/*
+        {/*
+          Hidden for a torrent already in the list. `savePath` describes where
+          a *new* add would go -- a list-only add resolves the session folder,
+          not the existing torrent's -- so showing it beside a torrent whose
+          files are elsewhere would assert the wrong path. The notice below
+          says the destination cannot be changed instead.
+        */}
+        {preview.alreadyAdded ? null : (
+          <div className="border-line flex shrink-0 items-center gap-2 border-b px-3.5 py-2">
+            <span className="text-fg-3 shrink-0 text-[10px] font-semibold tracking-[0.09em] uppercase">
+              Saving to
+            </span>
+            {/*
             Truncated from the left, so the end of a long path -- the part
             that says which folder this actually is -- stays visible. `dir`
             is what makes the ellipsis land at the start.
           */}
-          <span
-            dir="rtl"
-            title={destination}
-            className="text-fg-1 min-w-0 grow truncate text-left text-[12px]"
-          >
-            {destination}
-          </span>
-          <Button onClick={() => void chooseFolder()}>Change</Button>
-        </div>
+            <span
+              dir="rtl"
+              title={destination}
+              className="text-fg-1 min-w-0 grow truncate text-left text-[12px]"
+            >
+              {destination}
+            </span>
+            <Button onClick={() => void chooseFolder()}>Change</Button>
+          </div>
+        )}
         {folderError === null ? null : (
           <p className="text-warn shrink-0 px-3.5 py-1.5 text-[11px]">
             {folderError} The figures below are shown as unknown rather than
@@ -586,7 +612,8 @@ export function AddTorrentDialog({
             role="status"
           >
             This torrent is already in your list. Adding it again replaces its
-            file selection.
+            file selection, and leaves its files where they are — the
+            destination cannot be changed here.
           </p>
         ) : null}
 

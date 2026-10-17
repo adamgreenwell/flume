@@ -111,9 +111,13 @@ export default function Home() {
   } | null>(null);
   const [view, setView] = useState<ViewId>("all");
   const [query, setQuery] = useState("");
-  // Where the next add defaults to: the last folder one used, or the global
-  // download folder when there has not been one. Held here rather than read
-  // in the dialog so there is one source for it on this screen.
+  // The last folder an add used, or `null` for "follow the global folder".
+  //
+  // `null` is kept rather than flattened into the current `downloadDir`.
+  // Resolving it once at load froze that value: changing the download folder
+  // in Settings left this holding the old path, which the add sheet then
+  // read as a deliberate choice and wrote the torrent to. `null` means the
+  // engine's own folder, and the engine is always current.
   const [addFolder, setAddFolder] = useState<string | null>(null);
   // Mirrors the persisted `ui.sort` setting, like density and the rail. Held
   // here so the control stays instant, and written back so the choice -- key
@@ -222,7 +226,7 @@ export default function Home() {
         applyTheme(s.theme);
         setCompact(s.density === "compact");
         setSort(s.sort);
-        setAddFolder(s.lastAddFolder ?? s.downloadDir);
+        setAddFolder(s.lastAddFolder);
         setRailCollapsed(s.rail === "collapsed");
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
@@ -376,7 +380,7 @@ export default function Home() {
               applyTheme(s.theme);
               setCompact(s.density === "compact");
               setSort(s.sort);
-              setAddFolder(s.lastAddFolder ?? s.downloadDir);
+              setAddFolder(s.lastAddFolder);
               setRailCollapsed(s.rail === "collapsed");
               setDownloadLimitBps(s.downloadLimitBps);
             })

@@ -146,6 +146,38 @@ describe("a remembered destination", () => {
     );
   });
 
+  it("neither offers nor remembers a destination for a torrent already added", async () => {
+    // Adding an existing torrent replaces its file selection and leaves its
+    // data where it is, so the folder is ignored. Remembering it anyway
+    // would default the *next* add to a folder nothing was written to — and
+    // `savePath` here describes where a new add would go, not where this
+    // torrent's files actually are, so showing it would assert a wrong path.
+    previewTorrent.mockResolvedValue({ ...PREVIEW, alreadyAdded: true });
+    const onFolderUsed = vi.fn();
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Media"
+        onFolderUsed={onFolderUsed}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+    expect(screen.queryByText("Saving to")).toBeNull();
+    expect(destinationPreflight).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    await waitFor(() =>
+      expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
+    );
+    expect(onFolderUsed).not.toHaveBeenCalled();
+  });
+
   it("will not let the add start while the folder is still being checked", async () => {
     // Confirming mid-check would start the torrent against the previous
     // folder's free space, which is the decision the sheet exists to inform.
