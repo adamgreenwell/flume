@@ -357,6 +357,15 @@ looks — `cargo test`, `tsc`, the linters and CI all pass. So the drift surface
 only in a release build, where it fails on every platform at once and after the
 tag is already pushed, which is how 1.4.0's first build died.
 
+**A new gate has to be added in three places.** `npm run check` is not what
+CI runs: `.github/workflows/ci.yml` lists the steps individually, and
+`scripts/preflight.sh` lists them a third time. So a check added only to the
+aggregate script protects whoever types `npm run check` and nobody else —
+which is exactly what happened to this one on its first attempt, leaving a
+guard that looked present and would have let the next ecosystem-only
+Dependabot update merge green and break the release again. Add to all three,
+or the gate is decoration.
+
 It drifts because `dependabot.yml` has a `tauri` group for the crates and a
 separate one for `@tauri-apps/*`, and neither knows about the other: either
 merging alone breaks the next release. `scripts/check-tauri-parity.mjs` compares

@@ -61,6 +61,14 @@ jobs:
 
       - run: npm ci
 
+      # --- Fail fast ------------------------------------------------------
+      # Before the expensive steps, and separately from them: a Tauri version
+      # mismatch cannot be caught by anything below -- only `tauri build`
+      # looks, and only a release runs that, so without this a Dependabot
+      # update to one ecosystem merges green and breaks the next release.
+      - name: Tauri version parity
+        run: npm run check:tauri
+
       # --- Frontend -------------------------------------------------------
       - name: TypeScript
         run: npm run typecheck

@@ -44,6 +44,7 @@ run() {
 }
 
 echo "Frontend"
+run "tauri parity"     npm run check:tauri
 run "typecheck"        npm run typecheck
 run "lint"             npm run lint
 run "format"           npm run format:check
