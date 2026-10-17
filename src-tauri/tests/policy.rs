@@ -1692,6 +1692,76 @@ fn a_total_limit_governs_both_kinds() {
     );
 }
 
+/// A total limit the per-kind caps cannot reach decides nothing.
+///
+/// `apply_queue` enforces all three, so a total above everything the per-kind
+/// caps can reach together never refuses anything: one download and one seed
+/// cannot breach a total of ten. The counters stay independent, so the kinds
+/// are still two lines — merging them on the mere presence of a total
+/// reported successful moves that changed nothing.
+#[test]
+fn a_total_limit_that_cannot_bind_does_not_merge_the_lines() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let snap = snapshot(vec![download.clone(), seed.clone()]);
+    let state = PolicyState::default();
+
+    let redundant = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        max_active_total: Some(10),
+    };
+    assert!(!redundant.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &redundant),
+        vec![
+            vec![download.info_hash.clone()],
+            vec![seed.info_hash.clone()],
+        ],
+        "a total of ten cannot hold back one download and one seed"
+    );
+
+    // Exactly reachable is still not binding: one of each is two, and a
+    // total of two refuses nothing the caps already allow.
+    let exact = QueueLimits {
+        max_active_total: Some(2),
+        ..redundant
+    };
+    assert!(!exact.total_can_bind());
+
+    // One lower, and it decides: now only one of the two may run.
+    let binding = QueueLimits {
+        max_active_total: Some(1),
+        ..redundant
+    };
+    assert!(binding.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &binding),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "one line, because the total now refuses what the caps allow"
+    );
+
+    // An uncapped kind is unbounded, so the total is the only thing holding
+    // it and always binds.
+    let one_kind_uncapped = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: None,
+        max_active_total: Some(10),
+    };
+    assert!(one_kind_uncapped.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &one_kind_uncapped),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "ten seeds would breach a total of ten, so they are competing"
+    );
+}
+
 /// A move is within the torrent's own line, and refused across lines.
 ///
 /// `move_in_queue` had no test at all, which is worth recording given it is

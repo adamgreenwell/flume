@@ -84,6 +84,33 @@ impl QueueLimits {
             && self.max_active_total.is_none()
     }
 
+    /// Whether the total limit can ever refuse what the per-kind caps allow.
+    ///
+    /// `apply_queue` enforces all three, so a total above everything the
+    /// per-kind caps can reach together is dead weight: one download and one
+    /// seed cannot breach a total of ten, so that total decides nothing and
+    /// the two kinds are not competing after all. Treating it as though they
+    /// were put them in one line, where moving a download past a seed
+    /// reported success and changed nothing about what ran.
+    ///
+    /// A kind with no cap of its own is unbounded, so the total is the only
+    /// thing holding it and always binds.
+    #[must_use]
+    pub const fn total_can_bind(&self) -> bool {
+        match (
+            self.max_active_total,
+            self.max_active_downloads,
+            self.max_active_seeds,
+        ) {
+            (None, _, _) => false,
+            (Some(_), None, _) | (Some(_), _, None) => true,
+            // Saturating because the sum is a ceiling, not a count: a pair of
+            // caps near `u32::MAX` is already further than any total can
+            // reach, and wrapping would say the opposite.
+            (Some(total), Some(downloads), Some(seeds)) => total < downloads.saturating_add(seeds),
+        }
+    }
+
     /// Which queue line a torrent of this kind waits in, if any.
     ///
     /// Not a yes-or-no question, which is the mistake this replaces. A limit
@@ -94,12 +121,14 @@ impl QueueLimits {
     /// and moving a download past a seed would change both their displayed
     /// places without changing which download or seed runs next.
     ///
-    /// The total limit is the only thing that makes them compete, because
-    /// under it a download starting does keep a seed waiting. Then, and only
-    /// then, they share one line.
+    /// A total limit is what makes them compete -- but only if it can
+    /// actually bind. Set to more than the two per-kind caps can reach
+    /// together, it never refuses anything `apply_queue` would otherwise
+    /// have admitted, so the counters stay independent and the kinds are
+    /// still two lines. See [`Self::total_can_bind`].
     #[must_use]
     pub const fn line_for(&self, is_seed: bool) -> Option<QueueLine> {
-        if self.max_active_total.is_some() {
+        if self.total_can_bind() {
             return Some(QueueLine::Shared);
         }
         if is_seed {

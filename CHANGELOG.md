@@ -45,9 +45,10 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   action — there is no line for them to be in. Cap both kinds and you have two
   lines, ranked separately: a download and a seed can both read "1", because
   each is first of what it is actually waiting behind, and a download cannot
-  be moved past a seed because doing so would change neither one's turn. Only
-  a total limit puts them in one line together, because under it a download
-  starting does keep a seed waiting.
+  be moved past a seed because doing so would change neither one's turn. A
+  total limit puts them in one line together — but only if it can actually
+  bite: one download and one seed cannot breach a total of ten, so that total
+  decides nothing and the two lines stay separate.
 
   A torrent you started past the limits now says so, as **Queue: Started by
   you**. It runs on top of the limits rather than inside them — neither
