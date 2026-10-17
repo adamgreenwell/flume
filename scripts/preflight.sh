@@ -48,6 +48,7 @@ run "typecheck"        npm run typecheck
 run "lint"             npm run lint
 run "format"           npm run format:check
 run "tests"            npm run test
+run "release endpoint" npm run test:release-endpoint
 run "static export"    npm run build
 
 echo "Backend"

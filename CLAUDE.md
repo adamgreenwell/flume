@@ -57,6 +57,19 @@ flume.dev (a React node editor). Both verified unrelated.
 | Guard hysteresis   | Hold on the first failing probe, release after 10 s    | Asymmetric on purpose: protection is never delayed, only recovery. A laptop waking or a VPN reconnecting resolves in seconds, and releasing into one costs a re-announce to every tracker plus a DHT announce, per torrent                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Audit ignores      | Only with a written reachability argument              | `cargo audit` is configured by `src-tauri/.cargo/audit.toml`, not by a flag in ci.yml, so a local run and the gate always agree. One entry so far: RUSTSEC-2026-0293 (ringbuf 0.4.8). It is unreachable rather than tolerated — the bug needs an element's `Drop` to panic, and librqbit-utp's only ring buffer is `SharedRb<Heap<u8>>`, whose element drop is a no-op. The fix is a semver-major ringbuf bump that librqbit-utp 0.7.0 cannot reach, so it waits on an upstream release. "cargo cannot fix it" is never the reason on its own                                                                                                |
 
+## Release collector endpoint
+
+Both release package jobs use `scripts/validate-usage-endpoint.mjs` before
+exporting `FLUME_USAGE_ENDPOINT` to the native build. A configured value must
+be a concrete HTTPS URL with a DNS host and exactly `/v1/usage`, without
+placeholders, IP literals, credentials, a query, or a fragment. The Rust sender applies the
+same checks for local builds. When the secret is absent, the variable stays
+absent from the build environment and reporting compiles inert. This validates
+the baked-in address, not the Worker's live availability; a release still needs
+runtime verification before publication.
+Manual dispatch of an older tag fails closed because that tag lacks the
+validator; repair requires a new immutable tag from guarded source.
+
 ## Architecture rules (violating one is a design defect)
 
 1. No torrent binary data over IPC. librqbit writes pieces to disk; the UI gets JSON only.

@@ -74,6 +74,9 @@ jobs:
       - name: Vitest
         run: npm run test
 
+      - name: Release endpoint validator
+        run: npm run test:release-endpoint
+
       - name: Next.js static export
         run: npm run build
 

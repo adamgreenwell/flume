@@ -38,10 +38,11 @@ npm run migrate
 npm run deploy
 ```
 
-Then build the app with the endpoint baked in:
+Then set `DEPLOYED_COLLECTOR_URL` to the **actual HTTPS origin** printed for
+your deployed Worker and build the app with its endpoint baked in:
 
 ```bash
-FLUME_USAGE_ENDPOINT=https://<your-worker>/v1/usage npm run tauri build
+FLUME_USAGE_ENDPOINT="$DEPLOYED_COLLECTOR_URL/v1/usage" npm run tauri build
 ```
 
 Without that variable the client compiles with reporting inert and sends
@@ -54,14 +55,18 @@ send none of them, with nothing visibly wrong. It now logs a warning at
 startup, and again if consent is granted later, and the diagnostics report says
 `ON, BUT THIS BUILD HAS NO USABLE COLLECTOR ENDPOINT`.
 
-"Cannot send" means unset, empty, or not an `https://` URL with a host — all
-three, not just unset. `option_env!` distinguishes unset from empty, so
-`FLUME_USAGE_ENDPOINT=` compiles to `Some("")`, which once read as configured
+"Cannot send" means unset, empty, malformed, or a placeholder rather than a
+concrete HTTPS URL with a DNS host and the exact `/v1/usage` path. Credentials,
+query strings, fragments, local hostnames, and IP literals are rejected.
+`option_env!` distinguishes
+unset from empty: `FLUME_USAGE_ENDPOINT=` compiles to `Some("")`, which once read as configured
 and POSTed to the empty string forever. `usage::sender::endpoint()` is the
 single accessor both `is_configured()` and `Sender::new()` consult, so the
 warning, the diagnostics line and whether a sender exists at all can no longer
-disagree. The gate in `release.yml` enforces the same rule, deliberately
-character-for-character.
+disagree. Both release jobs call `scripts/validate-usage-endpoint.mjs` before
+exporting the value into their build environment. Its tests run in CI, and
+the Rust sender uses the same route and placeholder checks for local builds.
+They do not prove that the deployed Worker is reachable or accepting batches.
 
 `build.rs` declares `cargo::rerun-if-env-changed=FLUME_USAGE_ENDPOINT`, so
 changing the variable forces a rebuild. Without that, setting it on an
