@@ -446,27 +446,6 @@ impl AppState {
         // onto, and the guard builds a fresh one on release anyway.
         //
         // Architecture rule 12 -- the guard fails closed, everywhere.
-        // Two questions, and both must be answered before publishing.
-        //
-        // The published status covers a hold decided while this was running,
-        // including one still inside its settle window. It is enough when the
-        // start came from `update_settings`, because the guard loop keeps
-        // ticking alongside it.
-        //
-        // It is not enough when the guard itself started this: that loop is
-        // sequential, so it cannot publish a new status while awaiting the
-        // construction it is waiting on. A fresh probe is the only thing that
-        // can see a tunnel that dropped in between.
-        if self.egress_status().await.held || !self.transfer_permitted_now().await {
-            log::info!("egress guard began holding while the engine was starting; discarding it");
-            engine.shutdown().await;
-            // The start itself worked, so an older failure message is no
-            // longer the reason there is no engine -- the guard is, and the
-            // guard status says so on its own.
-            *self.start_failure.write().await = None;
-            return Ok(());
-        }
-
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
         // Reconciled *before* the engine is published. Every command gates on
         // `engine()`, so publishing first opens a window in which a
@@ -480,7 +459,42 @@ impl AppState {
         // settings change that requires a restart.
         self.reconcile_library().await;
 
-        *self.engine.write().await = Some(engine);
+        // The engine slot is held across the decision *and* the publication,
+        // which is the only arrangement that closes this.
+        //
+        // Two questions have to be answered before an engine goes live. The
+        // published status covers a hold decided while this was running,
+        // including one still inside its settle window; a fresh probe covers
+        // the case the published status cannot, because the guard loop is
+        // sequential and so a guard-initiated start can never see a status
+        // published while it waits.
+        //
+        // Asking them *earlier* than this was not enough, and the reason is
+        // worth keeping: the guard decides whether to stop an engine by
+        // looking for one. Between a check up here and a publication down
+        // there, it can see no engine, correctly do nothing, and leave the
+        // session to be published into a hold it has already declared. The
+        // window was `reconcile_library`, which reads `session.json`.
+        //
+        // Holding the slot makes the pair atomic against that: the guard's
+        // own read blocks, so it either sees no engine before the decision
+        // -- in which case the decision refuses -- or the published one
+        // after, which it shuts down. There is no third ordering. Brief,
+        // too: a status read, one probe, and a pointer write.
+        let mut slot = self.engine.write().await;
+        if self.egress_status().await.held || !self.transfer_permitted_now().await {
+            drop(slot);
+            log::info!("egress guard began holding while the engine was starting; discarding it");
+            engine.shutdown().await;
+            // The start itself worked, so an older failure message is no
+            // longer the reason there is no engine -- the guard is, and the
+            // guard status says so on its own.
+            *self.start_failure.write().await = None;
+            return Ok(());
+        }
+        *slot = Some(engine);
+        drop(slot);
+
         // Cleared last, with an engine already published. A retry that
         // succeeded has nothing left to explain.
         *self.start_failure.write().await = None;

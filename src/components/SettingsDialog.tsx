@@ -155,6 +155,21 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const edits = useRef(0);
 
   /**
+   * The latest edit ordinal per field, for the effects that are not state.
+   *
+   * Theme, density and the rail are applied to the DOM as well as stored,
+   * and installing a settings object does not re-apply them. So the global
+   * ordinal is the wrong test for *undoing* one: with a later edit to some
+   * unrelated field, a failed theme write would skip its own rollback and
+   * leave the window dark while the control and the backend both read light.
+   *
+   * Per field, the question is the one that matters -- has anyone touched
+   * *this* since -- and the answer governs the effect while the global
+   * ordinal still governs the whole-object install.
+   */
+  const fieldEdits = useRef(new Map<string, number>());
+
+  /**
    * Writes one field and records it as an undoable change.
    *
    * The optimistic update is deliberate: a control that waits for a round trip
@@ -168,8 +183,11 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       if (previous === next) return;
 
       const mine = ++edits.current;
-      /** Whether this edit is still the most recent one made. */
+      fieldEdits.current.set(def.id, mine);
+      /** Whether this edit is still the most recent one made anywhere. */
       const newest = () => edits.current === mine;
+      /** Whether this edit is still the most recent one to *this* field. */
+      const newestForField = () => fieldEdits.current.get(def.id) === mine;
 
       const updated = { ...settings, [def.id]: next } as Settings;
       setSettings(updated);
@@ -223,9 +241,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
         // later edit either. The error is reported regardless -- the user
         // needs to know this change did not stick, whatever they have typed
         // since.
-        if (newest()) {
-          const rolled = await getSettings().catch(() => settings);
-          setSettings(rolled);
+        const rolled = await getSettings().catch(() => settings);
+        if (newest()) setSettings(rolled);
+        // The DOM effects answer to this field alone. A later edit to some
+        // *other* field must not strand the window dark after a failed
+        // theme write, and installing a settings object does not re-apply
+        // them -- only these calls do.
+        if (newestForField()) {
           if (def.id === "theme") applyTheme(rolled.theme);
           if (def.id === "density") applyDensity(rolled.density);
           if (def.id === "rail") applyRail(rolled.rail);
