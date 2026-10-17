@@ -30,8 +30,10 @@ availability histogram — plus seed and queue limits, an opt-in tunnel guard,
 and per-torrent peer limits and IP filtering.
 
 What is not established is a line-by-line pass of the smoke-test checklist on
-every platform: 1.3.0 was installed and exercised on Windows and Linux and
-worked, which is a weaker claim than every item being checked.
+every platform. The 1.2.0 release was installed and exercised on Windows and
+Linux and worked, which is a weaker claim than every item being checked — and
+it is 1.2.0 rather than the current release, so treat it as evidence that the
+app runs on those platforms rather than as validation of what shipped last.
 
 See [[Roadmap]] for what follows, and [[Deliberate-Omissions]] for what will
 not.
