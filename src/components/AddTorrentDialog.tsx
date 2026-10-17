@@ -24,6 +24,31 @@ import { FileTree } from "./FileTree";
 import { Icon } from "./Icon";
 import { PreflightTiles } from "./PreflightTiles";
 
+/**
+ * Whether two paths name the same folder, ignoring a trailing separator.
+ *
+ * librqbit hands back the folder a list-only add resolved to *with* a
+ * trailing separator, which the engine test
+ * `a_chosen_folder_overrides_the_session_default` documents. A raw string
+ * comparison against the remembered folder is therefore true even when both
+ * are the same directory — so every untouched add looked like a custom one,
+ * persisted the global folder as the remembered one, and then kept writing
+ * there after the global setting changed.
+ *
+ * Only the trailing separator, deliberately. Case folding would be wrong on a
+ * case-sensitive volume, and resolving `.`/`..` or symlinks is not something
+ * the webview can do — it never touches the filesystem. This equates the one
+ * divergence that is known to happen rather than guessing at path identity.
+ *
+ * @param a - A path.
+ * @param b - Another path.
+ * @returns Whether they name the same folder.
+ */
+function sameFolder(a: string, b: string): boolean {
+  const trimmed = (path: string) => path.replace(/[/\\]+$/, "");
+  return trimmed(a) === trimmed(b);
+}
+
 /** Props for {@link AddTorrentDialog}. */
 export interface AddTorrentDialogProps {
   /** Called when the dialog should close, after any cleanup. */
@@ -149,7 +174,7 @@ export function AddTorrentDialog({
       // described the one it was not using. Only when it actually differs
       // from where the session would put it: equal values should stay `null`
       // so the engine's own default remains the single source of that path.
-      if (defaultFolder && defaultFolder !== resolved.savePath) {
+      if (defaultFolder && !sameFolder(defaultFolder, resolved.savePath)) {
         setFolder(defaultFolder);
         void checkFolder(resolved.infoHash, defaultFolder);
       }

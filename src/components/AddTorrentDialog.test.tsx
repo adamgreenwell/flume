@@ -92,6 +92,37 @@ describe("a remembered destination", () => {
     );
   });
 
+  it("treats a trailing separator as the same folder", async () => {
+    // librqbit returns the resolved folder with a trailing separator, which
+    // the engine test documents. Comparing raw strings made every untouched
+    // add look like a custom one: it persisted the global folder as the
+    // remembered one, and then kept writing there after the global setting
+    // changed — the exact thing `null` is supposed to prevent.
+    previewTorrent.mockResolvedValue({
+      ...PREVIEW,
+      savePath: `${PREVIEW.savePath}/`,
+    });
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder={PREVIEW.savePath}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+    expect(destinationPreflight).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    await waitFor(() =>
+      expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
+    );
+  });
+
   it("stays null when it matches where the session would put it anyway", async () => {
     // Equal values keep the engine's own default as the single source of
     // that path, rather than freezing a copy of it in every add.
