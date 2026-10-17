@@ -689,6 +689,15 @@ impl AppState {
     ///
     /// This does not weaken the never-delete-on-absence rule: an absence is
     /// not knowledge, and this is.
+    ///
+    /// Takes no policy bookkeeping with it, unlike [`Self::forget_torrent`],
+    /// and there is none to take: `Noted::Created` says no record existed,
+    /// every torrent the session holds is seated one by `Library::reconcile`,
+    /// and bookkeeping is only ever keyed to a torrent that reached a
+    /// snapshot or that the user acted on by session id. A torrent live
+    /// despite the returned `Err` would be the one case with state here, and
+    /// dropping it would then be wrong for the same reason pruning on
+    /// absence was.
     pub async fn withdraw_torrent_added(&self, info_hash: &str, noted: Noted) {
         if noted != Noted::Created {
             return;
@@ -703,8 +712,25 @@ impl AppState {
         self.persist_library(json);
     }
 
-    /// Drops a record for a torrent that was definitely removed.
+    /// Drops a record for a torrent that was definitely removed, and the
+    /// policy bookkeeping that went with it.
+    ///
+    /// The one place either is pruned. `evaluate` used to prune from the set
+    /// of info hashes in the live snapshot, which read an *absence* as a
+    /// removal -- so a torrent that failed to restore was stripped of its
+    /// queue place, force and seeding time on the first tick, while the
+    /// library record it is keyed beside was deliberately kept.
+    ///
+    /// Pruned before the record and not gated on it. `Library::forget`
+    /// returns `false` both for a torrent that had no record and for every
+    /// write while the library is degraded, and in neither case does the
+    /// bookkeeping get to outlive the torrent: a force lands in the policy
+    /// state even when the library refuses to record it, which is what
+    /// `a_force_is_known_to_policy_even_when_the_library_cannot_record_it`
+    /// pins.
     pub async fn forget_torrent(&self, info_hash: &str) {
+        // Taken and released before the library lock, like `set_forced`.
+        self.policy_state.write().await.forget(info_hash);
         let json = {
             let mut library = self.library.write().await;
             if !library.forget(info_hash) {

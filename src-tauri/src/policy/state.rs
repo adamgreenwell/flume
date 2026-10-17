@@ -210,17 +210,26 @@ impl PolicyState {
         &self.forced
     }
 
-    /// Drops bookkeeping for torrents that no longer exist.
+    /// Drops every piece of bookkeeping for a torrent that was removed.
     ///
     /// Without this, state grows for the lifetime of the installation, and a
-    /// removed-then-re-added torrent would inherit stale seeding time.
-    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
-        self.paused.retain(|hash, _| keep(hash));
-        self.seed_seconds.retain(|hash, _| keep(hash));
-        self.forced.retain(|hash| keep(hash));
-        // Pruned with the rest, or a re-added torrent inherits the place its
-        // predecessor had -- `Library::forget` drops the persisted record,
-        // and this map would be the only thing still claiming one.
-        self.queue_positions.retain(|hash, _| keep(hash));
+    /// removed-then-re-added info hash inherits its predecessor's seeding
+    /// time, queue place and force -- an exemption the user granted to
+    /// something they no longer have.
+    ///
+    /// Driven by a removal rather than by absence from a snapshot, which is
+    /// the same distinction [`crate::library::Library::forget`] already
+    /// states for the persisted record: a removal is knowledge, where an
+    /// absence is not. A persisted torrent whose drive is unmounted fails to
+    /// restore and is missing from every snapshot while its record is kept on
+    /// purpose, so pruning on absence stripped exactly the torrent the record
+    /// was protecting -- and `AppState::new` is the only thing that reloads
+    /// the library into this state, so an in-process engine restart brought
+    /// it back with nothing.
+    pub fn forget(&mut self, info_hash: &str) {
+        self.paused.remove(info_hash);
+        self.seed_seconds.remove(info_hash);
+        self.forced.remove(info_hash);
+        self.queue_positions.remove(info_hash);
     }
 }

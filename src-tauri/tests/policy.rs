@@ -234,15 +234,18 @@ fn seeding_time_accrues_only_while_seeding() {
 #[test]
 fn bookkeeping_for_removed_torrents_is_dropped() {
     // Otherwise state grows for ever, and a removed-then-re-added torrent
-    // inherits stale seeding time.
+    // inherits stale seeding time. Driven by the removal rather than by a
+    // later absence, which is what `evaluate` used to read it from.
     let mut state = PolicyState::default();
     state.add_seed_time("gone", 5_000);
     state.mark_paused("gone", PauseReason::RatioReached);
+    state.add_seed_time("staying", 60);
 
-    let out = evaluate(&snapshot(vec![]), &Rules::default(), &state, 1);
+    state.forget("gone");
 
-    assert_eq!(out.state.seed_seconds("gone"), 0);
-    assert_eq!(out.state.paused_reason("gone"), None);
+    assert_eq!(state.seed_seconds("gone"), 0);
+    assert_eq!(state.paused_reason("gone"), None);
+    assert_eq!(state.seed_seconds("staying"), 60, "pruning one prunes one");
 }
 
 // --- Precedence: the interactions that would otherwise be accidental -------
@@ -490,12 +493,14 @@ fn restoring_carries_seeding_time_without_carrying_pause_reasons() {
 }
 
 #[test]
-fn restored_time_for_a_torrent_that_is_gone_is_dropped() {
-    // `retain` runs against the snapshot, so a torrent removed while Flume
-    // was closed does not keep its bookkeeping alive for ever.
+fn restored_time_for_a_torrent_that_is_absent_is_kept() {
+    // Restored from a library record, and kept on exactly the terms that
+    // record is: a torrent missing from the session has not been removed,
+    // so the time it earned is still its own. `evaluate` used to drop it on
+    // the first tick, which beat the restore it had just been handed.
     let restored = PolicyState::with_seed_times(HashMap::from([
         ("a".to_owned(), 500),
-        ("gone".to_owned(), 900),
+        ("absent".to_owned(), 900),
     ]));
 
     let out = evaluate(
@@ -508,12 +513,12 @@ fn restored_time_for_a_torrent_that_is_gone_is_dropped() {
     assert_eq!(
         out.state.seed_seconds("a"),
         500,
-        "the survivor keeps its time"
+        "the restored torrent keeps its time"
     );
     assert_eq!(
-        out.state.seed_seconds("gone"),
-        0,
-        "the absent one is dropped"
+        out.state.seed_seconds("absent"),
+        900,
+        "the absent one was restored for a reason"
     );
 }
 
@@ -2154,9 +2159,9 @@ fn a_promoted_torrent_that_is_paused_does_not_lose_its_slot_to_an_older_one() {
 
 /// A removed torrent's queue place is pruned with the rest of its state.
 ///
-/// `retain` drops the bookkeeping for torrents that are gone. Queue places
-/// were not in that list, so re-adding the same info hash inherited the
-/// place its predecessor had — ahead of torrents that had been waiting —
+/// `forget` drops the bookkeeping for a torrent that was removed. Queue
+/// places were not in that list, so re-adding the same info hash inherited
+/// the place its predecessor had — ahead of torrents that had been waiting —
 /// even though `Library::forget` had dropped the persisted record.
 #[test]
 fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
@@ -2169,7 +2174,7 @@ fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
             .collect(),
     );
 
-    state.retain(|hash| hash != gone);
+    state.forget(&gone);
 
     assert_eq!(
         state.queue_position(&gone),
@@ -2180,6 +2185,187 @@ fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
         state.queue_position(&staying),
         Some(1),
         "pruning one must not drop the others"
+    );
+}
+
+/// Absence from a snapshot is not a removal, and must not prune anything.
+///
+/// `evaluate` used to drop bookkeeping for every info hash the snapshot did
+/// not carry. A persisted torrent whose drive is unmounted fails to restore
+/// and is missing from every snapshot of the run, so the first tick after
+/// launch stripped the queue place, force, seeding time and stop reason of
+/// exactly the torrent `library.json` keeps a record for on purpose.
+#[test]
+fn absence_from_a_snapshot_is_not_a_removal() {
+    let missing = "a".repeat(40);
+    let present = "b".repeat(40);
+
+    let mut before = PolicyState::with_seed_times(HashMap::from([(missing.clone(), 4_200)]))
+        .with_forced([missing.clone()].into_iter().collect())
+        .with_queue_positions([(missing.clone(), 0)].into_iter().collect());
+    before.mark_paused(&missing, PauseReason::SeedTimeReached);
+
+    let after = evaluate(
+        &snapshot(vec![seeding(&present, 1, 0, 1_000)]),
+        &Rules::default(),
+        &before,
+        1,
+    )
+    .state;
+
+    assert_eq!(
+        after.seed_seconds(&missing),
+        4_200,
+        "seeding time was lost, so a seed-time limit fires late"
+    );
+    assert!(
+        after.is_forced(&missing),
+        "the force was lost, so the queue re-parks a torrent the user started"
+    );
+    assert_eq!(
+        after.queue_position(&missing),
+        Some(0),
+        "the place was lost, so the torrent sorts behind everything it was put ahead of"
+    );
+    assert_eq!(
+        after.paused_reason(&missing),
+        Some(PauseReason::SeedTimeReached),
+        "the stop reason was lost, so the row says \"paused\" without saying why"
+    );
+}
+
+/// The window in full: a failed restore, then an in-process engine restart.
+///
+/// The two halves compound. Nothing reloads the library into `PolicyState`
+/// except `AppState::new`, so a tick that pruned the absent torrent left it
+/// stripped for the rest of the run -- a drive that came back and an engine
+/// restarted in place recovered the torrent and none of what Flume knew
+/// about it. Only quitting the application put it back.
+#[tokio::test]
+async fn a_torrent_that_failed_to_restore_survives_an_engine_restart() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+
+    let mut library = Library::default();
+    library.note_added("a", Some(1_000));
+    library.set_forced("a", true);
+    library.set_queue_positions(&[("a".to_owned(), 0)]);
+    library.record_seed_times(&HashMap::from([("a".to_owned(), 4_200)]));
+    library.save(tmp.path()).expect("save");
+
+    // Local only: no DHT, no UPnP, an ephemeral port, and a download
+    // directory inside the temporary tree.
+    let settings = Settings {
+        download_dir: tmp.path().join("downloads"),
+        listen_port: 0,
+        enable_dht: false,
+        enable_upnp: false,
+        ..Settings::default()
+    };
+    let state = AppState::new(settings.clone(), tmp.path().to_path_buf(), false);
+
+    // The drive is unmounted, so "a" is in the library and in no snapshot.
+    state
+        .evaluate_policy(
+            &snapshot(vec![seeding("b", 1, 0, 1_000)]),
+            &Rules::default(),
+            1,
+        )
+        .await;
+
+    state
+        .restart_engine(&settings)
+        .await
+        .expect("engine starts");
+
+    let policy = state.policy_state().await;
+    assert_eq!(
+        policy.seed_seconds("a"),
+        4_200,
+        "seeding time did not survive the restart"
+    );
+    assert!(
+        policy.is_forced("a"),
+        "the force did not survive the restart"
+    );
+    assert_eq!(
+        policy.queue_position("a"),
+        Some(0),
+        "the queue place did not survive the restart"
+    );
+}
+
+/// A removal and a re-add inside one tick inherit nothing.
+///
+/// The mirror of the case above, and the same cause: pruning was driven by a
+/// later absence, so an info hash that was removed and added again before
+/// the next evaluation was never absent at all. The new torrent took its
+/// predecessor's place at the front of the queue, its force, and seeding
+/// time it had not earned.
+///
+/// In process, deliberately. `forgetting_a_torrent_drops_its_force` proves
+/// the *record* is gone by building a second `AppState`, which says nothing
+/// about the state the next tick actually reads.
+#[tokio::test]
+async fn a_removal_prunes_the_bookkeeping_the_next_tick_reads() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    state.note_torrent_added("a").await;
+    state.set_forced("a", true).await;
+    let mut carried = PolicyState::with_seed_times(HashMap::from([("a".to_owned(), 7_200)]))
+        .with_forced(["a".to_owned()].into_iter().collect())
+        .with_queue_positions([("a".to_owned(), 0)].into_iter().collect());
+    carried.mark_paused("a", PauseReason::SeedTimeReached);
+    state.set_policy_state(carried).await;
+
+    state.forget_torrent("a").await;
+
+    let policy = state.policy_state().await;
+    assert!(
+        !policy.is_forced("a"),
+        "a re-add inherits an exemption granted to a torrent that is gone"
+    );
+    assert_eq!(
+        policy.seed_seconds("a"),
+        0,
+        "a re-add inherits seeding time it never earned, so a limit fires early"
+    );
+    assert_eq!(
+        policy.queue_position("a"),
+        None,
+        "a re-add inherits a place ahead of torrents that had been waiting"
+    );
+    assert_eq!(
+        policy.paused_reason("a"),
+        None,
+        "a re-add arrives already carrying a stop reason"
+    );
+}
+
+/// A removal prunes even when the library has no record to drop.
+///
+/// `AppState::forget_torrent` returns early when `Library::forget` reports
+/// nothing removed, which covers both a torrent with no record and every
+/// write while the library is degraded -- and a force reaches the policy
+/// state in that degraded mode whether or not the record accepts it. So the
+/// bookkeeping is pruned before the record is touched, never behind that
+/// early return.
+#[tokio::test]
+async fn a_removal_prunes_bookkeeping_the_library_knows_nothing_about() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    state
+        .set_policy_state(
+            PolicyState::default().with_forced(["a".to_owned()].into_iter().collect()),
+        )
+        .await;
+
+    state.forget_torrent("a").await;
+
+    assert!(
+        !state.is_forced("a").await,
+        "the force outlived the torrent because the record did not exist"
     );
 }
 
