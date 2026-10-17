@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust** stable, 1.88 or newer
+- **Rust** stable, 1.90 or newer
 - **Node.js** 26, as pinned in `.nvmrc` — `nvm use` or `fnm use` picks it up.
   `npm run check` refuses to run on anything older and says why, because below
   Node 22 the test suite fails as an unreadable vitest worker crash rather than

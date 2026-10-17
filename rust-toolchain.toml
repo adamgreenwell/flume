@@ -7,12 +7,18 @@
 # developer's machine. A green local gate has to mean something, and it cannot
 # while the two sides disagree about which compiler is running.
 #
-# THIS IS NOT THE MSRV. `src-tauri/Cargo.toml` sets `rust-version = "1.88"`,
+# THIS IS NOT THE MSRV. `src-tauri/Cargo.toml` sets `rust-version = "1.90"`,
 # which is the oldest compiler the crate claims to support and the floor
 # cargo's resolver uses when picking dependency versions. Nothing verifies that
 # claim -- CI has always built on stable, and still does, it is just a stable
-# that no longer moves underneath us. Building on 1.88 to check would be a
+# that no longer moves underneath us. Building on 1.90 to check would be a
 # separate job.
+#
+# The two numbers move for unrelated reasons and neither follows the other.
+# This one is bumped to get lints and fixes; the MSRV is bumped because a
+# dependency demands it, and holding it low is not free -- cargo's resolver
+# silently refuses any version needing more, which is how 1.88 held back the
+# Tauri 2.12 line and broke a release. See the comment on `rust-version`.
 #
 # Bump deliberately, in its own commit, so a new lint arrives as a change
 # someone chose rather than as a red build on unrelated work. `rustup check`
