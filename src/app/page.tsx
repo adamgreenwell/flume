@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { describeGuard } from "@/lib/egress";
 import { FirstRun } from "@/components/FirstRun";
 import { ExpandedRow } from "@/components/ExpandedRow";
-import { LibraryToolbar, type SortId } from "@/components/LibraryToolbar";
+import { LibraryToolbar } from "@/components/LibraryToolbar";
 import { Rail } from "@/components/Rail";
 import { NoteCard } from "@/components/NoteCard";
 import { SettingsDialog } from "@/components/SettingsDialog";
@@ -51,6 +51,7 @@ import {
   viewCounts,
   type ViewId,
 } from "@/lib/views";
+import { sortTorrents } from "@/lib/sort";
 import {
   getSettings,
   isFirstRun,
@@ -64,6 +65,7 @@ import { applyDensity, applyRail, applyTheme } from "@/lib/theme";
 import {
   isCommandError,
   type Settings,
+  type SortState,
   type TorrentSummary,
 } from "@/lib/ipc/types";
 
@@ -109,7 +111,13 @@ export default function Home() {
   } | null>(null);
   const [view, setView] = useState<ViewId>("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortId>("activity");
+  // Mirrors the persisted `ui.sort` setting, like density and the rail. Held
+  // here so the control stays instant, and written back so the choice -- key
+  // and direction both -- survives a restart.
+  const [sort, setSort] = useState<SortState>({
+    by: "activity",
+    direction: "desc",
+  });
   // Mirrors the persisted `ui.density` setting. Held here so the toolbar chip
   // stays instant, and written back so the choice survives a restart.
   const [compact, setCompact] = useState(false);
@@ -209,6 +217,7 @@ export default function Home() {
       .then((s) => {
         applyTheme(s.theme);
         setCompact(s.density === "compact");
+        setSort(s.sort);
         setRailCollapsed(s.rail === "collapsed");
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
@@ -244,24 +253,12 @@ export default function Home() {
       (t) => matchesView(t, view) && matchesQuery(t, query),
     );
 
-    // Sorted into a copy: `torrents` is telemetry state, and sorting it in
-    // place would mutate what the next tick diffs against.
-    return [...filtered].sort((a, b) => {
-      switch (sort) {
-        case "size":
-          return b.totalBytes - a.totalBytes;
-        // Ids increase as torrents are added, so they are the arrival order.
-        case "added":
-          return b.id - a.id;
-        // Busiest first, then by name so the order is stable when idle rather
-        // than reshuffling on every tick.
-        case "activity": {
-          const byRate =
-            b.downloadBps + b.uploadBps - (a.downloadBps + a.uploadBps);
-          return byRate !== 0 ? byRate : a.name.localeCompare(b.name);
-        }
-      }
-    });
+    // `sortTorrents` copies rather than sorting in place: `torrents` is
+    // telemetry state, and mutating it would change what the next tick diffs
+    // against. It is also where the ordering rules are tested -- totality,
+    // nulls last, and a direction that applies to the key and not to the
+    // tie-breaks.
+    return sortTorrents(filtered, sort);
   }, [torrents, view, query, sort]);
 
   // Only the open row is polled, and only while it is open. `null` stops the
@@ -373,6 +370,7 @@ export default function Home() {
             .then((s) => {
               applyTheme(s.theme);
               setCompact(s.density === "compact");
+              setSort(s.sort);
               setRailCollapsed(s.rail === "collapsed");
               setDownloadLimitBps(s.downloadLimitBps);
             })
@@ -411,7 +409,13 @@ export default function Home() {
           title={VIEWS.find((v) => v.id === view)?.name ?? "All torrents"}
           count={visible.length}
           sort={sort}
-          onSortChange={setSort}
+          onSortChange={(next) => {
+            // Applied now, persisted behind the queue -- the same shape as
+            // density and the rail beside it. A sort that waited for a round
+            // trip before the list moved would feel broken.
+            setSort(next);
+            void patchSettings({ sort: next });
+          }}
           compact={compact}
           onDensityToggle={() => {
             const next = !compact;

@@ -79,6 +79,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::NetEgressInterface,
         SettingKey::UiTheme,
         SettingKey::UiDensity,
+        SettingKey::UiSort,
         SettingKey::UiRail,
         SettingKey::SeedingRatioLimit,
         SettingKey::SeedingTimeLimit,

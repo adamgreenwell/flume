@@ -37,7 +37,7 @@ use flume_lib::{
         TorrentSummary,
     },
     policy::TorrentRules,
-    settings::{Settings, Theme},
+    settings::{Settings, SortState, Theme},
 };
 use serde_json::Value;
 
@@ -236,6 +236,7 @@ fn settings_match_the_typescript_mirror() {
             "maxActiveTotal",
             "theme",
             "density",
+            "sort",
             "rail",
             "egressGuard",
             "egressInterface",
@@ -243,6 +244,11 @@ fn settings_match_the_typescript_mirror() {
         ],
         "Settings",
     );
+    assert_keys(&SortState::default(), &["by", "direction"], "SortState");
+    // The names are the TypeScript union's members, and #147 will read them
+    // as column ids. A rename on either side has to be a deliberate one.
+    assert_eq!(json(&SortState::default())["by"], "activity");
+    assert_eq!(json(&SortState::default())["direction"], "desc");
 }
 
 #[test]

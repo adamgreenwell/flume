@@ -36,6 +36,67 @@ pub enum Theme {
     Dark,
 }
 
+/// Which key the torrent list is ordered by.
+///
+/// Frontend-only, and the variant names are column names deliberately: #147
+/// moves sorting from the toolbar into the column headers, and a value keyed
+/// to toolbar labels would need migrating when it does.
+///
+/// `Activity` is the exception and stays anyway. It is the sum of the two
+/// rate columns rather than a column of its own, and it is the order someone
+/// glancing at a running client wants, so it is the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SortBy {
+    /// Download plus upload rate. The default.
+    #[default]
+    Activity,
+    /// Torrent name.
+    Name,
+    /// Total size of the selected files.
+    Size,
+    /// Share of the selected bytes verified.
+    Progress,
+    /// Download rate.
+    DownloadBps,
+    /// Upload rate.
+    UploadBps,
+    /// Uploaded over downloaded.
+    Ratio,
+    /// Estimated time to completion.
+    Eta,
+    /// When Flume first added it.
+    Added,
+    /// Lifecycle state.
+    State,
+}
+
+/// Which way a [`SortBy`] runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SortDirection {
+    /// Smallest, earliest or A-first.
+    Asc,
+    /// Largest, latest or Z-first. The default, because every numeric key is
+    /// more useful that way round.
+    #[default]
+    Desc,
+}
+
+/// How the torrent list is ordered.
+///
+/// A pair rather than a single id so a direction survives a relaunch too.
+/// Flipping the arrow and finding it flipped back next launch is the kind of
+/// half-persistence that reads as a bug.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SortState {
+    /// The key rows are ordered by.
+    pub by: SortBy,
+    /// Which way that key runs.
+    pub direction: SortDirection,
+}
+
 /// How tall a torrent row is drawn.
 ///
 /// Frontend-only, like [`Theme`], and persisted here for the same reason: a
@@ -195,6 +256,9 @@ pub struct Settings {
     /// Row height in the library. Frontend-only, persisted for the same reason.
     pub density: Density,
 
+    /// How the torrent list is ordered. Frontend-only, persisted likewise.
+    pub sort: SortState,
+
     /// Sidebar width. Frontend-only, persisted for the same reason.
     pub rail: RailState,
 
@@ -251,6 +315,7 @@ impl Default for Settings {
             max_active_total: None,
             theme: Theme::System,
             density: Density::Comfortable,
+            sort: SortState::default(),
             rail: RailState::Expanded,
             egress_guard: EgressGuard::Off,
             egress_interface: None,

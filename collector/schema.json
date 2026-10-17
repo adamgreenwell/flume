@@ -41,6 +41,7 @@
         "net.egressInterface",
         "ui.theme",
         "ui.density",
+        "ui.sort",
         "ui.rail",
         "seeding.ratioLimit",
         "seeding.timeLimit",
