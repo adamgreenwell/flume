@@ -1923,6 +1923,82 @@ fn a_kind_capped_at_zero_is_in_no_line() {
     );
 }
 
+/// A move inside one line says nothing about the other line.
+///
+/// Written as the line alone, a first reorder of the downloads gave every
+/// download a place while the seeds kept none — and `queue_order` sorts an
+/// absent place last. So raising the limits later, so that the two kinds
+/// share a line, put every download ahead of every seed. The user moved one
+/// download past another; they did not say that.
+#[tokio::test]
+async fn a_move_does_not_reorder_the_line_it_was_not_in() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    // Two lines: each kind capped, no total, so nothing makes them compete.
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let early_download = "a".repeat(40);
+    let first_seed = "b".repeat(40);
+    let second_seed = "c".repeat(40);
+    let late_download = "d".repeat(40);
+
+    // Admission order by arrival, since nobody has reordered: download,
+    // seed, seed, download.
+    let snap = snapshot(vec![
+        TorrentSummary {
+            added_at: Some(100),
+            ..queued(&early_download, 1)
+        },
+        TorrentSummary {
+            added_at: Some(200),
+            ..seeding(&first_seed, 2, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(300),
+            ..seeding(&second_seed, 3, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(400),
+            ..queued(&late_download, 4)
+        },
+    ]);
+
+    assert!(state.move_in_queue(&snap, &late_download, true).await);
+
+    // Every eligible torrent now has a place, not just the downloads.
+    let policy = state.policy_state().await;
+    for hash in [&early_download, &first_seed, &second_seed, &late_download] {
+        assert!(
+            policy.queue_position(hash).is_some(),
+            "{hash} has no place, so a later limits change would sort it last"
+        );
+    }
+
+    // The test: under a total that binds, the two kinds share one line, and
+    // that line must be the original arrival order with only the two
+    // downloads swapped.
+    let binding = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+    assert!(binding.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &policy, &binding),
+        vec![vec![
+            late_download.clone(),
+            first_seed.clone(),
+            second_seed.clone(),
+            early_download.clone(),
+        ]],
+        "the seeds keep their place between the downloads"
+    );
+}
+
 /// A reorder leaves the place of a torrent it does not mention.
 ///
 /// `queue_order` returns only the torrents eligible to run, so one that is

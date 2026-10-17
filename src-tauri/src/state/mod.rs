@@ -894,9 +894,40 @@ impl AppState {
                 return false;
             };
 
-            let mut next = order;
-            next.swap(at, swap_with);
-            next
+            let mut moved = order.clone();
+            moved.swap(at, swap_with);
+
+            // Merged back into the full admission order rather than written
+            // on its own, because a move inside one line must not say
+            // anything about the torrents outside it.
+            //
+            // Written alone, a first reorder of the downloads gave every
+            // download a place while the seeds kept none -- and
+            // `queue_order` sorts an absent place last, so changing the
+            // limits later so the kinds share a line would have put every
+            // download ahead of every seed. The user moved one download past
+            // another; they did not say that.
+            //
+            // So the line's members are substituted back into the places
+            // they occupied in admission order, and everything else keeps
+            // its own. Torrents outside the snapshot still keep their slots:
+            // `set_queue_order` assigns around whatever it is not given.
+            let in_line: std::collections::HashSet<String> = order.into_iter().collect();
+            let full = crate::policy::queue_order(snapshot, &policy);
+            let mut taking = moved.into_iter();
+            full.into_iter()
+                .map(|torrent| {
+                    let hash = torrent.info_hash.clone();
+                    if in_line.contains(&hash) {
+                        // Counts match by construction: the line is a
+                        // subsequence of the admission order, and `moved` is
+                        // a permutation of the line.
+                        taking.next().unwrap_or(hash)
+                    } else {
+                        hash
+                    }
+                })
+                .collect::<Vec<String>>()
         };
 
         // Both halves, like `set_forced`: the policy state the next tick
