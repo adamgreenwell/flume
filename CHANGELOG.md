@@ -6,6 +6,35 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 [kac]: https://keepachangelog.com/en/1.1.0/
 [semver]: https://semver.org/spec/v2.0.0.html
 
+## [Unreleased]
+
+### Added
+
+- **A peer limit you can see and set.** Settings → Network now carries "Connect
+  to at most", a per-torrent cap on connected peers, and the detail panel shows
+  the live count against it — `28 / 128` rather than `28`.
+
+  This makes an existing ceiling visible rather than introducing one, which is
+  worth being plain about. Flume passed librqbit nothing for this, and nothing
+  does not mean unlimited: the engine falls back to 128 per torrent, sizing a
+  semaphore nobody could see. So the default is 128 — the number already in
+  force — and upgrading changes how no existing install behaves.
+
+  The limit is per torrent because that is the only shape the engine offers, so
+  ten torrents at 128 is a ceiling of 1280 sockets. The settings copy says so,
+  since that is the figure a modest router's NAT table has to hold. Changing it
+  needs a session restart, and the panel reports the limit the engine is
+  actually enforcing rather than the one saved on disk, so the two cannot
+  silently disagree while a restart is pending.
+
+### Fixed
+
+- The limiting-factor panel's notes claimed connection slots had no ceiling to
+  measure against, on the grounds that no limit was set. There was always a
+  ceiling; Flume just did not know its value. ([#63][i63])
+
+[i63]: https://github.com/adamgreenwell/flume/issues/63
+
 ## [1.3.0] — 2026-09-10
 
 ### Added

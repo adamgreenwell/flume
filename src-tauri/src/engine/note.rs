@@ -358,6 +358,7 @@ mod tests {
             dead: 0,
             live_tcp: live,
             live_utp: 0,
+            peer_limit: crate::engine::DEFAULT_PEER_LIMIT,
             // These notes are written from pool counts and rates; availability
             // is not one of their inputs.
             seeds: None,

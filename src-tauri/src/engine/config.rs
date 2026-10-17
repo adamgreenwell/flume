@@ -10,6 +10,20 @@ use serde::{Deserialize, Serialize};
 /// firewall hole for it do not have to open another one.
 pub const DEFAULT_LISTEN_PORT: u16 = 42221;
 
+/// Most peers Flume will hold a connection to, per torrent.
+///
+/// 128 is not a number chosen here. It is librqbit's own fallback --
+/// `peer_limit.unwrap_or(128)` sizes the per-torrent peer semaphore -- so
+/// passing it explicitly changes nothing about how Flume has always behaved.
+/// That is the point: this setting makes an existing ceiling visible and
+/// adjustable rather than introducing one.
+///
+/// Worth stating plainly because the obvious assumption is the other way
+/// round: leaving `SessionOptions.peer_limit` as `None` was never "unlimited
+/// peers". It was 128, decided by a dependency, invisible in the UI, and
+/// unmentioned in the limiting-factor panel that exists to name constraints.
+pub const DEFAULT_PEER_LIMIT: u32 = 128;
+
 /// User-controllable settings for the torrent engine.
 ///
 /// This type is deliberately free of Tauri types so the engine can be
@@ -39,6 +53,15 @@ pub struct EngineConfig {
 
     /// Whether to ask the router to forward [`Self::listen_port`] via UPnP.
     pub enable_upnp: bool,
+
+    /// Most peers to hold a connection to, per torrent.
+    ///
+    /// Per torrent rather than per session, because that is the only shape
+    /// librqbit offers: the semaphore lives on the live torrent state. Ten
+    /// torrents at 128 is a ceiling of 1280 sockets, which is the figure that
+    /// matters to a modest NAT table, and is why the settings copy says "per
+    /// torrent" rather than leaving the reader to assume otherwise.
+    pub peer_limit: u32,
 
     /// SOCKS5 proxy for outgoing peer connections, or `None` for direct.
     ///
@@ -77,6 +100,7 @@ impl EngineConfig {
             listen_port: DEFAULT_LISTEN_PORT,
             enable_dht: true,
             enable_upnp: true,
+            peer_limit: DEFAULT_PEER_LIMIT,
             proxy_url: None,
         })
     }

@@ -286,6 +286,15 @@ export interface SwarmStats {
   connecting: number;
   /** Known peers waiting for a connection slot. */
   queued: number;
+  /**
+   * Most peers this torrent may connect to at once.
+   *
+   * From the running engine, not from settings on disk. The two can disagree:
+   * the limit is fixed when a torrent goes live, so a user who changed the
+   * setting without restarting is still held to the old one, and this is the
+   * number actually being enforced.
+   */
+  peerLimit: number;
   /** Distinct peers discovered for this torrent, ever. */
   seen: number;
   /** Peers that failed and were dropped. */
@@ -699,6 +708,14 @@ export interface Settings {
   downloadDir: string;
   /** TCP port for incoming peers. Changing this restarts the session. */
   listenPort: number;
+  /**
+   * Most peers to connect to at once, per torrent. Restarts the session.
+   *
+   * Not nullable, unlike the other limits: there is no "unlimited" to
+   * represent. librqbit caps peers at 128 when given nothing, so an empty
+   * value would mean 128 while reading as no limit.
+   */
+  peerLimit: number;
   /** Whether the DHT runs. Required for magnet links. Restarts the session. */
   enableDht: boolean;
   /** Whether to request a UPnP port mapping. Restarts the session. */

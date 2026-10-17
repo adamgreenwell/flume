@@ -270,6 +270,14 @@ compile.
   is no `disable_dht` boolean.
 - `SessionOptions.listen: Option<ListenerOptions>` **defaults to `None`**,
   meaning no incoming peers and no seeding. Flume always sets it explicitly.
+- `SessionOptions.peer_limit: Option<usize>` is **per torrent**, and `None`
+  does **not** mean unlimited — it means 128. The live torrent state sizes a
+  semaphore with `peer_limit.unwrap_or(128)`, so a ceiling was always in force
+  whether or not Flume set one. That misreading cost real accuracy: the
+  limiting-factor panel documented connection slots as unmeasurable "because
+  `peer_limit` is `None`", and issue #63 was written as though peers were
+  unbounded. Flume now passes the number explicitly and defaults it to 128, so
+  the setting moves an existing ceiling rather than imposing a new one.
 - UPnP is `ListenerOptions.enable_upnp_port_forwarding`, a runtime flag.
 - **There are no cargo features for DHT, UPnP, or torrent v2** — all are
   always compiled in. Only TLS backend, `http-api*`, `postgres`, `prometheus`,

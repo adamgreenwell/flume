@@ -6,6 +6,7 @@ import { formatDuration, formatSpeed } from "@/lib/format";
 
 import {
   COUNT_STEPS,
+  PEER_STEPS,
   RATIO_STEPS,
   SEED_TIME_STEPS,
   SteppedSlider,
@@ -181,6 +182,18 @@ export function SettingControl({
           value={(value as number | null) ?? null}
           label={label}
           format={(n) => (n === 1 ? "1 torrent" : `${n} torrents`)}
+          onChange={onChange}
+          width="w-[86px]"
+        />
+      );
+
+    case "peers":
+      return (
+        <SteppedSlider
+          steps={PEER_STEPS}
+          value={value as number}
+          label={label}
+          format={(n) => (n === 1 ? "1 peer" : `${n} peers`)}
           onChange={onChange}
           width="w-[86px]"
         />

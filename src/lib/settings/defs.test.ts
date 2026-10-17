@@ -7,6 +7,7 @@ import { SECTIONS, SETTING_DEFS, searchSettings } from "./defs";
 const SETTINGS: Settings = {
   downloadDir: "/Volumes/Media/Linux",
   listenPort: 42221,
+  peerLimit: 128,
   enableDht: true,
   enableUpnp: true,
   downloadLimitBps: null,
@@ -182,6 +183,9 @@ describe("searchSettings", () => {
       "maxActiveTotal",
       "seedRatioLimit",
       "seedTimeLimitSecs",
+      // Last because the table is ordered by section, not by relevance, and
+      // the peer limit lives in Network below everything above it.
+      "peerLimit",
     ]);
   });
 });

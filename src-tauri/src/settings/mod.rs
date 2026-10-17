@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::egress::EgressGuard;
-use crate::engine::{DEFAULT_LISTEN_PORT, EngineConfig};
+use crate::engine::{DEFAULT_LISTEN_PORT, DEFAULT_PEER_LIMIT, EngineConfig};
 
 /// Filename inside the app-data directory.
 const SETTINGS_FILE: &str = "settings.json";
@@ -70,6 +70,13 @@ pub enum RailState {
     Collapsed,
 }
 
+/// The largest peer limit [`Settings::validate`] will accept, per torrent.
+///
+/// Not a figure librqbit imposes -- it is where a per-torrent number stops
+/// being about this torrent and starts being about the process. Twenty
+/// torrents at this limit is already ten thousand sockets.
+pub const MAX_PEER_LIMIT: u32 = 500;
+
 /// Everything the user can configure.
 ///
 /// Mirrored in `src/lib/ipc/types.ts`.
@@ -93,6 +100,16 @@ pub struct Settings {
 
     /// Whether to request a UPnP port mapping. Requires a restart.
     pub enable_upnp: bool,
+
+    /// Most peers to connect to at once, per torrent. Requires a restart.
+    ///
+    /// Not an `Option`, unlike every other limit here, and the difference is
+    /// deliberate: there is no "unlimited" to represent. librqbit caps peers
+    /// at 128 when given nothing, so an empty value would mean 128 while
+    /// reading as "no limit" -- which is exactly the misreading this field
+    /// exists to clear up. A number is always in force; the only question is
+    /// which one.
+    pub peer_limit: u32,
 
     /// Global download limit in bytes per second; `None` means unlimited.
     ///
@@ -201,6 +218,7 @@ impl Default for Settings {
             listen_port: DEFAULT_LISTEN_PORT,
             enable_dht: true,
             enable_upnp: true,
+            peer_limit: DEFAULT_PEER_LIMIT,
             download_limit_bps: None,
             upload_limit_bps: None,
             proxy_url: None,
@@ -402,6 +420,25 @@ impl Settings {
                 )));
             }
         }
+        // Zero would hold every torrent at nought peers, which looks
+        // identical to a dead swarm from the UI. Rejected rather than
+        // accepted as a way to stop everything -- pausing does that, visibly.
+        if self.peer_limit == 0 {
+            return Err(SettingsError::Invalid(
+                "a peer limit of 0 would stop all transfer; pause the torrents instead".into(),
+            ));
+        }
+        // An upper bound because the real ceiling is not this setting. Each
+        // peer is a socket, the limit is per torrent, and a library of twenty
+        // torrents multiplies whatever is typed here -- so a large number
+        // surfaces as EMFILE from somewhere deep in the engine rather than as
+        // the slow download the user was trying to fix. Refusing it names the
+        // problem instead.
+        if self.peer_limit > MAX_PEER_LIMIT {
+            return Err(SettingsError::Invalid(format!(
+                "a peer limit above {MAX_PEER_LIMIT} per torrent runs the process out of sockets"
+            )));
+        }
         if let Some(proxy) = self.proxy_url.as_deref() {
             let proxy = proxy.trim();
             if proxy.is_empty() {
@@ -455,6 +492,7 @@ impl Settings {
             listen_port: self.listen_port,
             enable_dht: self.enable_dht,
             enable_upnp: self.enable_upnp,
+            peer_limit: self.peer_limit,
             proxy_url: self.proxy_url.clone(),
         }
     }
@@ -468,6 +506,9 @@ impl Settings {
             || self.listen_port != next.listen_port
             || self.enable_dht != next.enable_dht
             || self.enable_upnp != next.enable_upnp
+            // The peer semaphore is sized when a torrent goes live, so a
+            // changed limit reaches existing torrents only on a restart.
+            || self.peer_limit != next.peer_limit
             // The proxy is fixed when the session is constructed.
             || self.proxy_url != next.proxy_url
     }
@@ -562,6 +603,54 @@ mod tests {
             ..valid()
         };
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_a_zero_peer_limit() {
+        let settings = Settings {
+            peer_limit: 0,
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_a_peer_limit_that_would_exhaust_sockets() {
+        let settings = Settings {
+            peer_limit: MAX_PEER_LIMIT + 1,
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+
+        let at_the_ceiling = Settings {
+            peer_limit: MAX_PEER_LIMIT,
+            ..valid()
+        };
+        assert!(at_the_ceiling.validate().is_ok());
+    }
+
+    /// The default must stay equal to librqbit's own fallback.
+    ///
+    /// Not a tautology against the constant: the point is that upgrading
+    /// Flume does not silently change how many peers an existing install
+    /// connects to. If librqbit ever moves its `unwrap_or(128)`, this test
+    /// keeps passing and the doc comment on `DEFAULT_PEER_LIMIT` becomes the
+    /// thing that is wrong -- which is the right place for the discrepancy to
+    /// be found, since it is a claim about the dependency rather than about
+    /// this code.
+    #[test]
+    fn defaults_to_the_limit_librqbit_already_applied() {
+        assert_eq!(Settings::default().peer_limit, 128);
+    }
+
+    #[test]
+    fn a_changed_peer_limit_requires_a_restart() {
+        let before = valid();
+        let after = Settings {
+            peer_limit: 200,
+            ..valid()
+        };
+        assert!(before.requires_restart(&after));
     }
 
     #[test]

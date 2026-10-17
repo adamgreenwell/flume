@@ -8,15 +8,18 @@ export interface SwarmSummaryProps {
   swarm: SwarmStats;
 }
 
-/** One labelled figure. */
+/** One labelled figure, optionally shown against a ceiling. */
 function Figure({
   label,
   value,
+  of,
   hint,
   tone = "text-fg-0",
 }: {
   label: string;
   value: number;
+  /** The ceiling this figure counts towards, drawn as `3 / 128`. */
+  of?: number;
   hint: string;
   tone?: string;
 }) {
@@ -25,6 +28,9 @@ function Figure({
       <dt className="text-fg-3 text-[11px] tracking-wide uppercase">{label}</dt>
       <dd className={`font-mono text-sm tabular-nums ${tone}`}>
         {value.toLocaleString()}
+        {of === undefined ? null : (
+          <span className="text-fg-3"> / {of.toLocaleString()}</span>
+        )}
       </dd>
     </div>
   );
@@ -51,7 +57,8 @@ export function SwarmSummary({ swarm }: SwarmSummaryProps) {
         <Figure
           label="Live"
           value={swarm.live}
-          hint="Peers with an established connection right now"
+          of={swarm.peerLimit}
+          hint={`Peers with an established connection right now, against the ${swarm.peerLimit}-peer limit for this torrent`}
           tone="text-acc"
         />
         <Figure
@@ -112,6 +119,14 @@ export function SwarmSummary({ swarm }: SwarmSummaryProps) {
           .
         </p>
       )}
+      {swarm.live >= swarm.peerLimit ? (
+        <p className="text-fg-3 mt-1 text-[11px]">
+          At the {swarm.peerLimit}-peer limit for this torrent. Whether that is
+          holding the transfer back depends on what the peers it is not
+          connecting to would have supplied, which is not knowable — raising it
+          in Settings takes effect after a restart.
+        </p>
+      ) : null}
     </div>
   );
 }

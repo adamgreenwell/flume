@@ -64,6 +64,24 @@ export const COUNT_STEPS: ReadonlyArray<number | null> = [
 ];
 
 /**
+ * Peer-connection stops, per torrent, coarsening as they climb.
+ *
+ * The only table here with no `null`, and that is the point: there is no "no
+ * limit" to offer. librqbit caps peers at 128 when Flume passes nothing, so
+ * the slider's job is to move an existing ceiling rather than to remove one.
+ *
+ * 128 is a stop because it is that existing default -- a user who drags the
+ * slider and changes their mind can put it back exactly. The top stop is the
+ * same figure `MAX_PEER_LIMIT` validates against, so the guided path cannot
+ * produce a value the Rust side will reject. The floor is 10 rather than 1:
+ * the validator only refuses 0, but a torrent held to one peer is broken in a
+ * way that looks like a dead swarm, and a slider should not offer that.
+ */
+export const PEER_STEPS: ReadonlyArray<number | null> = [
+  10, 20, 30, 40, 50, 65, 80, 100, 128, 160, 200, 300, 500,
+];
+
+/**
  * Renders a stepped slider over `steps`, with `null` meaning no limit.
  *
  * Factored out of the rate control when the seed limits arrived, and shared
