@@ -122,6 +122,29 @@ describe("the keys", () => {
     expect(order(rows, { by: "progress", direction: "desc" })).toEqual([2, 1]);
   });
 
+  it("sorts a finished torrent as complete before its metadata resolves", () => {
+    // The row draws 100% for this — `progressFraction` treats finished as
+    // complete whatever `totalBytes` says — so the Progress key has to agree.
+    // Computing its own fraction here put a visibly complete row below
+    // incomplete ones.
+    const rows = [
+      torrent({ id: 1, progressBytes: 500, totalBytes: 1000 }),
+      torrent({ id: 2, finished: true, progressBytes: 0, totalBytes: 0 }),
+    ];
+
+    expect(order(rows, { by: "progress", direction: "desc" })).toEqual([2, 1]);
+  });
+
+  it("sorts an over-complete counter as complete, not as more than complete", () => {
+    const rows = [
+      torrent({ id: 1, progressBytes: 1200, totalBytes: 1000 }),
+      torrent({ id: 2, finished: true, progressBytes: 1000, totalBytes: 1000 }),
+    ];
+
+    // Both are 1, so the tie-break decides and neither outranks the other.
+    expect(order(rows, { by: "progress", direction: "desc" })).toEqual([1, 2]);
+  });
+
   it("sorts a zero-byte torrent's progress as nothing rather than dividing by zero", () => {
     const rows = [
       torrent({ id: 1, progressBytes: 0, totalBytes: 0 }),

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRateHistory } from "@/hooks/useThroughputHistory";
 import { formatBytes, formatDuration, formatSpeed } from "@/lib/format";
 import { getTorrentFiles, setOnlyFiles } from "@/lib/ipc/client";
+import { ratio as ratioOf } from "@/lib/torrent";
 import {
   isCommandError,
   type TorrentDetail as TorrentDetailData,
@@ -136,10 +137,10 @@ export function TorrentDetail({
     trackers: detail?.trackers.length ?? null,
   };
 
-  const ratio =
-    torrent.progressBytes === 0
-      ? 0
-      : torrent.uploadedBytes / torrent.progressBytes;
+  // `?? 0` keeps what this panel has always shown. The shared helper returns
+  // `null` for a torrent that has downloaded nothing, which is the right
+  // answer for a sort and for a seed limit; here it reads as 0.00.
+  const ratio = ratioOf(torrent) ?? 0;
 
   const pieceLabel = useMemo(() => {
     if (!detail?.pieces) return "Pieces";

@@ -20,6 +20,7 @@ import type {
   SortState,
   TorrentSummary,
 } from "@/lib/ipc/types";
+import { progressFraction, ratio } from "@/lib/torrent";
 
 export type { SortBy, SortDirection, SortState };
 
@@ -72,22 +73,6 @@ export function defaultDirectionFor(by: SortBy): SortDirection {
   return by === "name" || by === "eta" || by === "state" ? "asc" : "desc";
 }
 
-/** Uploaded ÷ downloaded, or `null` when nothing has been downloaded. */
-function ratioOf(t: TorrentSummary): number | null {
-  // Matches `policy::rules::ratio` and the figure the detail panel shows. A
-  // column that sorted by a different ratio than the one on screen would be
-  // indefensible, so the denominator is `progressBytes` in all three places.
-  return t.progressBytes === 0 ? null : t.uploadedBytes / t.progressBytes;
-}
-
-/** Share of the selected bytes that are verified, from 0 to 1. */
-function progressOf(t: TorrentSummary): number {
-  // A fraction rather than a byte count, so a nearly-finished small torrent
-  // sorts above a barely-started large one. Sorting by bytes downloaded is
-  // what the Size column is for.
-  return t.totalBytes === 0 ? 0 : t.progressBytes / t.totalBytes;
-}
-
 /**
  * The value a key sorts on: a number, or `null` where there is none.
  *
@@ -103,13 +88,17 @@ function valueOf(t: TorrentSummary, by: SortBy): number | null {
     case "size":
       return t.totalBytes;
     case "progress":
-      return progressOf(t);
+      // The displayed fraction, not a second opinion on it. Sorting by a
+      // fraction rather than by bytes is deliberate -- a nearly-finished
+      // small torrent belongs above a barely-started large one, and bytes
+      // downloaded is what the Size column is for.
+      return progressFraction(t);
     case "downloadBps":
       return t.downloadBps;
     case "uploadBps":
       return t.uploadBps;
     case "ratio":
-      return ratioOf(t);
+      return ratio(t);
     case "eta":
       return t.etaSeconds;
     case "added":
