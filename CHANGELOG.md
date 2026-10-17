@@ -43,8 +43,9 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
   **There can be more than one line, and that is worth knowing if you set
   limits per kind.** A cap on downloads says nothing about which seed runs
-  next, so with only that set your seeds show a dash and offer no move
-  action — there is no line for them to be in. Cap both kinds and you have two
+  next, so with only that set your seeds have no place at all: the **In
+  queue** line is absent from the expanded row rather than showing a dash,
+  and there is no move action — there is no line for them to be in. Cap both kinds and you have two
   lines, ranked separately: a download and a seed can both read "1", because
   each is first of what it is actually waiting behind, and a download cannot
   be moved past a seed because doing so would change neither one's turn. A

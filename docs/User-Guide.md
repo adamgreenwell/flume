@@ -119,10 +119,11 @@ arrival time is not evidence of being early.
 A place is a claim about the torrents you are competing with, so it depends on
 which limit is holding you.
 
-Cap only downloads and your seeds are not queued at all: they show a dash
-rather than a number, and offer no move action. There is no line for them to be
-in, and offering to reorder one would be offering to change something that
-cannot change.
+Cap only downloads and your seeds are not queued at all: the expanded row has
+no **In queue** line for them, and there is no move action. The line is absent
+rather than empty, which is the point — a dash would imply the queue has an
+opinion about every torrent, and offering to reorder one would be offering to
+change something that cannot change.
 
 Cap both kinds and you have two lines, ranked separately — a download and a
 seed can both read "1", because each is first of what it is actually waiting
