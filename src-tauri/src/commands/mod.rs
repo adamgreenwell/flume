@@ -153,8 +153,7 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = require_engine(&state).await?;
-    let snapshot = state.library_snapshot().await;
-    Ok(engine.telemetry_with(&snapshot.facts()))
+    Ok(state.telemetry(&engine).await)
 }
 
 impl From<SettingsError> for CommandError {
@@ -536,10 +535,11 @@ pub async fn move_in_queue(
     up: bool,
 ) -> Result<bool, CommandError> {
     let engine = require_engine(&state).await?;
-    let snapshot = {
-        let facts = state.library_snapshot().await;
-        engine.telemetry_with(&facts.facts())
-    };
+    // The stamped snapshot, so the order here is the same one the UI is
+    // showing places from -- two computations of it are two that can
+    // disagree, and disagreeing means the user moves one torrent and a
+    // different one starts.
+    let snapshot = state.telemetry(&engine).await;
     let order: Vec<String> = {
         let policy = state.policy_state().await;
         crate::policy::queue_order(&snapshot, &policy)

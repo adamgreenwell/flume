@@ -21,6 +21,12 @@ pub struct PolicyState {
     seed_seconds: HashMap<String, u64>,
     /// Torrents the user started out of the queue by hand.
     forced: HashSet<String>,
+    /// The user's explicit queue order, as a place per info hash.
+    ///
+    /// Here as well as in the library record for the same reason `forced` is:
+    /// this is what the next tick reads, and the record is what survives a
+    /// restart. A reorder writes both.
+    queue_positions: HashMap<String, u32>,
 }
 
 impl PolicyState {
@@ -38,6 +44,7 @@ impl PolicyState {
             paused: HashMap::new(),
             seed_seconds,
             forced: HashSet::new(),
+            queue_positions: HashMap::new(),
         }
     }
 
@@ -51,6 +58,37 @@ impl PolicyState {
     pub fn with_forced(mut self, forced: HashSet<String>) -> Self {
         self.forced = forced;
         self
+    }
+
+    /// Restores the explicit queue order from the library record.
+    #[must_use]
+    pub fn with_queue_positions(mut self, positions: HashMap<String, u32>) -> Self {
+        self.queue_positions = positions;
+        self
+    }
+
+    /// Replaces the explicit queue order wholesale.
+    ///
+    /// Wholesale because an order is a statement about a set, not about one
+    /// member of it -- see `Library::set_queue_order`, which this mirrors.
+    pub fn set_queue_order(&mut self, order: &[String]) {
+        self.queue_positions = order
+            .iter()
+            .enumerate()
+            .map(|(at, hash)| (hash.clone(), u32::try_from(at).unwrap_or(u32::MAX)))
+            .collect();
+    }
+
+    /// Where the user put this torrent, if they have.
+    ///
+    /// `None` is the overwhelmingly common answer: nobody has reordered, so
+    /// the queue falls back to arrival order. It is deliberately *not* the
+    /// same thing as the place a torrent currently occupies in the line --
+    /// that is a rank over the eligible set, computed per tick, and it is
+    /// what `TorrentSummary::queue_position` reports.
+    #[must_use]
+    pub fn queue_position(&self, info_hash: &str) -> Option<u32> {
+        self.queue_positions.get(info_hash).copied()
     }
 
     /// Accumulated seeding time for every torrent that has any.

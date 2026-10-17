@@ -133,8 +133,6 @@ pub struct LibrarySnapshot {
     pub pause_reasons: std::collections::HashMap<String, PauseReason>,
     /// Torrents the user started past the active limits.
     pub forced: std::collections::HashSet<String>,
-    /// Explicit queue places, counting from zero.
-    pub queue_positions: std::collections::HashMap<String, u32>,
 }
 
 impl LibrarySnapshot {
@@ -145,7 +143,6 @@ impl LibrarySnapshot {
             added: &self.added,
             pause_reasons: &self.pause_reasons,
             forced: &self.forced,
-            queue_positions: &self.queue_positions,
         }
     }
 }
@@ -186,8 +183,9 @@ impl AppState {
         // policy evaluation already knows how long each torrent has seeded.
         // Without this a seed-time limit would restart its count on every
         // launch and never fire for anyone who quits Flume daily.
-        let policy_state =
-            PolicyState::with_seed_times(library.seed_times()).with_forced(library.forced());
+        let policy_state = PolicyState::with_seed_times(library.seed_times())
+            .with_forced(library.forced())
+            .with_queue_positions(library.queue_positions());
 
         Self {
             engine: RwLock::new(None),
@@ -675,6 +673,44 @@ impl AppState {
         self.persist_library(json);
     }
 
+    /// The telemetry snapshot the UI gets, with queue places stamped on.
+    ///
+    /// The one place a snapshot is built for display, because a torrent's
+    /// place in the queue is not a property of the torrent. It is a rank over
+    /// the eligible set, and deciding who is eligible is the policy engine's
+    /// answer -- so it takes the whole snapshot, which means it has to be a
+    /// second pass over one the engine has already built.
+    ///
+    /// Reported for every torrent the queue is actually holding, and `None`
+    /// for the rest. The stored sort key would have been the wrong thing to
+    /// send: it is absent until somebody reorders, so a UI that gated its
+    /// move actions on it could never make the first reorder.
+    ///
+    /// No queue limits means no places at all. Ranking torrents the queue is
+    /// not deciding between would have the UI offer to reorder a line that
+    /// does not exist.
+    pub async fn telemetry(&self, engine: &Engine) -> crate::engine::TelemetrySnapshot {
+        let facts = self.library_snapshot().await;
+        let mut snapshot = engine.telemetry_with(&facts.facts());
+
+        if self.policy_rules().await.queue.is_empty() {
+            return snapshot;
+        }
+
+        // Collected before the mutation so the immutable borrow of the
+        // snapshot ends first.
+        let order: Vec<String> = {
+            let policy = self.policy_state.read().await;
+            crate::policy::queue_order(&snapshot, &policy)
+                .into_iter()
+                .map(|t| t.info_hash.clone())
+                .collect()
+        };
+
+        crate::policy::stamp_queue_places(&mut snapshot, &order);
+        snapshot
+    }
+
     /// Everything the engine needs from above it, read in one pass.
     ///
     /// Owned rather than borrowed, because the three locks behind it must not
@@ -688,7 +724,6 @@ impl AppState {
             added: library.added_times(),
             pause_reasons: policy.pause_reasons().clone(),
             forced: library.forced(),
-            queue_positions: library.queue_positions(),
         }
     }
 
@@ -760,11 +795,15 @@ impl AppState {
         let mut next = order.to_vec();
         next.swap(at, swap_with);
 
+        // Both halves, like `set_forced`: the policy state the next tick
+        // reads, and the library record that survives a restart. Writing only
+        // the record would leave the order unchanged until relaunch, which
+        // reads as the action having done nothing.
+        self.policy_state.write().await.set_queue_order(&next);
+
         let json = {
             let mut library = self.library.write().await;
-            if !library.set_queue_order(&next) {
-                return false;
-            }
+            library.set_queue_order(&next);
             library.to_json()
         };
         self.persist_library(json);

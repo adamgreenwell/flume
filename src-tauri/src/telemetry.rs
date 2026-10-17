@@ -80,7 +80,7 @@ pub fn spawn(app: AppHandle) {
             // paused in the next one -- which is the tick this map first names
             // it. Decorating with the newer reasons would label a torrent
             // "stopped at your ratio limit" while it is still seeding.
-            let snapshot = engine.telemetry_with(&state.library_snapshot().await.facts());
+            let snapshot = state.telemetry(&engine).await;
 
             // Policy decides; this loop acts. The split is deliberate --
             // `evaluate` is pure and testable, and everything that touches the

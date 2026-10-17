@@ -66,8 +66,6 @@ pub struct LibraryFacts<'a> {
     pub pause_reasons: &'a std::collections::HashMap<String, PauseReason>,
     /// Torrents the user started past the active limits.
     pub forced: &'a std::collections::HashSet<String>,
-    /// Explicit queue places, counting from zero.
-    pub queue_positions: &'a std::collections::HashMap<String, u32>,
 }
 
 /// How long `Session::new_with_opts` may take before Flume gives up on it.
@@ -509,12 +507,11 @@ impl Engine {
     pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
         // Empties owned here so the borrows in `LibraryFacts` have something
         // to point at for the length of the call.
-        let (added, pause_reasons, forced, queue_positions) = Default::default();
+        let (added, pause_reasons, forced) = Default::default();
         self.torrent_summaries_with(&LibraryFacts {
             added: &added,
             pause_reasons: &pause_reasons,
             forced: &forced,
-            queue_positions: &queue_positions,
         })
     }
 
@@ -555,12 +552,14 @@ impl Engine {
                 let added_at = facts.added.get(&info_hash).copied();
                 let pause_reason = facts.pause_reasons.get(&info_hash).copied();
                 let forced = facts.forced.contains(&info_hash);
-                // Stored from zero and reported from one: the queue counts
-                // slots and the UI counts places in a line.
-                let queue_position = facts
-                    .queue_positions
-                    .get(&info_hash)
-                    .map(|at| at.saturating_add(1));
+                // Left unset here and stamped by the caller.
+                //
+                // A torrent's place in the queue is a *rank over the eligible
+                // set*, which cannot be known from one torrent -- it needs
+                // the whole snapshot, and deciding who is even eligible is
+                // the policy engine's answer. So this builds the snapshot the
+                // rank is computed from, and `AppState` fills it in.
+                let queue_position = None;
 
                 torrent::summarize(
                     id,
@@ -584,12 +583,11 @@ impl Engine {
 
     /// Builds the full telemetry payload pushed to the UI each tick.
     pub fn telemetry(&self) -> TelemetrySnapshot {
-        let (added, pause_reasons, forced, queue_positions) = Default::default();
+        let (added, pause_reasons, forced) = Default::default();
         self.telemetry_with(&LibraryFacts {
             added: &added,
             pause_reasons: &pause_reasons,
             forced: &forced,
-            queue_positions: &queue_positions,
         })
     }
 

@@ -1381,17 +1381,22 @@ async fn changing_a_setting_clears_the_backoff() {
 fn an_explicit_queue_position_beats_arrival_order() {
     let older = TorrentSummary {
         added_at: Some(1_000),
-        queue_position: Some(1),
         ..queued("a".repeat(40).as_str(), 1)
     };
     let newer = TorrentSummary {
         added_at: Some(2_000),
-        queue_position: Some(0),
         ..queued("b".repeat(40).as_str(), 2)
     };
 
     let snapshot = snapshot(vec![older.clone(), newer.clone()]);
-    let state = PolicyState::default();
+    // The stored order lives in the policy bookkeeping, not on the summary.
+    // `TorrentSummary::queue_position` is the rank this order produces, so
+    // reading it here would be circular.
+    let state = PolicyState::default().with_queue_positions(
+        [(newer.info_hash.clone(), 0), (older.info_hash.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
 
     let order: Vec<&str> = flume_lib::policy::queue_order(&snapshot, &state)
         .into_iter()
@@ -1429,5 +1434,75 @@ fn arrival_order_still_decides_when_nobody_has_reordered() {
     assert_eq!(
         order,
         vec![older.info_hash.as_str(), newer.info_hash.as_str()]
+    );
+}
+
+/// Every torrent the queue holds gets a place, even before anyone reorders.
+///
+/// The regression this covers made the feature unusable rather than wrong:
+/// the wire carried the *stored* sort key, which is absent until somebody
+/// reorders, so every queued torrent reported no place -- and the UI gates
+/// its move actions on having one. Nothing could ever make the first
+/// reorder.
+#[test]
+fn a_queued_torrent_has_a_place_before_anybody_has_reordered() {
+    let first = TorrentSummary {
+        added_at: Some(1_000),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let second = TorrentSummary {
+        added_at: Some(2_000),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+    let mut snap = snapshot(vec![second.clone(), first.clone()]);
+
+    // Nothing stored: the default state is what a fresh or upgraded library
+    // produces, which is exactly the case that was broken.
+    let state = PolicyState::default();
+    let order: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    flume_lib::policy::stamp_queue_places(&mut snap, &order);
+
+    let place = |hash: &str| {
+        snap.torrents
+            .iter()
+            .find(|t| t.info_hash == hash)
+            .and_then(|t| t.queue_position)
+    };
+    assert_eq!(place(&first.info_hash), Some(1), "oldest is first in line");
+    assert_eq!(place(&second.info_hash), Some(2));
+}
+
+/// A torrent the queue does not hold has no place, rather than place zero.
+#[test]
+fn a_torrent_outside_the_queue_has_no_place() {
+    let waiting = queued("a".repeat(40).as_str(), 1);
+    // Checking is never eligible: the queue does not decide about it.
+    let checking = TorrentSummary {
+        state: TorrentState::Checking,
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+    let mut snap = snapshot(vec![waiting.clone(), checking.clone()]);
+
+    let state = PolicyState::default();
+    let order: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    flume_lib::policy::stamp_queue_places(&mut snap, &order);
+
+    let place = |hash: &str| {
+        snap.torrents
+            .iter()
+            .find(|t| t.info_hash == hash)
+            .and_then(|t| t.queue_position)
+    };
+    assert_eq!(place(&waiting.info_hash), Some(1));
+    assert_eq!(
+        place(&checking.info_hash),
+        None,
+        "a dash, not a place: the queue has no opinion about this torrent"
     );
 }

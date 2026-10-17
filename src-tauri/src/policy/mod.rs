@@ -177,6 +177,29 @@ pub fn evaluate(
     Outcome { actions, state }
 }
 
+/// Writes each torrent's place in the line onto the snapshot.
+///
+/// The counterpart to [`queue_order`], and the reason the two live together:
+/// one computes the order, the other reports it, and a UI that offers to
+/// reorder the queue needs the second.
+///
+/// Every torrent in `order` gets a place, counting from one. Everything else
+/// is left `None`, which is what "not in the queue" looks like.
+///
+/// Reporting a *rank* rather than the stored sort key is the whole point. The
+/// stored key is absent until somebody reorders, so sending it meant every
+/// queued torrent reported no place -- and a UI that gated its move actions
+/// on having one could never make the first reorder.
+pub fn stamp_queue_places(snapshot: &mut TelemetrySnapshot, order: &[String]) {
+    for (rank, hash) in order.iter().enumerate() {
+        if let Some(torrent) = snapshot.torrents.iter_mut().find(|t| &t.info_hash == hash) {
+            // From one: the queue counts slots from zero, a user counts
+            // places in a line from one.
+            torrent.queue_position = u32::try_from(rank + 1).ok();
+        }
+    }
+}
+
 /// The queue in the order it would be admitted from.
 ///
 /// Extracted so the order has one definition. The command that reorders the
@@ -225,9 +248,14 @@ pub fn queue_order<'a>(
         .collect();
 
     eligible.sort_by(|a, b| {
-        a.queue_position
+        // The *stored* place, from the policy bookkeeping -- not
+        // `TorrentSummary::queue_position`, which is the rank this function's
+        // own result is used to stamp. Reading that would be circular, and
+        // would have the sort depend on the answer it is computing.
+        state
+            .queue_position(&a.info_hash)
             .unwrap_or(u32::MAX)
-            .cmp(&b.queue_position.unwrap_or(u32::MAX))
+            .cmp(&state.queue_position(&b.info_hash).unwrap_or(u32::MAX))
             .then_with(|| {
                 a.added_at
                     .unwrap_or(u64::MAX)
