@@ -35,6 +35,8 @@ fn test_config(tmp: &TempDir, enable_dht: bool) -> EngineConfig {
         enable_dht,
         enable_upnp: false,
         peer_limit: flume_lib::engine::DEFAULT_PEER_LIMIT,
+        blocklist_url: None,
+        allowlist_url: None,
         proxy_url: None,
     }
 }

@@ -31,9 +31,10 @@ use flume_lib::{
     commands::{CommandError, SeedLimits},
     egress::{EgressGuard, EgressPath, EgressReport, GuardStatus, Hop, InterfaceKind, Verdict},
     engine::{
-        Bottleneck, CoreStatus, DhtStatus, EngineHealth, LimitFactor, Note, NoteSeverity, PeerInfo,
-        PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot, TorrentDetail, TorrentFile,
-        TorrentFileState, TorrentPreview, TorrentSource, TorrentState, TorrentSummary,
+        Bottleneck, CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, LimitFactor, Note,
+        NoteSeverity, PeerInfo, PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot,
+        TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview, TorrentSource, TorrentState,
+        TorrentSummary,
     },
     policy::TorrentRules,
     settings::{Settings, Theme},
@@ -88,6 +89,10 @@ fn sample_core() -> CoreStatus {
         upload_bps: 512,
         live_peers: 3,
         health: EngineHealth::Ready,
+        ip_filter: IpFilterStatus {
+            blocklist: Some(12_431),
+            allowlist: None,
+        },
     }
 }
 
@@ -130,8 +135,14 @@ fn core_status_matches_the_typescript_mirror() {
             "uploadBps",
             "livePeers",
             "health",
+            "ipFilter",
         ],
         "CoreStatus",
+    );
+    assert_keys(
+        &sample_core().ip_filter,
+        &["blocklist", "allowlist"],
+        "IpFilterStatus",
     );
 }
 
@@ -211,6 +222,8 @@ fn settings_match_the_typescript_mirror() {
             "downloadDir",
             "listenPort",
             "peerLimit",
+            "blocklistUrl",
+            "allowlistUrl",
             "enableDht",
             "enableUpnp",
             "downloadLimitBps",

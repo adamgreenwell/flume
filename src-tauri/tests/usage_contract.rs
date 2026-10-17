@@ -73,6 +73,8 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::NetPeerLimit,
         SettingKey::NetUpnp,
         SettingKey::NetProxy,
+        SettingKey::NetBlocklist,
+        SettingKey::NetAllowlist,
         SettingKey::NetEgressGuard,
         SettingKey::NetEgressInterface,
         SettingKey::UiTheme,

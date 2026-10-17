@@ -12,6 +12,8 @@ const SETTINGS: Settings = {
   enableUpnp: true,
   downloadLimitBps: null,
   uploadLimitBps: 2_000_000,
+  blocklistUrl: null,
+  allowlistUrl: null,
   proxyUrl: null,
   seedRatioLimit: 2,
   seedTimeLimitSecs: 86_400,

@@ -16,6 +16,7 @@ const STATUS: CoreStatus = {
   uploadBps: 250_000,
   livePeers: 12,
   health: "ready",
+  ipFilter: { blocklist: null, allowlist: null },
 };
 
 const TUNNELLED: GuardStatus = {

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import type { Hop } from "@/lib/ipc/types";
 import type { Control } from "@/lib/settings/defs";
 import { formatDuration, formatSpeed } from "@/lib/format";
@@ -63,6 +65,76 @@ function Toggle({
         className={`block h-[17px] w-[17px] rounded-full ${on ? "bg-on-acc" : "bg-fg-2"}`}
       />
     </button>
+  );
+}
+
+/**
+ * A text setting that reports once, not once per keystroke.
+ *
+ * Every setting here writes straight through to `update_settings`, which
+ * validates. For a free-text field that is unusable: the first character of
+ * `https://…` is `h`, which is not a URL, so the write is rejected and the
+ * dialog restores the previous value before the second character arrives. The
+ * only way to set one would be to paste it whole.
+ *
+ * It is worse than wasteful for the URLs that restart the session, where
+ * every accepted keystroke would also rebuild the librqbit session and, for a
+ * filter list, re-fetch it.
+ *
+ * So the field holds a draft and reports it on blur or Enter. Escape
+ * abandons the draft, which is the usual contract for an editable field and
+ * the only way out once you have typed something you do not want saved.
+ *
+ * @param props - The current value, its label and placeholder, and where to
+ *   report a committed edit.
+ * @returns The rendered input.
+ */
+function TextSetting({
+  value,
+  label,
+  placeholder,
+  onCommit,
+}: {
+  value: string | null;
+  label: string;
+  placeholder: string;
+  onCommit: (next: string | null) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? value ?? "";
+
+  const commit = () => {
+    if (draft === null) return;
+    // Empty means "not set", which is `null` in the settings, not "".
+    const next = draft.trim() === "" ? null : draft;
+    setDraft(null);
+    if (next !== (value ?? null)) onCommit(next);
+  };
+
+  return (
+    <input
+      type="text"
+      value={shown}
+      aria-label={label}
+      placeholder={placeholder}
+      spellCheck={false}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          // The dialog closes on Escape from a listener on `window`, so
+          // without this, abandoning a draft also dismisses settings --
+          // `preventDefault` alone does not stop the event getting there.
+          event.stopPropagation();
+          setDraft(null);
+        }
+      }}
+      className="border-line bg-bg-2 text-fg-0 placeholder:text-fg-3 selectable h-[var(--flume-h-control)] w-[280px] rounded-md border px-2.5 font-mono text-[12.5px]"
+    />
   );
 }
 
@@ -258,19 +330,11 @@ export function SettingControl({
 
     case "text":
       return (
-        <input
-          type="text"
-          value={(value as string | null) ?? ""}
-          aria-label={label}
+        <TextSetting
+          value={value as string | null}
+          label={label}
           placeholder={control.placeholder}
-          spellCheck={false}
-          onChange={(event) =>
-            // Empty means "not set", which is `null` in the settings, not "".
-            onChange(
-              event.target.value.trim() === "" ? null : event.target.value,
-            )
-          }
-          className="border-line bg-bg-2 text-fg-0 placeholder:text-fg-3 selectable h-[var(--flume-h-control)] w-[280px] rounded-md border px-2.5 font-mono text-[12.5px]"
+          onCommit={onChange}
         />
       );
 

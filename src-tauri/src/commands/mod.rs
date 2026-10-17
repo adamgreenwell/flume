@@ -337,10 +337,77 @@ pub async fn update_settings(
     // from them when it releases.
     let held = state.egress_status().await.held;
     if previous.requires_restart(&settings) {
+        // A user who has just corrected the setting that was failing should
+        // get an attempt now, not after the wait their previous value
+        // earned.
+        //
+        // Inside this branch, not above it. Cleared on every settings write,
+        // a theme or density change would release the backoff while the
+        // engine is down because a list host is failing -- and the next tick
+        // would fetch the same unreachable URL again. Enough unrelated edits
+        // and the retry rate walks back towards the once-a-second it was
+        // added to stop. Same distinction as the rollback below: the
+        // question is whether the *session* configuration moved.
+        state.clear_start_backoff().await;
+
         if held {
             log::info!("settings changed while the egress guard is holding; the engine stays down");
-        } else {
-            state.restart_engine(&settings).await?;
+        } else if let Err(err) = state.restart_engine(&settings).await {
+            // Put the previous settings back on disk before giving up.
+            //
+            // The save above has already happened, so without this a setting
+            // that fails the restart is persisted anyway and tried again on
+            // the next launch -- with the same result, and no way to correct
+            // it from inside the app. The blocklist URL makes that reachable
+            // with nothing worse than a typo or a host that is down, since
+            // librqbit fetches the list during construction and propagates
+            // the failure. The listen port could already do it by being taken.
+            //
+            // The engine is gone either way: `restart_engine` shuts the old
+            // one down before building the new one. So the recovery is tried
+            // too, and its own failure is logged rather than returned -- the
+            // error worth showing the user is the one their change caused,
+            // not the second-order one from undoing it.
+            let current = state.settings().await;
+
+            // Nothing to undo if someone has since chosen a different session
+            // configuration.
+            //
+            // This command is not serialised and a start that fetches a
+            // blocklist is not quick, so another change -- plausibly a
+            // correction to the very URL that is failing -- can be saved and
+            // restarted while this one is still going. Its command has
+            // already returned success, so rolling back would overwrite its
+            // values and replace the engine it built.
+            //
+            // The question is specifically whether the *session* fields
+            // moved, which is what `requires_restart` already answers. A
+            // theme change or a rate limit bumped while this was failing is
+            // not a newer answer to the question this rollback is asking,
+            // and treating it as one would leave the URL that failed
+            // persisted and the engine down across relaunches -- the exact
+            // thing the rollback exists to prevent.
+            if current.requires_restart(&settings) {
+                log::warn!(
+                    "restart failed, but the session settings changed again while it ran; \
+                     leaving the newer values in place"
+                );
+                return Err(err.into());
+            }
+
+            log::warn!("restart failed after a settings change; restoring the previous settings");
+            // Only the fields that caused the restart. Everything else is
+            // taken from `current`, so an unrelated change saved in the
+            // meantime survives being undone.
+            let restored = current.with_session_fields_from(&previous);
+            if let Err(save) = restored.save(state.session_dir()) {
+                log::error!("could not restore the previous settings: {save}");
+            }
+            state.set_settings(restored.clone()).await;
+            if let Err(recovery) = state.restart_engine(&restored).await {
+                log::error!("could not restart with the previous settings: {recovery}");
+            }
+            return Err(err.into());
         }
     } else if let Some(engine) = state.engine().await {
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);

@@ -27,12 +27,54 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   actually enforcing rather than the one saved on disk, so the two cannot
   silently disagree while a restart is pending.
 
+- **IP blocklists and allowlists.** Settings → Network takes a URL for each —
+  `http://`, `https://` or `file://`. A blocklist refuses peers inside it; an
+  allowlist refuses everything outside it.
+
+  The rail's network footer reports **how many ranges actually loaded**, and
+  that is the part worth having rather than the setting itself. librqbit reads
+  a list that fetched with a clean 200 and parsed to nothing exactly as it
+  reads one that worked, so an HTML error page, a login redirect or a format
+  it does not understand gives you zero ranges and no complaint. Believing you
+  are filtered when you are not is the failure this feature has to avoid, so
+  the footer says "Blocklist loaded nothing" rather than staying quiet. For an
+  allowlist it says "no peers can connect", because an empty exclusive list
+  refuses everyone.
+
+  A list Flume cannot fetch at all stops the engine rather than starting it
+  unfiltered — the same reasoning. If that happens while changing the setting,
+  the previous settings are restored and the engine comes back, so an
+  unreachable host cannot strand the next launch.
+
+  The settings copy is deliberately unflattering about what this buys:
+  blocklists are large, stale and of debated effectiveness, and they do not
+  make anyone anonymous.
+
 ### Fixed
 
 - The limiting-factor panel's notes claimed connection slots had no ceiling to
   measure against, on the grounds that no limit was set. There was always a
   ceiling; Flume just did not know its value. ([#63][i63])
+- Text settings committed on every keystroke, so a field whose value is
+  validated could not be typed into at all — the first character of
+  `https://…` is `h`, which is rejected, and the field snapped back before the
+  second arrived. The only way to set one was to paste it whole. They now
+  commit on blur or Enter, and Escape abandons the edit. The proxy URL field
+  had this from the day it shipped. ([#62][i62])
+- The egress guard retried a failed engine start every second, indefinitely.
+  Harmless while a start could only fail locally; with a blocklist URL in the
+  mix each retry carried an HTTP request to a third party. It now backs off
+  from two seconds to a minute, and still never gives up. ([#62][i62])
+- Escape in a settings text field abandoned the edit and closed the whole
+  dialog, because the dialog listens for it on `window` and `preventDefault`
+  does not stop an event getting there. ([#62][i62])
+- A setting that failed to restart the session was saved to disk anyway, so it
+  was retried on the next launch with the same result and no way to correct it
+  from inside the app. The previous settings are now restored. Reachable
+  before this with a listen port already in use, and trivially reachable with
+  a blocklist URL. ([#62][i62])
 
+[i62]: https://github.com/adamgreenwell/flume/issues/62
 [i63]: https://github.com/adamgreenwell/flume/issues/63
 
 ## [1.3.0] — 2026-09-10

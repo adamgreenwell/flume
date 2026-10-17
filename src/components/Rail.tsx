@@ -8,7 +8,12 @@ import {
 } from "@/hooks/useKeyboardShortcuts";
 
 import { guardRailLabel } from "@/lib/egress";
-import type { CoreStatus, EngineHealth, GuardStatus } from "@/lib/ipc/types";
+import type {
+  CoreStatus,
+  EngineHealth,
+  GuardStatus,
+  IpFilterStatus,
+} from "@/lib/ipc/types";
 import { VIEWS, type ViewId } from "@/lib/views";
 
 import { Icon } from "./Icon";
@@ -54,6 +59,72 @@ const HEALTH_DOT: Record<EngineHealth, { tone: string; label: string }> = {
   ready: { tone: "bg-ok", label: "Engine ready" },
   degraded: { tone: "bg-warn", label: "Engine degraded" },
 };
+
+/**
+ * Footer rows for the IP filters, when either is configured.
+ *
+ * A count of zero is the row worth having. librqbit reports a list that
+ * fetched cleanly and parsed to nothing exactly as it reports a list that
+ * worked, so without this the user believes they are filtered and is not --
+ * and for an allowlist the mistake runs the other way, refusing every peer
+ * while looking like an ordinary quiet swarm.
+ *
+ * @param filter - Loaded range counts, or undefined before the first tick.
+ * @returns Zero, one or two rows, in blocklist-then-allowlist order.
+ */
+function filterRows(filter: IpFilterStatus | undefined) {
+  if (!filter) return [];
+  const rows: {
+    id: string;
+    ok: boolean;
+    text: string;
+    node: React.ReactNode;
+  }[] = [];
+
+  if (filter.blocklist !== null) {
+    const n = filter.blocklist;
+    rows.push({
+      id: "blocklist",
+      ok: n > 0,
+      text:
+        n > 0
+          ? `Blocklist · ${n.toLocaleString()} ranges`
+          : "Blocklist loaded nothing",
+      node:
+        n > 0 ? (
+          <>
+            Blocklist · <span className="flume-num">{n.toLocaleString()}</span>{" "}
+            ranges
+          </>
+        ) : (
+          "Blocklist loaded nothing"
+        ),
+    });
+  }
+
+  if (filter.allowlist !== null) {
+    const n = filter.allowlist;
+    rows.push({
+      id: "allowlist",
+      ok: n > 0,
+      text:
+        n > 0
+          ? `Allowlist · ${n.toLocaleString()} ranges`
+          : "Allowlist loaded nothing — no peers can connect",
+      node:
+        n > 0 ? (
+          <>
+            Allowlist · <span className="flume-num">{n.toLocaleString()}</span>{" "}
+            ranges
+          </>
+        ) : (
+          "Allowlist loaded nothing — no peers can connect"
+        ),
+    });
+  }
+
+  return rows;
+}
 
 /** One line in the rail's network footer. */
 function NetRow({ ok, children }: { ok: boolean; children: React.ReactNode }) {
@@ -239,6 +310,10 @@ export function Rail({
         </>
       ),
     },
+    // Only when a list is configured. The 95% of users who set neither
+    // should not read a row about a feature they are not using, and `null`
+    // from the engine is exactly that case -- it is `0` that has to be loud.
+    ...filterRows(status?.ipFilter),
     {
       id: "port",
       ok: status?.listenPort != null,

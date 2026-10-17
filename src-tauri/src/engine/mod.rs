@@ -42,7 +42,7 @@ pub use detail::{
 };
 pub use import::{ClientKind, DetectedClient, ImportOutcome};
 pub use note::{Note, NoteSeverity};
-pub use status::{CoreStatus, DhtStatus, EngineHealth, TelemetrySnapshot};
+pub use status::{CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, TelemetrySnapshot};
 pub use torrent::{PauseReason, SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
 /// How long `Session::new_with_opts` may take before Flume gives up on it.
@@ -317,6 +317,16 @@ impl Engine {
             // itself to. Passing the number makes it ours.
             peer_limit: Some(config.peer_limit as usize),
 
+            // Fetched by librqbit during construction, and a failure to fetch
+            // fails the whole start. That is deliberate rather than tolerated:
+            // starting anyway would hand the user a session they believe is
+            // filtered and is not, which is the one outcome this feature has
+            // to avoid. `AppState::start_failure` carries the reason, and
+            // `update_settings` puts the previous settings back so a list that
+            // is merely unreachable cannot strand the next launch.
+            blocklist_url: config.blocklist_url.clone(),
+            allowlist_url: config.allowlist_url.clone(),
+
             client_name_and_version: Some(format!("Flume {}", env!("CARGO_PKG_VERSION"))),
 
             ..Default::default()
@@ -404,6 +414,27 @@ impl Engine {
             download_bps: stats.download_speed.as_bytes(),
             upload_bps: stats.upload_speed.as_bytes(),
             live_peers: stats.peers.live,
+            // Keyed off the *configuration* rather than off the loaded set,
+            // because the session cannot tell the two apart: with no URL set
+            // librqbit holds an empty `IpRanges`, which reads identically to
+            // a list that fetched and parsed to nothing. `None` here means
+            // nobody asked for filtering; `Some(0)` means someone did and it
+            // is not happening.
+            //
+            // Constant for the session's lifetime, like `client_version` and
+            // `download_dir` beside it, and as cheap to read as either.
+            ip_filter: IpFilterStatus {
+                blocklist: self
+                    .config
+                    .blocklist_url
+                    .as_ref()
+                    .map(|_| self.session.blocklist.len()),
+                allowlist: self
+                    .config
+                    .allowlist_url
+                    .as_ref()
+                    .map(|_| self.session.allowlist.as_ref().map_or(0, |list| list.len())),
+            },
         }
     }
 

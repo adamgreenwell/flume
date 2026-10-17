@@ -79,7 +79,7 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
             );
             state.shutdown().await;
         }
-    } else if state.engine().await.is_none() {
+    } else if state.engine().await.is_none() && state.start_allowed(Instant::now()).await {
         let settings = state.settings().await;
         log::info!(
             "egress guard: starting the torrent engine (port={} dht={} upnp={})",
@@ -88,13 +88,21 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
             settings.enable_upnp
         );
         // Logged and swallowed on purpose. A failed start must not stop the
-        // loop: the guard keeps probing, keeps publishing, and tries again on
-        // the next tick. Retries are self-limiting because the loop is
-        // sequential and `Engine::start` is bounded -- a start that times out
-        // takes its whole deadline, so the retry rate is one per attempt
-        // rather than one per second. See #154.
+        // loop: the guard keeps probing, keeps publishing, and tries again --
+        // just not immediately. See #154 for why it must not give up.
+        //
+        // The retry used to be once per tick, which is once a second, and the
+        // comment here argued that was self-limiting because `Engine::start`
+        // is bounded. That held while a start could only fail locally. A
+        // blocklist URL is now one of the things a start depends on, and a
+        // list that 404s fails in milliseconds -- so the "self-limiting"
+        // retry became one HTTP request per second to somebody else's server,
+        // for as long as the app is open.
         if let Err(err) = state.restart_engine(&settings).await {
             log::error!("torrent engine failed to start: {err}");
+            state.note_start_failed(Instant::now()).await;
+        } else {
+            state.clear_start_backoff().await;
         }
     }
 

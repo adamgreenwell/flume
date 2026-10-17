@@ -108,7 +108,12 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      // A control that has already handled Escape keeps it. A text field
+      // uses it to abandon an edit, and closing the dialog out from under
+      // that would throw away the rest of the screen to undo one field.
+      // Checked as well as the field stopping propagation, so a future
+      // control gets this for free by calling `preventDefault` alone.
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
     };
     window.addEventListener("keydown", onKeyDown);
     dialogRef.current?.focus();

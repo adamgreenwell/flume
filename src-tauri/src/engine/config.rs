@@ -63,6 +63,20 @@ pub struct EngineConfig {
     /// torrent" rather than leaving the reader to assume otherwise.
     pub peer_limit: u32,
 
+    /// A list of IP ranges to refuse peers from, or `None` for no blocklist.
+    ///
+    /// `http://`, `https://` or `file://`. Fetched by librqbit while the
+    /// session is constructed, which has two consequences worth knowing here:
+    /// the fetch happens on whatever interface the egress guard has allowed,
+    /// and a fetch that fails takes the whole session start down with it.
+    pub blocklist_url: Option<String>,
+
+    /// A list of IP ranges to accept peers from *exclusively*, or `None`.
+    ///
+    /// Far blunter than the blocklist: when set, every address outside it is
+    /// refused, so an allowlist that loads nothing refuses everything.
+    pub allowlist_url: Option<String>,
+
     /// SOCKS5 proxy for outgoing peer connections, or `None` for direct.
     ///
     /// Format: `socks5://[user:password@]host:port`.
@@ -101,6 +115,8 @@ impl EngineConfig {
             enable_dht: true,
             enable_upnp: true,
             peer_limit: DEFAULT_PEER_LIMIT,
+            blocklist_url: None,
+            allowlist_url: None,
             proxy_url: None,
         })
     }

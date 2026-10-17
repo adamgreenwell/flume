@@ -7,12 +7,15 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use flume_lib::{
     engine::{
-        CoreStatus, DhtStatus, EngineHealth, PauseReason, SwarmHealth, TelemetrySnapshot,
-        TorrentState, TorrentSummary,
+        CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, PauseReason, SwarmHealth,
+        TelemetrySnapshot, TorrentState, TorrentSummary,
     },
     library::Library,
     policy::{Action, PolicyState, QueueLimits, Rules, TorrentRules, evaluate},
@@ -32,6 +35,10 @@ fn core() -> CoreStatus {
         upload_bps: 0,
         live_peers: 0,
         health: EngineHealth::Ready,
+        ip_filter: IpFilterStatus {
+            blocklist: None,
+            allowlist: None,
+        },
     }
 }
 
@@ -1287,4 +1294,69 @@ async fn forgetting_a_torrent_drops_its_force() {
         !next.is_forced("a").await,
         "a removed torrent kept its force"
     );
+}
+
+/// The guard must back off after a failed start, not retry every second.
+///
+/// It retries on every tick, which is once a second. That was harmless while
+/// a start could only fail locally; a blocklist URL made a failed start carry
+/// an HTTP request to a third party, and a list that 404s fails in
+/// milliseconds — so the retry became one request per second, indefinitely.
+#[tokio::test]
+async fn a_failed_start_is_not_retried_immediately() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+    let now = Instant::now();
+
+    assert!(
+        state.start_allowed(now).await,
+        "nothing has failed yet, so a start is allowed"
+    );
+
+    state.note_start_failed(now).await;
+    assert!(!state.start_allowed(now).await);
+    assert!(
+        !state
+            .start_allowed(now + Duration::from_millis(1_500))
+            .await,
+        "the first wait is two seconds"
+    );
+    assert!(state.start_allowed(now + Duration::from_secs(2)).await);
+}
+
+/// Consecutive failures wait longer, up to a cap, and never stop.
+///
+/// Giving up would be the other failure: a start fails for reasons that pass
+/// — a list host having a bad minute, a port the previous process has not
+/// released — and a guard that stopped trying leaves the library down.
+#[tokio::test]
+async fn the_wait_grows_with_each_failure_and_then_holds() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+    let now = Instant::now();
+
+    for _ in 0..20 {
+        state.note_start_failed(now).await;
+    }
+
+    // Capped: twenty doublings from two seconds would be a fortnight.
+    assert!(!state.start_allowed(now + Duration::from_secs(59)).await);
+    assert!(
+        state.start_allowed(now + Duration::from_secs(60)).await,
+        "the wait is capped at a minute, so the guard keeps trying"
+    );
+}
+
+/// Correcting the setting that was failing earns an immediate attempt.
+#[tokio::test]
+async fn changing_a_setting_clears_the_backoff() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+    let now = Instant::now();
+
+    state.note_start_failed(now).await;
+    assert!(!state.start_allowed(now).await);
+
+    state.clear_start_backoff().await;
+    assert!(state.start_allowed(now).await);
 }

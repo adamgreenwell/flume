@@ -121,6 +121,26 @@ pub struct Settings {
     /// Applied live, without a restart.
     pub upload_limit_bps: Option<u32>,
 
+    /// A list of IP ranges to refuse peers from; `None` is no blocklist.
+    ///
+    /// `http://`, `https://` or `file://`. Requires a session restart, and
+    /// unlike every other restart-triggering setting here it can make the
+    /// restart *fail*: librqbit fetches the list while constructing the
+    /// session and propagates a failure, so an unreachable host or a 404
+    /// means no engine. That is the right trade -- starting unfiltered while
+    /// the user believes otherwise is the failure this feature exists to
+    /// prevent -- but it is why `update_settings` restores the previous
+    /// settings when a restart fails.
+    pub blocklist_url: Option<String>,
+
+    /// A list of IP ranges to accept peers from exclusively; `None` accepts
+    /// any address not blocked.
+    ///
+    /// Blunter than the blocklist and worth treating as such: every address
+    /// outside the list is refused, so a list that loads nothing refuses
+    /// every peer rather than none.
+    pub allowlist_url: Option<String>,
+
     /// SOCKS5 proxy for outgoing peer connections; `None` connects directly.
     ///
     /// Format: `socks5://[user:password@]host:port`. Requires a session
@@ -219,6 +239,8 @@ impl Default for Settings {
             enable_dht: true,
             enable_upnp: true,
             peer_limit: DEFAULT_PEER_LIMIT,
+            blocklist_url: None,
+            allowlist_url: None,
             download_limit_bps: None,
             upload_limit_bps: None,
             proxy_url: None,
@@ -439,6 +461,36 @@ impl Settings {
                 "a peer limit above {MAX_PEER_LIMIT} per torrent runs the process out of sockets"
             )));
         }
+        // Checked here rather than at session start, where the same typo
+        // costs an engine. A scheme librqbit cannot read is the one mistake
+        // that is both easy to make and indistinguishable, afterwards, from
+        // the host being down.
+        for (label, url) in [
+            ("blocklist", self.blocklist_url.as_deref()),
+            ("allowlist", self.allowlist_url.as_deref()),
+        ] {
+            let Some(url) = url else { continue };
+            let url = url.trim();
+            if url.is_empty() {
+                return Err(SettingsError::Invalid(format!(
+                    "leave the {label} empty to use none, or give a full URL"
+                )));
+            }
+            if !["http://", "https://", "file://"]
+                .iter()
+                .any(|scheme| url.starts_with(scheme))
+            {
+                return Err(SettingsError::Invalid(format!(
+                    "the {label} must be an http://, https:// or file:// URL"
+                )));
+            }
+            // A scheme and nothing else parses as a URL and fetches nothing.
+            if ["http://", "https://", "file://"].contains(&url) {
+                return Err(SettingsError::Invalid(format!(
+                    "the {label} URL is missing everything after the scheme"
+                )));
+            }
+        }
         if let Some(proxy) = self.proxy_url.as_deref() {
             let proxy = proxy.trim();
             if proxy.is_empty() {
@@ -493,7 +545,37 @@ impl Settings {
             enable_dht: self.enable_dht,
             enable_upnp: self.enable_upnp,
             peer_limit: self.peer_limit,
+            blocklist_url: self.blocklist_url.clone(),
+            allowlist_url: self.allowlist_url.clone(),
             proxy_url: self.proxy_url.clone(),
+        }
+    }
+
+    /// Returns `self` with every session-level field taken from `previous`.
+    ///
+    /// The undo for a settings change whose restart failed. It restores the
+    /// fields that caused the restart and leaves everything else alone,
+    /// which matters because `update_settings` is not serialised: the dialog
+    /// stays interactive while a restart runs, and a start that has to fetch
+    /// a blocklist can take a while. Writing back a whole snapshot taken
+    /// before the failed change would discard any *other* change saved in
+    /// the meantime -- one whose own command already returned success.
+    ///
+    /// Must list exactly the fields [`Self::requires_restart`] compares.
+    /// `a_restored_settings_object_needs_no_restart` pins that: restoring
+    /// has to leave nothing for a restart to do.
+    #[must_use]
+    pub fn with_session_fields_from(&self, previous: &Self) -> Self {
+        Self {
+            download_dir: previous.download_dir.clone(),
+            listen_port: previous.listen_port,
+            enable_dht: previous.enable_dht,
+            enable_upnp: previous.enable_upnp,
+            peer_limit: previous.peer_limit,
+            blocklist_url: previous.blocklist_url.clone(),
+            allowlist_url: previous.allowlist_url.clone(),
+            proxy_url: previous.proxy_url.clone(),
+            ..self.clone()
         }
     }
 
@@ -509,6 +591,11 @@ impl Settings {
             // The peer semaphore is sized when a torrent goes live, so a
             // changed limit reaches existing torrents only on a restart.
             || self.peer_limit != next.peer_limit
+            // Both lists are fetched while the session is constructed, so a
+            // new URL means a new session -- and re-fetching an unchanged one
+            // would be a needless request on every unrelated settings change.
+            || self.blocklist_url != next.blocklist_url
+            || self.allowlist_url != next.allowlist_url
             // The proxy is fixed when the session is constructed.
             || self.proxy_url != next.proxy_url
     }
@@ -651,6 +738,120 @@ mod tests {
             ..valid()
         };
         assert!(before.requires_restart(&after));
+    }
+
+    #[test]
+    fn rejects_a_filter_url_with_a_scheme_librqbit_cannot_read() {
+        for url in ["ftp://lists.example/list.p2p", "lists.example/list.p2p", ""] {
+            let blocked = Settings {
+                blocklist_url: Some(url.to_owned()),
+                ..valid()
+            };
+            assert!(
+                blocked.validate().is_err(),
+                "blocklist {url:?} should be rejected"
+            );
+
+            let allowed = Settings {
+                allowlist_url: Some(url.to_owned()),
+                ..valid()
+            };
+            assert!(
+                allowed.validate().is_err(),
+                "allowlist {url:?} should be rejected"
+            );
+        }
+    }
+
+    /// A scheme with nothing after it parses and fetches nothing.
+    ///
+    /// Worth its own case: it passes a `starts_with` check, which is what the
+    /// obvious validation would be, and then loads zero ranges silently.
+    #[test]
+    fn rejects_a_filter_url_that_is_only_a_scheme() {
+        for url in ["http://", "https://", "file://"] {
+            let settings = Settings {
+                blocklist_url: Some(url.to_owned()),
+                ..valid()
+            };
+            assert!(settings.validate().is_err(), "{url:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn accepts_the_three_schemes_librqbit_reads() {
+        for url in [
+            "https://lists.example/list.p2p.gz",
+            "http://10.0.0.2/list.p2p",
+            "file:///Users/someone/lists/level1.p2p",
+        ] {
+            let settings = Settings {
+                blocklist_url: Some(url.to_owned()),
+                allowlist_url: Some(url.to_owned()),
+                ..valid()
+            };
+            assert!(settings.validate().is_ok(), "{url:?} should be accepted");
+        }
+    }
+
+    /// Restoring the session fields must leave nothing for a restart to do.
+    ///
+    /// The drift catcher between [`Settings::with_session_fields_from`] and
+    /// [`Settings::requires_restart`], which list the same fields in two
+    /// places. Add one to `requires_restart` and forget the other and this
+    /// fails, rather than a failed restart quietly keeping the value that
+    /// caused it.
+    #[test]
+    fn a_restored_settings_object_needs_no_restart() {
+        let previous = valid();
+        let changed = Settings {
+            download_dir: PathBuf::from("/tmp/elsewhere"),
+            listen_port: previous.listen_port + 1,
+            enable_dht: !previous.enable_dht,
+            enable_upnp: !previous.enable_upnp,
+            peer_limit: previous.peer_limit + 1,
+            blocklist_url: Some("https://lists.example/list.p2p".to_owned()),
+            allowlist_url: Some("https://lists.example/allow.p2p".to_owned()),
+            proxy_url: Some("socks5://127.0.0.1:1080".to_owned()),
+            // Not a session field, and the point of the second assertion.
+            theme: Theme::Dark,
+            ..valid()
+        };
+        assert!(
+            previous.requires_restart(&changed),
+            "the fixture is meant to change every session field"
+        );
+
+        let restored = changed.with_session_fields_from(&previous);
+
+        assert!(
+            !previous.requires_restart(&restored),
+            "a field compared by requires_restart is not restored by \
+             with_session_fields_from"
+        );
+        assert_eq!(
+            restored.theme,
+            Theme::Dark,
+            "restoring the session fields discarded a change that never \
+             needed a restart"
+        );
+    }
+
+    #[test]
+    fn a_changed_filter_url_requires_a_restart() {
+        let before = valid();
+        for next in [
+            Settings {
+                blocklist_url: Some("https://lists.example/list.p2p".to_owned()),
+                ..valid()
+            },
+            Settings {
+                allowlist_url: Some("https://lists.example/list.p2p".to_owned()),
+                ..valid()
+            },
+        ] {
+            assert!(before.requires_restart(&next));
+        }
     }
 
     #[test]
@@ -883,6 +1084,42 @@ mod tests {
             assert!(
                 before.requires_restart(&after),
                 "expected a restart for {after:?}"
+            );
+        }
+    }
+
+    /// A change that is not session-level must not look like one.
+    ///
+    /// Load-bearing beyond deciding whether to rebuild the session.
+    /// `update_settings` asks the same question to decide whether a rollback
+    /// is still relevant: a theme change saved while a restart was failing
+    /// is not a newer answer about the session, and treating it as one would
+    /// leave the value that failed persisted and the engine down across
+    /// relaunches.
+    #[test]
+    fn a_change_outside_the_session_does_not_ask_for_a_restart() {
+        let before = valid();
+        for after in [
+            Settings {
+                theme: Theme::Dark,
+                ..valid()
+            },
+            Settings {
+                density: Density::Compact,
+                ..valid()
+            },
+            Settings {
+                download_limit_bps: Some(2_000_000),
+                ..valid()
+            },
+            Settings {
+                seed_ratio_limit: Some(2.0),
+                ..valid()
+            },
+        ] {
+            assert!(
+                !before.requires_restart(&after),
+                "expected no restart for {after:?}"
             );
         }
     }

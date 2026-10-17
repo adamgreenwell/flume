@@ -44,6 +44,7 @@ const CORE: CoreStatus = {
   uploadBps: 820_000,
   livePeers: 34,
   health: "ready",
+  ipFilter: { blocklist: null, allowlist: null },
 };
 
 /**
@@ -356,6 +357,8 @@ const SETTINGS: Settings = {
   enableUpnp: true,
   downloadLimitBps: null,
   uploadLimitBps: 2_097_152,
+  blocklistUrl: null,
+  allowlistUrl: null,
   proxyUrl: null,
   // A ratio limit is set so the mock's stopped torrent has something that
   // explains it, and the settings screen has a row with a value in it.
