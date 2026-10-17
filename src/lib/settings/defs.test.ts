@@ -23,6 +23,7 @@ const SETTINGS: Settings = {
   theme: "system",
   density: "comfortable",
   sort: { by: "activity", direction: "desc" },
+  lastAddFolder: null,
   rail: "expanded",
   egressGuard: "off",
   egressInterface: null,
@@ -43,6 +44,9 @@ describe("the definition table", () => {
     const setElsewhere = new Set<keyof Settings>([
       // The library toolbar: a ten-key picker and a direction toggle.
       "sort",
+      // The add dialog, which writes it as a side effect of an add rather
+      // than offering it as a preference.
+      "lastAddFolder",
     ]);
 
     const defined = new Set(SETTING_DEFS.map((d) => d.id));

@@ -99,6 +99,7 @@ pub fn run() {
             commands::get_telemetry,
             commands::preview_torrent,
             commands::confirm_add,
+            commands::destination_preflight,
             commands::move_in_queue,
             commands::discard_preview,
             commands::pause_torrent,

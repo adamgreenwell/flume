@@ -1,9 +1,9 @@
 //! Types for the two-step add flow.
 //!
 //! Flume resolves a torrent's file list *before* downloading anything, so a
-//! user can deselect files first. That matters for the ISO use case: distro
-//! torrents routinely bundle several images plus checksums when the user wants
-//! one image.
+//! user can deselect files first. A distro torrent is the easy illustration:
+//! they routinely bundle several images plus checksums when someone wants one
+//! image. An illustration, not a claim about what the client is for.
 //!
 //! Mirrored in `src/lib/ipc/types.ts`.
 
@@ -40,6 +40,36 @@ pub struct TorrentFile {
     pub path: String,
     /// Size in bytes.
     pub length: u64,
+}
+
+/// What a chosen destination means for a torrent waiting to be added.
+///
+/// The add dialog's preflight is computed against the folder the torrent
+/// *would* land in, and choosing a different one invalidates both halves of
+/// it: free space is a property of the volume, and a file is only already on
+/// disk relative to a folder. Recomputed rather than left standing, because
+/// showing another volume's free space while the user decides whether 46 GB
+/// will fit is the kind of plausible-looking wrong number this project does
+/// not ship.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DestinationPreflight {
+    /// Whether the folder is there right now.
+    ///
+    /// The question a remembered path has to answer before it is used again.
+    /// A folder on a removable or network volume stops existing when the
+    /// volume goes away, and nothing else here notices: [`free_bytes`] walks
+    /// up to the nearest existing ancestor, so it reports the *local* disk,
+    /// and librqbit creates a missing output folder on confirmation. The two
+    /// together mean an add aimed at an unmounted volume quietly populates a
+    /// same-named directory on the boot disk.
+    ///
+    /// [`free_bytes`]: super::preflight::free_bytes
+    pub exists: bool,
+    /// Free space on the volume containing the chosen folder, or `None`.
+    pub free_bytes: Option<u64>,
+    /// Whether each file is already there at full length, in torrent order.
+    pub already_on_disk: Vec<bool>,
 }
 
 /// Resolved metadata for a torrent that has not been started yet.

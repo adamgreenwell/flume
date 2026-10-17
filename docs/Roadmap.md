@@ -16,7 +16,7 @@ and in [issues](https://github.com/adamgreenwell/flume/issues).
 - 5 Rust unit tests, 6 integration tests (engine + IPC), 20 frontend tests
 - Three security advisories found and fixed by CI before the first merge
 
-## Phase 1 — Core torrent lifecycle (MVP) 🚧
+## Phase 1 — Core torrent lifecycle (MVP) ✅
 
 The phase that makes Flume usable. **The core loop works**: telemetry is
 event-based, and torrents can be added by magnet or file with a
@@ -28,10 +28,11 @@ select-files-first flow, then paused, resumed, and removed.
 - ~~Per-torrent file tree with selective download~~ ✅ ([#6](https://github.com/adamgreenwell/flume/issues/6))
 - ~~Settings with persistence~~ ✅ ([#7](https://github.com/adamgreenwell/flume/issues/7))
 - ~~Resume correctly across restarts~~ ✅ ([#8](https://github.com/adamgreenwell/flume/issues/8))
-- Investigate Windows file-locking and seeding ([#9](https://github.com/adamgreenwell/flume/issues/9))
+- ~~Investigate Windows file-locking and seeding~~ ✅ ([#9](https://github.com/adamgreenwell/flume/issues/9))
 
-Also in this phase: replace the Phase 0 polling hook with backend-pushed,
-batched events before the torrent count grows.
+Also done in this phase: the Phase 0 polling hook was replaced with
+backend-pushed, batched events — `src-tauri/src/telemetry.rs` emits and the
+frontend listens.
 
 ## Phase 2 — Polish & platform integration ✅
 

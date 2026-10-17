@@ -116,7 +116,7 @@ async fn seed_while_held(share_mode: u32) -> Result<flume_lib::engine::TorrentSu
         .map_err(|e| format!("preview failed: {e}"))?;
 
     let id = engine
-        .confirm_add(&preview.info_hash, None)
+        .confirm_add(&preview.info_hash, None, None)
         .await
         .map_err(|e| format!("add failed: {e}"))?;
 

@@ -12,8 +12,8 @@ use crate::{
     diagnostics::{self, LOG_TAIL_LINES},
     egress::{GuardStatus, Hop},
     engine::{
-        CoreStatus, DetectedClient, Engine, EngineError, ImportOutcome, TelemetrySnapshot,
-        TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
+        CoreStatus, DestinationPreflight, DetectedClient, Engine, EngineError, ImportOutcome,
+        TelemetrySnapshot, TorrentDetail, TorrentFileState, TorrentPreview, TorrentSource,
     },
     policy::TorrentRules,
     settings::{Settings, SettingsError},
@@ -96,6 +96,11 @@ impl From<EngineError> for CommandError {
             EngineError::MetadataTimeout { .. } => "metadataTimeout",
             EngineError::NoPendingPreview => "noPendingPreview",
             EngineError::UnknownTorrent(_) => "unknownTorrent",
+            // Its own kind because the frontend acts on it rather than only
+            // showing it: the add dialog re-checks the folder, which clears
+            // it and explains the fallback. Retrying against the same
+            // vanished path would fail identically.
+            EngineError::DestinationGone { .. } => "destinationGone",
             EngineError::Directory { .. } | EngineError::SessionStart(_) => "engineFailed",
             // Its own kind rather than `engineFailed`: nothing refused, the
             // session never finished starting, and the message tells the user
@@ -475,6 +480,7 @@ pub async fn confirm_add(
     state: State<'_, AppState>,
     info_hash: String,
     only_files: Option<Vec<usize>>,
+    output_folder: Option<String>,
 ) -> Result<usize, CommandError> {
     let engine = require_engine(&state).await?;
 
@@ -491,7 +497,7 @@ pub async fn confirm_add(
     let noted = state.note_torrent_added(&info_hash).await;
 
     match engine
-        .confirm_add(&info_hash, only_files)
+        .confirm_add(&info_hash, only_files, output_folder)
         .await
         .map_err(CommandError::from)
     {
@@ -512,6 +518,30 @@ pub async fn confirm_add(
             Err(err)
         }
     }
+}
+
+/// What a chosen destination means for a torrent awaiting confirmation.
+///
+/// Called when the user changes the folder in the add dialog. The preview's
+/// own free-space and already-on-disk figures were computed against the
+/// default folder, and both are relative to one -- so they have to be
+/// re-answered rather than left standing beside a different destination.
+///
+/// # Errors
+///
+/// `engineNotReady` whenever there is no engine, or `noPendingPreview` if
+/// nothing is awaiting confirmation under this hash.
+#[tauri::command]
+pub async fn destination_preflight(
+    state: State<'_, AppState>,
+    info_hash: String,
+    folder: String,
+) -> Result<DestinationPreflight, CommandError> {
+    let engine = require_engine(&state).await?;
+    engine
+        .destination_preflight(&info_hash, &folder)
+        .await
+        .map_err(CommandError::from)
 }
 
 /// Moves one torrent one place up or down the queue.
