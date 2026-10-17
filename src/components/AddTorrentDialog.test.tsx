@@ -221,6 +221,50 @@ describe("a remembered destination", () => {
     );
   });
 
+  it("re-checks the folder when the engine says it has gone", async () => {
+    // The destination can vanish between the preflight and the Add click, and
+    // the engine refuses rather than letting librqbit re-create it at a dead
+    // mount point. Showing the message is not enough: the sheet would still
+    // name the folder, so the obvious next move — click Add again — fails
+    // identically. Re-checking clears it and explains the fallback.
+    destinationPreflight
+      .mockResolvedValueOnce({
+        exists: true,
+        freeBytes: 9_000_000,
+        alreadyOnDisk: [false],
+      })
+      .mockResolvedValue({ exists: false, freeBytes: null, alreadyOnDisk: [] });
+    confirmAdd.mockRejectedValueOnce({
+      kind: "destinationGone",
+      message: "/Volumes/Media is not there any more, so nothing was added.",
+    });
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Media"
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    // The refusal is reported...
+    await waitFor(() =>
+      expect(screen.getByText(/nothing was added/)).toBeDefined(),
+    );
+    // ...and the folder is re-checked, which drops it and says where this
+    // will go instead, so the retry is against somewhere that exists.
+    await waitFor(() => expect(destinationPreflight).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByText(/usual download folder/)).toBeDefined(),
+    );
+    expect(screen.queryByText("/Volumes/Media")).toBeNull();
+  });
+
   it("ignores an older failure when the same folder is checked twice", async () => {
     // The same race on the error path, which has its own guard. A superseded
     // check that *fails* would otherwise replace the figures with "unknown"

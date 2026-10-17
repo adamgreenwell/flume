@@ -406,6 +406,64 @@ async fn confirm_add_starts_the_torrent_and_consumes_the_preview() {
     engine.shutdown().await;
 }
 
+/// A destination that vanished between the preflight and the Add click is
+/// refused, and the preview survives so the user can retry.
+///
+/// The preflight answers "does this folder exist" while the sheet is being
+/// read, and the user then takes as long as they like over it. librqbit
+/// *creates* an output folder that is not there, so a volume unmounted in
+/// that window would be re-created as an ordinary directory at its mount
+/// point and the download would fill the boot disk -- silently, and against
+/// a free-space figure describing a different volume.
+#[tokio::test]
+async fn confirming_against_a_vanished_destination_refuses_and_keeps_the_preview() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = sample_torrent_file(&tmp.path().join("src")).await;
+
+    let engine = Engine::start(test_config(&tmp, false))
+        .await
+        .expect("engine starts");
+    let preview = engine
+        .preview(TorrentSource::File { path })
+        .await
+        .expect("preview");
+
+    // Picked, checked, and then unmounted -- which is what removing it here
+    // stands in for.
+    let chosen = tmp.path().join("removable");
+    tokio::fs::create_dir(&chosen).await.expect("create");
+    let chosen = chosen.display().to_string();
+    tokio::fs::remove_dir(&chosen).await.expect("remove");
+
+    let refused = engine
+        .confirm_add(&preview.info_hash, None, Some(chosen.clone()))
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(flume_lib::engine::EngineError::DestinationGone { ref path }) if *path == chosen
+        ),
+        "a vanished destination must refuse rather than be created, got {refused:?}"
+    );
+    assert!(
+        engine.torrent_summaries().is_empty(),
+        "nothing may be added when the destination is gone"
+    );
+    assert!(
+        !tokio::fs::try_exists(&chosen).await.unwrap_or(false),
+        "the folder must not be re-created at the mount point"
+    );
+
+    // The refusal came before the preview was taken, so the obvious recovery
+    // -- choose somewhere that exists -- works without previewing again.
+    engine
+        .confirm_add(&preview.info_hash, None, None)
+        .await
+        .expect("the preview survived the refusal");
+
+    engine.shutdown().await;
+}
+
 #[tokio::test]
 async fn discarding_a_preview_releases_it() {
     let tmp = TempDir::new().expect("temp dir");
@@ -1119,6 +1177,20 @@ async fn a_chosen_folder_overrides_the_session_default() {
         checked.already_on_disk.iter().all(|there| !there),
         "nothing is on disk in a folder that does not exist yet"
     );
+    assert!(
+        !checked.exists,
+        "and the folder itself is reported absent, which is what the sheet \
+         acts on"
+    );
+
+    // Created before confirming, because `confirm_add` now refuses a
+    // destination that is not a directory -- see `DestinationGone`. The
+    // dialog cannot produce one either: the picker only returns folders that
+    // exist and there is nowhere to type a new path. Creating it here is what
+    // the user doing that in the picker amounts to.
+    tokio::fs::create_dir_all(&elsewhere)
+        .await
+        .expect("create the chosen folder");
 
     let id = engine
         .confirm_add(

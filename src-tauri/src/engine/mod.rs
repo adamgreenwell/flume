@@ -195,6 +195,32 @@ pub enum EngineError {
     #[error("that torrent is no longer pending; preview it again")]
     NoPendingPreview,
 
+    /// The chosen destination was gone by the time the add was confirmed.
+    ///
+    /// Re-checked at confirmation rather than trusted from the preflight,
+    /// because the gap between the two is however long the user spends
+    /// reading the sheet. librqbit *creates* an output folder that is not
+    /// there, so a volume unmounted in that window would be re-created as an
+    /// ordinary directory at its mount point and filled on the boot disk --
+    /// which is the failure the preflight exists to prevent, arriving through
+    /// the one door it cannot watch.
+    ///
+    /// Refusing rather than falling back to the session folder: by this point
+    /// the user has clicked Add, so there is nowhere to explain a redirection
+    /// before it happens, and silently writing somewhere they did not choose
+    /// is the harm. The check still races -- the volume can go between here
+    /// and `add_torrent` -- but the window shrinks from minutes to
+    /// microseconds, and closing it entirely would need librqbit not to
+    /// create a missing folder.
+    #[error(
+        "{path} is not there any more, so nothing was added. Reconnect the \
+         volume or choose another folder."
+    )]
+    DestinationGone {
+        /// The folder that was asked for.
+        path: String,
+    },
+
     /// No torrent with the given id exists in the session.
     #[error("no torrent with id {0}")]
     UnknownTorrent(usize),
@@ -736,13 +762,30 @@ impl Engine {
     ///
     /// [`EngineError::NoPendingPreview`] if [`Self::preview`] was not called
     /// for this hash (or its result was already consumed), or
-    /// [`EngineError::Metadata`] if the session rejects the torrent.
+    /// [`EngineError::Metadata`] if the session rejects the torrent, or
+    /// [`EngineError::DestinationGone`] if `output_folder` is no longer a
+    /// directory -- checked before the preview is consumed, so the add can be
+    /// retried against somewhere that exists.
     pub async fn confirm_add(
         &self,
         info_hash: &str,
         only_files: Option<Vec<usize>>,
         output_folder: Option<String>,
     ) -> Result<usize, EngineError> {
+        // Before the preview is taken, so a refusal leaves the add retryable
+        // instead of demanding a fresh one. See `DestinationGone` for why the
+        // preflight's answer is not trusted this far.
+        if let Some(folder) = &output_folder {
+            let present = tokio::fs::metadata(folder)
+                .await
+                .is_ok_and(|meta| meta.is_dir());
+            if !present {
+                return Err(EngineError::DestinationGone {
+                    path: folder.clone(),
+                });
+            }
+        }
+
         let pending = self
             .pending
             .write()

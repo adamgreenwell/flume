@@ -76,7 +76,12 @@ export async function previewTorrent(
  *   default stays the one source of that value.
  * @returns The new torrent's session id.
  * @throws A {@link CommandError} with kind `noPendingPreview` if the preview
- *   was already consumed or discarded.
+ *   was already consumed or discarded, or `destinationGone` if
+ *   `outputFolder` is no longer a directory. The engine re-checks it here
+ *   because librqbit creates a missing output folder, so an unmounted volume
+ *   would otherwise be re-created at its mount point and filled on the boot
+ *   disk. A `destinationGone` refusal leaves the preview intact, so the add
+ *   can be retried against somewhere that exists.
  */
 export async function confirmAdd(
   infoHash: string,

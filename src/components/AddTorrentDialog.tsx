@@ -392,6 +392,18 @@ export function AddTorrentDialog({
     } catch (caught: unknown) {
       setError(describe(caught, "Could not start that torrent."));
       setIsAdding(false);
+      // The destination went away while the sheet was open, which the engine
+      // refuses rather than creating. Re-checking is what makes the next
+      // click work: it clears the folder and explains the fallback, where
+      // clicking Add again against the same vanished path would fail
+      // identically and read as the button being broken.
+      if (
+        isCommandError(caught) &&
+        caught.kind === "destinationGone" &&
+        folder !== null
+      ) {
+        void checkFolder(preview.infoHash, folder);
+      }
     }
   };
 

@@ -96,6 +96,11 @@ impl From<EngineError> for CommandError {
             EngineError::MetadataTimeout { .. } => "metadataTimeout",
             EngineError::NoPendingPreview => "noPendingPreview",
             EngineError::UnknownTorrent(_) => "unknownTorrent",
+            // Its own kind because the frontend acts on it rather than only
+            // showing it: the add dialog re-checks the folder, which clears
+            // it and explains the fallback. Retrying against the same
+            // vanished path would fail identically.
+            EngineError::DestinationGone { .. } => "destinationGone",
             EngineError::Directory { .. } | EngineError::SessionStart(_) => "engineFailed",
             // Its own kind rather than `engineFailed`: nothing refused, the
             // session never finished starting, and the message tells the user
