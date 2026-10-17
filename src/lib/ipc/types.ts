@@ -218,6 +218,36 @@ export interface TorrentFile {
 }
 
 /**
+ * What a chosen destination means for a torrent waiting to be added.
+ * Mirrors Rust `DestinationPreflight`.
+ *
+ * The preview's own free-space and already-on-disk figures are computed
+ * against the default folder, and both are relative to one — free space is a
+ * property of the volume, and a file is only already there relative to a
+ * folder. Picking another disk is often *why* someone changes the
+ * destination, so showing the original volume's figure would be wrong exactly
+ * when it is being relied on.
+ */
+export interface DestinationPreflight {
+  /**
+   * Whether the folder is there right now.
+   *
+   * The question a remembered path has to answer before it is used again. A
+   * folder on a removable or network volume stops existing when the volume
+   * goes away, and nothing else notices: free space walks up to the nearest
+   * existing ancestor, so it reports the *local* disk, and the engine creates
+   * a missing output folder on confirmation. Together that means an add aimed
+   * at an unmounted volume quietly fills a same-named directory on the boot
+   * disk.
+   */
+  exists: boolean;
+  /** Free space on the volume containing the chosen folder, or `null`. */
+  freeBytes: number | null;
+  /** Whether each file is already there at full length, in torrent order. */
+  alreadyOnDisk: boolean[];
+}
+
+/**
  * Resolved metadata for a torrent that has not started. Mirrors Rust
  * `TorrentPreview`.
  *
@@ -857,6 +887,14 @@ export interface Settings {
   density: Density;
   /** How the torrent list is ordered. Frontend-only, persisted likewise. */
   sort: SortState;
+  /**
+   * The folder the last add was sent to; `null` means never changed.
+   *
+   * The default destination for the next add. `null` falls back to
+   * {@link Settings.downloadDir} rather than holding a copy of it, so the
+   * global setting keeps being tracked.
+   */
+  lastAddFolder: string | null;
   /** Sidebar width. Frontend-only, persisted for the same reason as theme. */
   rail: RailState;
   /**

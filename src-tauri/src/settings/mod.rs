@@ -259,6 +259,21 @@ pub struct Settings {
     /// How the torrent list is ordered. Frontend-only, persisted likewise.
     pub sort: SortState,
 
+    /// The folder the last add was sent to, or `None` for never-changed.
+    ///
+    /// The default destination for the next add, because someone who has
+    /// just filed one torrent somewhere is usually filing the next one
+    /// there too. `None` falls back to [`Self::download_dir`], which is why
+    /// this is not initialised to a copy of it -- a copy would freeze the
+    /// global setting's value at first launch and stop tracking it.
+    ///
+    /// Not in the settings screen: it is written by the add dialog, not
+    /// typed, and giving the same state two controls means keeping them in
+    /// step. Not reported as a changed setting either, for the same reason
+    /// -- "the user picked a folder" is an add, not a preference anyone
+    /// reached for.
+    pub last_add_folder: Option<PathBuf>,
+
     /// Sidebar width. Frontend-only, persisted for the same reason.
     pub rail: RailState,
 
@@ -316,6 +331,7 @@ impl Default for Settings {
             theme: Theme::System,
             density: Density::Comfortable,
             sort: SortState::default(),
+            last_add_folder: None,
             rail: RailState::Expanded,
             egress_guard: EgressGuard::Off,
             egress_interface: None,
@@ -525,6 +541,18 @@ impl Settings {
             return Err(SettingsError::Invalid(format!(
                 "a peer limit above {MAX_PEER_LIMIT} per torrent runs the process out of sockets"
             )));
+        }
+        // An empty string is not a folder. It would be accepted by the add
+        // path and resolve to somewhere unpredictable relative to the
+        // process, which is a worse outcome than refusing it.
+        if self
+            .last_add_folder
+            .as_ref()
+            .is_some_and(|dir| dir.as_os_str().is_empty())
+        {
+            return Err(SettingsError::Invalid(
+                "the last-used download folder cannot be empty".into(),
+            ));
         }
         // Checked here rather than at session start, where the same typo
         // costs an engine. A scheme librqbit cannot read is the one mistake
@@ -917,6 +945,31 @@ mod tests {
         ] {
             assert!(before.requires_restart(&next));
         }
+    }
+
+    #[test]
+    fn rejects_an_empty_remembered_folder() {
+        let settings = Settings {
+            last_add_folder: Some(PathBuf::new()),
+            ..valid()
+        };
+        assert!(settings.validate().is_err());
+    }
+
+    /// Remembering a folder must not restart the session.
+    ///
+    /// It changes nothing the engine was constructed with -- the folder is
+    /// chosen per add and passed to `add_torrent` -- so treating it as a
+    /// session-level change would rebuild librqbit every time somebody filed
+    /// a torrent somewhere new.
+    #[test]
+    fn remembering_a_folder_does_not_require_a_restart() {
+        let before = valid();
+        let after = Settings {
+            last_add_folder: Some(PathBuf::from("/tmp/elsewhere")),
+            ..valid()
+        };
+        assert!(!before.requires_restart(&after));
     }
 
     #[test]

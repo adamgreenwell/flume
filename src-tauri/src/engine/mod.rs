@@ -34,7 +34,7 @@ use librqbit::{
     SessionOptions, SessionPersistenceConfig, api::TorrentIdOrHash, dht::DhtPersistenceConfig,
 };
 
-pub use add::{TorrentFile, TorrentPreview, TorrentSource};
+pub use add::{DestinationPreflight, TorrentFile, TorrentPreview, TorrentSource};
 pub use bottleneck::{Bottleneck, LimitFactor};
 pub use config::{ConfigError, DEFAULT_LISTEN_PORT, DEFAULT_PEER_LIMIT, EngineConfig};
 pub use detail::{
@@ -195,6 +195,32 @@ pub enum EngineError {
     #[error("that torrent is no longer pending; preview it again")]
     NoPendingPreview,
 
+    /// The chosen destination was gone by the time the add was confirmed.
+    ///
+    /// Re-checked at confirmation rather than trusted from the preflight,
+    /// because the gap between the two is however long the user spends
+    /// reading the sheet. librqbit *creates* an output folder that is not
+    /// there, so a volume unmounted in that window would be re-created as an
+    /// ordinary directory at its mount point and filled on the boot disk --
+    /// which is the failure the preflight exists to prevent, arriving through
+    /// the one door it cannot watch.
+    ///
+    /// Refusing rather than falling back to the session folder: by this point
+    /// the user has clicked Add, so there is nowhere to explain a redirection
+    /// before it happens, and silently writing somewhere they did not choose
+    /// is the harm. The check still races -- the volume can go between here
+    /// and `add_torrent` -- but the window shrinks from minutes to
+    /// microseconds, and closing it entirely would need librqbit not to
+    /// create a missing folder.
+    #[error(
+        "{path} is not there any more, so nothing was added. Reconnect the \
+         volume or choose another folder."
+    )]
+    DestinationGone {
+        /// The folder that was asked for.
+        path: String,
+    },
+
     /// No torrent with the given id exists in the session.
     #[error("no torrent with id {0}")]
     UnknownTorrent(usize),
@@ -202,6 +228,20 @@ pub enum EngineError {
     /// A control operation (pause, resume, remove) failed.
     #[error("the operation failed: {0}")]
     Operation(#[source] anyhow::Error),
+}
+
+/// A resolved preview waiting for the user to confirm or discard it.
+///
+/// The file list is kept alongside the bytes, rather than re-derived, because
+/// choosing a destination has to re-answer the preflight questions against
+/// the new folder -- and both of those are pure functions of the file list.
+/// Re-parsing the torrent to get it back would be work to recover something
+/// that was in hand a moment ago.
+struct PendingAdd {
+    /// The `.torrent` bytes, handed to `add_torrent` on confirmation.
+    bytes: Vec<u8>,
+    /// Every file, in torrent order.
+    files: Vec<add::TorrentFile>,
 }
 
 /// An owned, running torrent session.
@@ -217,7 +257,7 @@ pub struct Engine {
     /// This is why confirming an add does not re-fetch a magnet's metadata
     /// from the DHT, and why those bytes never need to travel to the webview
     /// and back.
-    pending: Arc<tokio::sync::RwLock<HashMap<String, Vec<u8>>>>,
+    pending: Arc<tokio::sync::RwLock<HashMap<String, PendingAdd>>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -682,10 +722,13 @@ impl Engine {
             .get(TorrentIdOrHash::Hash(listed.info_hash))
             .is_some();
 
-        self.pending
-            .write()
-            .await
-            .insert(info_hash.clone(), listed.torrent_bytes.to_vec());
+        self.pending.write().await.insert(
+            info_hash.clone(),
+            PendingAdd {
+                bytes: listed.torrent_bytes.to_vec(),
+                files: files.clone(),
+            },
+        );
 
         // librqbit resolves the output folder for a list-only add without
         // creating it, so this is where the files would land.
@@ -719,13 +762,31 @@ impl Engine {
     ///
     /// [`EngineError::NoPendingPreview`] if [`Self::preview`] was not called
     /// for this hash (or its result was already consumed), or
-    /// [`EngineError::Metadata`] if the session rejects the torrent.
+    /// [`EngineError::Metadata`] if the session rejects the torrent, or
+    /// [`EngineError::DestinationGone`] if `output_folder` is no longer a
+    /// directory -- checked before the preview is consumed, so the add can be
+    /// retried against somewhere that exists.
     pub async fn confirm_add(
         &self,
         info_hash: &str,
         only_files: Option<Vec<usize>>,
+        output_folder: Option<String>,
     ) -> Result<usize, EngineError> {
-        let bytes = self
+        // Before the preview is taken, so a refusal leaves the add retryable
+        // instead of demanding a fresh one. See `DestinationGone` for why the
+        // preflight's answer is not trusted this far.
+        if let Some(folder) = &output_folder {
+            let present = tokio::fs::metadata(folder)
+                .await
+                .is_ok_and(|meta| meta.is_dir());
+            if !present {
+                return Err(EngineError::DestinationGone {
+                    path: folder.clone(),
+                });
+            }
+        }
+
+        let pending = self
             .pending
             .write()
             .await
@@ -735,9 +796,18 @@ impl Engine {
         let response = self
             .session
             .add_torrent(
-                AddTorrent::from_bytes(bytes),
+                AddTorrent::from_bytes(pending.bytes),
                 Some(AddTorrentOptions {
                     only_files,
+                    // `None` means the session's own folder, which is the
+                    // global setting -- so the default costs nothing and
+                    // needs no special case.
+                    //
+                    // `sub_folder` is never set, here or anywhere. librqbit
+                    // errors if both are given, and the way to make that
+                    // impossible is to have exactly one of them in the
+                    // codebase rather than to validate a pair.
+                    output_folder,
                     // Required for librqbit to resume or seed over files that
                     // already exist on disk; without it a restarted download
                     // refuses to touch its own partial data.
@@ -754,6 +824,41 @@ impl Engine {
                 "session unexpectedly returned a listing"
             ))),
         }
+    }
+
+    /// What a chosen destination means for a torrent awaiting confirmation.
+    ///
+    /// Both questions the add dialog asks -- will it fit, and do I have some
+    /// of it already -- are answered relative to a folder, so choosing a
+    /// different one invalidates the answers the preview came with. Free
+    /// space especially: picking another disk is often *why* someone changes
+    /// the destination, and showing the original volume's figure would be
+    /// wrong exactly when it is being relied on.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::NoPendingPreview`] if nothing is awaiting confirmation
+    /// under this hash.
+    pub async fn destination_preflight(
+        &self,
+        info_hash: &str,
+        folder: &str,
+    ) -> Result<DestinationPreflight, EngineError> {
+        let pending = self.pending.read().await;
+        let files = &pending
+            .get(info_hash)
+            .ok_or(EngineError::NoPendingPreview)?
+            .files;
+
+        let folder = std::path::Path::new(folder);
+        Ok(DestinationPreflight {
+            // `is_dir` rather than `exists`: a file of that name is not a
+            // folder this can be written into, and reporting it as present
+            // would send the add at something that cannot work.
+            exists: folder.is_dir(),
+            free_bytes: preflight::free_bytes(folder),
+            already_on_disk: preflight::already_on_disk(folder, files),
+        })
     }
 
     /// Discards a pending preview the user cancelled.

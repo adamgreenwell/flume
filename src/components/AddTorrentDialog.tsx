@@ -6,14 +6,48 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { selectedBytes as sumSelected } from "@/lib/filetree";
 import { formatBytes } from "@/lib/format";
-import { confirmAdd, discardPreview, previewTorrent } from "@/lib/ipc/client";
-import { isCommandError, type TorrentPreview } from "@/lib/ipc/types";
+import {
+  confirmAdd,
+  destinationPreflight,
+  discardPreview,
+  previewTorrent,
+} from "@/lib/ipc/client";
+import {
+  isCommandError,
+  type DestinationPreflight,
+  type TorrentPreview,
+} from "@/lib/ipc/types";
 import { looksLikeMagnet } from "@/lib/magnet";
 
 import { Button } from "./Button";
 import { FileTree } from "./FileTree";
 import { Icon } from "./Icon";
 import { PreflightTiles } from "./PreflightTiles";
+
+/**
+ * Whether two paths name the same folder, ignoring a trailing separator.
+ *
+ * librqbit hands back the folder a list-only add resolved to *with* a
+ * trailing separator, which the engine test
+ * `a_chosen_folder_overrides_the_session_default` documents. A raw string
+ * comparison against the remembered folder is therefore true even when both
+ * are the same directory — so every untouched add looked like a custom one,
+ * persisted the global folder as the remembered one, and then kept writing
+ * there after the global setting changed.
+ *
+ * Only the trailing separator, deliberately. Case folding would be wrong on a
+ * case-sensitive volume, and resolving `.`/`..` or symlinks is not something
+ * the webview can do — it never touches the filesystem. This equates the one
+ * divergence that is known to happen rather than guessing at path identity.
+ *
+ * @param a - A path.
+ * @param b - Another path.
+ * @returns Whether they name the same folder.
+ */
+function sameFolder(a: string, b: string): boolean {
+  const trimmed = (path: string) => path.replace(/[/\\]+$/, "");
+  return trimmed(a) === trimmed(b);
+}
 
 /** Props for {@link AddTorrentDialog}. */
 export interface AddTorrentDialogProps {
@@ -23,6 +57,21 @@ export interface AddTorrentDialogProps {
   initialMagnet?: string;
   /** A `.torrent` path to resolve immediately, from a drag-and-drop. */
   droppedPath?: string;
+  /**
+   * Where this add will write, unless the user changes it.
+   *
+   * The last folder an add used, or the global download folder when there
+   * has not been one. Passed in rather than read here so the screen has one
+   * source for it.
+   */
+  defaultFolder?: string;
+  /**
+   * Called with the folder an add actually used, to be remembered.
+   *
+   * Only on a successful add: remembering a destination the user abandoned
+   * would make the next add default to a choice they backed out of.
+   */
+  onFolderUsed?: (folder: string | null) => void;
   /**
    * Recent download rate to estimate the finish time against, or `null`.
    *
@@ -52,6 +101,8 @@ export function AddTorrentDialog({
   initialMagnet = "",
   droppedPath,
   rateBps = null,
+  defaultFolder,
+  onFolderUsed,
 }: AddTorrentDialogProps) {
   const [magnet, setMagnet] = useState(initialMagnet);
   const [preview, setPreview] = useState<TorrentPreview | null>(null);
@@ -63,6 +114,33 @@ export function AddTorrentDialog({
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The chosen destination, and the preflight re-answered for it.
+  //
+  // `null` in `checked` means nothing has been chosen, so the preview's own
+  // figures stand. Once a folder is picked they are replaced rather than
+  // adjusted: free space belongs to a volume and "already on disk" to a
+  // folder, so neither survives the change.
+  const [folder, setFolder] = useState<string | null>(null);
+  const [checked, setChecked] = useState<DestinationPreflight | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  // Whether a check is in flight, and a token identifying the latest one.
+  //
+  // Both are needed and they answer different questions. The flag gates
+  // confirmation, because adding against the previous folder's free space is
+  // exactly the mistake this sheet exists to prevent. The counter discards a
+  // reply that is no longer the current one, because picks in quick
+  // succession can land out of order and the slower one would win.
+  //
+  // A counter rather than the folder being checked, which is what this was
+  // first: two checks for the *same* folder are then indistinguishable, so
+  // the older reply passed the guard, installed its stale figures, and
+  // cleared `checking` while the newer check was still running -- enabling
+  // confirmation before the latest answer arrived. Every request gets its
+  // own number, and bumping it is also how a path that abandons checking
+  // marks whatever is pending obsolete.
+  const [checking, setChecking] = useState(false);
+  const checkSeq = useRef(0);
+
   const dialogRef = useRef<HTMLDivElement>(null);
   // Kept in a ref so the unmount cleanup does not need `preview` as a dep,
   // which would re-run cleanup on every preview change.
@@ -71,25 +149,92 @@ export function AddTorrentDialog({
   const describe = (caught: unknown, fallback: string) =>
     isCommandError(caught) ? caught.message : fallback;
 
-  /** Applies a successfully resolved preview. */
-  const applyPreview = useCallback((resolved: TorrentPreview) => {
-    setPreview(resolved);
-    pendingHashRef.current = resolved.infoHash;
-    // Everything selected by default except what is already on disk. The
-    // common case is wanting the whole torrent, and starting from nothing
-    // selected makes the primary action dead on arrival — but re-fetching a
-    // file the user already has is the one thing an add sheet exists to
-    // prevent, so those start off and the footer says why.
-    setSelected(
-      new Set(
-        resolved.files
-          .filter((f) => !resolved.alreadyOnDisk[f.index])
-          .map((f) => f.index),
-      ),
-    );
-    setError(null);
-    setIsResolving(false);
+  const checkFolder = useCallback(async (hash: string, dir: string) => {
+    const token = (checkSeq.current += 1);
+    setChecking(true);
+    setFolderError(null);
+    try {
+      const result = await destinationPreflight(hash, dir);
+      // Superseded while this was in flight; the newer check owns the state.
+      if (checkSeq.current !== token) return;
+
+      // A destination that is not there is not used. The remembered folder
+      // can be on a volume that has since been unmounted, and the engine
+      // would create the path again on the local disk and fill it -- while
+      // the free-space figure described that disk rather than the one the
+      // user meant. Falling back to the session folder is the only answer
+      // that cannot write somewhere surprising.
+      //
+      // Nothing legitimate is blocked by this: the picker only returns
+      // folders that exist, and there is nowhere here to type a new one.
+      if (!result.exists) {
+        setFolder(null);
+        setChecked(null);
+        setFolderError(
+          "That folder is not there any more, so this will go to the usual download folder.",
+        );
+        return;
+      }
+      setChecked(result);
+    } catch (caught: unknown) {
+      if (checkSeq.current !== token) return;
+      // The figures are dropped rather than left describing the old folder.
+      // An honest "unknown" is what `PreflightTiles` renders for null, and
+      // it beats a number about somewhere else.
+      setChecked({ exists: true, freeBytes: null, alreadyOnDisk: [] });
+      setFolderError(describe(caught, "Could not check that folder."));
+    } finally {
+      if (checkSeq.current === token) setChecking(false);
+    }
   }, []);
+
+  /** Applies a successfully resolved preview. */
+  const applyPreview = useCallback(
+    (resolved: TorrentPreview) => {
+      setPreview(resolved);
+      pendingHashRef.current = resolved.infoHash;
+
+      // The remembered folder becomes the real destination, not just the one
+      // on display. Leaving `folder` null while showing it meant the sheet
+      // named one folder and the add wrote to another -- and the preflight
+      // described the one it was not using. Only when it actually differs
+      // from where the session would put it: equal values should stay `null`
+      // so the engine's own default remains the single source of that path.
+      // Not for a torrent already in the list. Adding it again replaces its
+      // file selection and leaves its data where it is, so a destination is
+      // not a choice there -- and preflighting one would check a folder
+      // nothing will be written to.
+      if (
+        !resolved.alreadyAdded &&
+        defaultFolder &&
+        !sameFolder(defaultFolder, resolved.savePath)
+      ) {
+        setFolder(defaultFolder);
+        void checkFolder(resolved.infoHash, defaultFolder);
+      }
+
+      // Everything selected by default except what is already on disk. The
+      // common case is wanting the whole torrent, and starting from nothing
+      // selected makes the primary action dead on arrival — but re-fetching
+      // a file the user already has is the one thing an add sheet exists to
+      // prevent, so those start off and the footer says why.
+      //
+      // Against the *preview's* answer, which is about the session folder. A
+      // remembered folder is checked just above and its reply arrives later;
+      // it updates the marks, not this selection, for the reason the picker
+      // does not either -- see `chooseFolder`.
+      setSelected(
+        new Set(
+          resolved.files
+            .filter((f) => !resolved.alreadyOnDisk[f.index])
+            .map((f) => f.index),
+        ),
+      );
+      setError(null);
+      setIsResolving(false);
+    },
+    [defaultFolder, checkFolder],
+  );
 
   /** Records a failed resolution. */
   const failPreview = useCallback((caught: unknown) => {
@@ -172,18 +317,93 @@ export function AddTorrentDialog({
     await resolve({ kind: "file", path });
   };
 
+  /**
+   * Chooses a destination and re-answers the preflight for it.
+   *
+   * The selection is deliberately left alone. It started as "everything you
+   * do not already have", and a file that is absent from the new folder is
+   * now shown unmarked and unselected rather than being silently ticked --
+   * re-selecting files the user may have deselected on purpose would be
+   * worse than making them press Select all.
+   */
+  const chooseFolder = async () => {
+    const picked = await open({ directory: true, multiple: false });
+    if (typeof picked !== "string" || !preview) return;
+
+    // Choosing the folder the session would have used anyway is not an
+    // override, it is the absence of one. Recording it as a path meant
+    // returning to the default persisted it as a custom destination -- and
+    // the next add then collapsed it back to `null` without ever clearing
+    // what was stored, so changing the global folder revived the old path.
+    if (sameFolder(picked, preview.savePath)) {
+      // Any check still in flight is now about somewhere else, so it is
+      // marked obsolete rather than left to land. Bumping the counter is
+      // what does that: without it the older request still matched its
+      // token, and installed the custom folder's free space and on-disk
+      // marks beside a destination that had gone back to the session
+      // default.
+      checkSeq.current += 1;
+      setChecking(false);
+      setFolder(null);
+      setChecked(null);
+      setFolderError(null);
+      return;
+    }
+
+    setFolder(picked);
+    await checkFolder(preview.infoHash, picked);
+  };
+
   const confirm = async () => {
     if (!preview) return;
     setIsAdding(true);
     setError(null);
     try {
       const all = selected.size === preview.files.length;
-      await confirmAdd(preview.infoHash, all ? null : [...selected]);
+      // `null` when the user did not choose one, so the engine uses the
+      // session's own folder rather than a copy of the global setting made
+      // here. The two are the same today and would drift the moment the
+      // setting changed while a dialog was open.
+      await confirmAdd(preview.infoHash, all ? null : [...selected], folder);
+      // Reported only now, with the add through: a destination recorded
+      // when it was picked would outlive a cancelled dialog.
+      //
+      // `null` is reported as readily as a path, and that is the point. It
+      // means this add used the session folder, which has to *clear* any
+      // remembered override -- otherwise returning to the default leaves the
+      // old path stored, and changing the global folder later revives it.
+      //
+      // Only when it differs from what was remembered, so an ordinary add
+      // does not write settings for no reason.
+      //
+      // The `alreadyAdded` half cannot currently fire -- that case shows no
+      // Change button and adopts no default, so `folder` is always null
+      // there and equal to what was remembered. It is here as the statement
+      // of the rule: the engine returns `AlreadyManaged` and leaves the
+      // files alone, so a folder chosen for one was never used.
+      const remembered = defaultFolder ?? null;
+      const changed =
+        folder === null || remembered === null
+          ? folder !== remembered
+          : !sameFolder(folder, remembered);
+      if (changed && !preview.alreadyAdded) onFolderUsed?.(folder);
       pendingHashRef.current = null;
       onClose();
     } catch (caught: unknown) {
       setError(describe(caught, "Could not start that torrent."));
       setIsAdding(false);
+      // The destination went away while the sheet was open, which the engine
+      // refuses rather than creating. Re-checking is what makes the next
+      // click work: it clears the folder and explains the fallback, where
+      // clicking Add again against the same vanished path would fail
+      // identically and read as the button being broken.
+      if (
+        isCommandError(caught) &&
+        caught.kind === "destinationGone" &&
+        folder !== null
+      ) {
+        void checkFolder(preview.infoHash, folder);
+      }
     }
   };
 
@@ -207,15 +427,34 @@ export function AddTorrentDialog({
 
   const chosenBytes = preview ? sumSelected(preview.files, selected) : 0;
 
+  // The destination in force, and the figures that describe it.
+  //
+  // `checked` wins once a folder has been chosen, because the preview's
+  // answers were about a different folder. Not merged -- there is nothing
+  // to merge, they are answers to the same two questions about somewhere
+  // else.
+  // `defaultFolder` is deliberately absent from this chain. It is either
+  // adopted into `folder` when the preview resolves -- which is what makes
+  // it the real destination rather than only the displayed one -- or it is
+  // not used at all: equal to the session folder, gone, or irrelevant
+  // because the torrent is already added. Keeping it here as a fallback had
+  // the row claim a vanished folder while the add sent `null` and wrote to
+  // the session folder, which is the divergence this chain exists to avoid.
+  const destination = folder ?? preview?.savePath ?? "";
+  const freeBytes = checked ? checked.freeBytes : (preview?.freeBytes ?? null);
+  const alreadyOnDisk = checked
+    ? checked.alreadyOnDisk
+    : (preview?.alreadyOnDisk ?? []);
+
   // Indices already present at full length, as a set for the tree to test.
   const onDisk = useMemo(
     () =>
       new Set(
         (preview?.files ?? [])
-          .filter((f) => preview?.alreadyOnDisk[f.index])
+          .filter((f) => alreadyOnDisk[f.index])
           .map((f) => f.index),
       ),
-    [preview],
+    [preview, alreadyOnDisk],
   );
 
   // Files the user has chosen anyway, despite already having them. The footer
@@ -375,13 +614,47 @@ export function AddTorrentDialog({
           </div>
         </div>
 
+        {/*
+          Hidden for a torrent already in the list. `savePath` describes where
+          a *new* add would go -- a list-only add resolves the session folder,
+          not the existing torrent's -- so showing it beside a torrent whose
+          files are elsewhere would assert the wrong path. The notice below
+          says the destination cannot be changed instead.
+        */}
+        {preview.alreadyAdded ? null : (
+          <div className="border-line flex shrink-0 items-center gap-2 border-b px-3.5 py-2">
+            <span className="text-fg-3 shrink-0 text-[10px] font-semibold tracking-[0.09em] uppercase">
+              Saving to
+            </span>
+            {/*
+            Truncated from the left, so the end of a long path -- the part
+            that says which folder this actually is -- stays visible. `dir`
+            is what makes the ellipsis land at the start.
+          */}
+            <span
+              dir="rtl"
+              title={destination}
+              className="text-fg-1 min-w-0 grow truncate text-left text-[12px]"
+            >
+              {destination}
+            </span>
+            <Button onClick={() => void chooseFolder()}>Change</Button>
+          </div>
+        )}
+        {folderError === null ? null : (
+          <p className="text-warn shrink-0 px-3.5 py-1.5 text-[11px]">
+            {folderError} The figures below are shown as unknown rather than
+            describing the previous folder.
+          </p>
+        )}
+
         <PreflightTiles
           seenPeers={preview.seenPeers}
           selectedBytes={chosenBytes}
           totalBytes={preview.totalBytes}
           selectedCount={selected.size}
           totalCount={preview.files.length}
-          freeBytes={preview.freeBytes}
+          freeBytes={freeBytes}
           rateBps={rateBps}
         />
 
@@ -414,7 +687,8 @@ export function AddTorrentDialog({
             role="status"
           >
             This torrent is already in your list. Adding it again replaces its
-            file selection.
+            file selection, and leaves its files where they are — the
+            destination cannot be changed here.
           </p>
         ) : null}
 
@@ -453,13 +727,20 @@ export function AddTorrentDialog({
             variant="primary"
             size="dialog"
             onClick={() => void confirm()}
-            disabled={selected.size === 0 || isAdding}
+            // Also while a folder check is in flight. Confirming then would
+            // start the torrent against the *previous* folder's free space
+            // and on-disk marks, which is the decision this sheet exists to
+            // inform -- and the figures beside the button would be describing
+            // somewhere else at the moment it was pressed.
+            disabled={selected.size === 0 || isAdding || checking}
           >
             {isAdding
               ? "Starting…"
-              : selected.size === 0
-                ? "Nothing selected"
-                : `Add ${selected.size} ${selected.size === 1 ? "file" : "files"} · ${formatBytes(chosenBytes)}`}
+              : checking
+                ? "Checking that folder…"
+                : selected.size === 0
+                  ? "Nothing selected"
+                  : `Add ${selected.size} ${selected.size === 1 ? "file" : "files"} · ${formatBytes(chosenBytes)}`}
           </Button>
         </div>
       </div>

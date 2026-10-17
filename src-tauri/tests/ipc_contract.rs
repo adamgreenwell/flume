@@ -31,10 +31,10 @@ use flume_lib::{
     commands::{CommandError, SeedLimits},
     egress::{EgressGuard, EgressPath, EgressReport, GuardStatus, Hop, InterfaceKind, Verdict},
     engine::{
-        Bottleneck, CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, LimitFactor, Note,
-        NoteSeverity, PeerInfo, PieceMap, SwarmHealth, SwarmStats, TelemetrySnapshot,
-        TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview, TorrentSource, TorrentState,
-        TorrentSummary,
+        Bottleneck, CoreStatus, DestinationPreflight, DhtStatus, EngineHealth, IpFilterStatus,
+        LimitFactor, Note, NoteSeverity, PeerInfo, PieceMap, SwarmHealth, SwarmStats,
+        TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview,
+        TorrentSource, TorrentState, TorrentSummary,
     },
     policy::TorrentRules,
     settings::{Settings, SortState, Theme},
@@ -118,6 +118,19 @@ fn sample_summary() -> TorrentSummary {
         error: None,
         output_folder: "/tmp/downloads".into(),
     }
+}
+
+#[test]
+fn the_destination_preflight_matches_the_typescript_mirror() {
+    assert_keys(
+        &DestinationPreflight {
+            exists: true,
+            free_bytes: Some(1_000),
+            already_on_disk: vec![true, false],
+        },
+        &["exists", "freeBytes", "alreadyOnDisk"],
+        "DestinationPreflight",
+    );
 }
 
 #[test]
@@ -237,6 +250,7 @@ fn settings_match_the_typescript_mirror() {
             "theme",
             "density",
             "sort",
+            "lastAddFolder",
             "rail",
             "egressGuard",
             "egressInterface",

@@ -101,7 +101,7 @@ async fn telemetry_stays_fast_with_many_torrents() {
             .await
             .expect("preview");
         engine
-            .confirm_add(&preview.info_hash, None)
+            .confirm_add(&preview.info_hash, None, None)
             .await
             .expect("add");
     }
@@ -160,7 +160,7 @@ async fn detail_queries_stay_bounded() {
         .await
         .expect("preview");
     let id = engine
-        .confirm_add(&preview.info_hash, None)
+        .confirm_add(&preview.info_hash, None, None)
         .await
         .expect("add");
 

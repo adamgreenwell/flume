@@ -10,6 +10,24 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ### Added
 
+- **A download folder per torrent.** The add sheet shows where the torrent
+  will be written and lets you change it, defaulting to wherever the last add
+  went. Set at add time, which is the honest limit: moving a torrent's data
+  afterwards is a different operation and is still to come.
+
+  The part worth knowing is that **changing the destination re-asks the
+  questions the sheet exists to answer.** Free space belongs to a volume and
+  "you already have this file" belongs to a folder, so both figures the sheet
+  arrived with describe the _default_ destination and neither survives picking
+  another one. They are recomputed for the folder you chose — picking a
+  different disk is usually _why_ you are changing it, so showing the original
+  volume's free space would be wrong exactly when it is being relied on.
+
+  Your file selection is left alone when the destination changes. It started
+  as "everything you do not already have", and a file that is absent from the
+  new folder now shows unmarked and unselected rather than being silently
+  ticked back on.
+
 - **A peer limit you can see and set.** Settings → Network now carries "Connect
   to at most", a per-torrent cap on connected peers, and the detail panel shows
   the live count against it — `28 / 128` rather than `28`.

@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  DestinationPreflight,
   CoreStatus,
   DetectedClient,
   GuardStatus,
@@ -70,15 +71,46 @@ export async function previewTorrent(
  *
  * @param infoHash - From the preview.
  * @param onlyFiles - File indices to download; `null` downloads everything.
+ * @param outputFolder - Where to write it, or `null` for the global folder.
+ *   `null` rather than a copy of the global setting, so the session's own
+ *   default stays the one source of that value.
  * @returns The new torrent's session id.
  * @throws A {@link CommandError} with kind `noPendingPreview` if the preview
- *   was already consumed or discarded.
+ *   was already consumed or discarded, or `destinationGone` if
+ *   `outputFolder` is no longer a directory. The engine re-checks it here
+ *   because librqbit creates a missing output folder, so an unmounted volume
+ *   would otherwise be re-created at its mount point and filled on the boot
+ *   disk. A `destinationGone` refusal leaves the preview intact, so the add
+ *   can be retried against somewhere that exists.
  */
 export async function confirmAdd(
   infoHash: string,
   onlyFiles: number[] | null,
+  outputFolder: string | null = null,
 ): Promise<number> {
-  return invoke<number>("confirm_add", { infoHash, onlyFiles });
+  return invoke<number>("confirm_add", { infoHash, onlyFiles, outputFolder });
+}
+
+/**
+ * Re-answers the preflight questions for a folder the user just chose.
+ *
+ * Both of them are relative to a folder, so the figures the preview arrived
+ * with describe the default destination and not this one.
+ *
+ * @param infoHash - From the preview; it must still be awaiting confirmation.
+ * @param folder - The chosen destination.
+ * @returns Free space on that volume, and which files are already there.
+ * @throws A {@link CommandError} with kind `noPendingPreview` if the preview
+ *   was already consumed or discarded.
+ */
+export async function destinationPreflight(
+  infoHash: string,
+  folder: string,
+): Promise<DestinationPreflight> {
+  return invoke<DestinationPreflight>("destination_preflight", {
+    infoHash,
+    folder,
+  });
 }
 
 /**
