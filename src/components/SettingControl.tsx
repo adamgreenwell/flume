@@ -196,6 +196,10 @@ export function SettingControl({
           format={(n) => (n === 1 ? "1 peer" : `${n} peers`)}
           onChange={onChange}
           width="w-[86px]"
+          // The only slider here bound to a setting that rebuilds the
+          // session. Reporting every stop crossed would turn one drag into a
+          // dozen engine restarts.
+          commit="release"
         />
       );
 

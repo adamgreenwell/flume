@@ -190,6 +190,9 @@ pub enum SettingKey {
     /// Listen port.
     #[serde(rename = "net.listenPort")]
     NetListenPort,
+    /// Peers per torrent.
+    #[serde(rename = "net.peerLimit")]
+    NetPeerLimit,
     /// UPnP on or off.
     #[serde(rename = "net.upnp")]
     NetUpnp,
@@ -267,6 +270,7 @@ impl SettingKey {
             previous.listen_port != next.listen_port,
             Self::NetListenPort,
         );
+        note(previous.peer_limit != next.peer_limit, Self::NetPeerLimit);
         note(previous.enable_upnp != next.enable_upnp, Self::NetUpnp);
         note(previous.proxy_url != next.proxy_url, Self::NetProxy);
         // Only that the limit moved, never to what. A ratio is a number about

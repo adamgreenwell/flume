@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 /**
  * Seed-ratio stops, coarsening as they climb.
  *
@@ -97,6 +99,7 @@ export function SteppedSlider({
   format,
   onChange,
   width,
+  commit = "change",
 }: {
   steps: ReadonlyArray<number | null>;
   value: number | null;
@@ -104,15 +107,36 @@ export function SteppedSlider({
   format: (value: number) => string;
   onChange: (next: number | null) => void;
   width: string;
+  /**
+   * When to report a new value: on every stop crossed, or once on release.
+   *
+   * `"change"` is right for a setting that applies live — the engine takes a
+   * new rate limit in microseconds, and a figure that only moves when you let
+   * go feels unresponsive.
+   *
+   * `"release"` is for a setting whose write is expensive. A drag across this
+   * control crosses every stop between the ends, and each one is a round trip
+   * to `update_settings`; where that rebuilds the librqbit session, a single
+   * drag would otherwise queue a dozen engine restarts, each tearing down the
+   * listener and re-announcing every torrent to its trackers. The caret still
+   * tracks the drag — only the commit waits.
+   */
+  commit?: "change" | "release";
 }) {
+  // Set while dragging a `commit: "release"` slider, so the control can show
+  // where the caret is without having reported it yet. `undefined` means not
+  // dragging; `null` is a real value, so it cannot stand in for that.
+  const [pending, setPending] = useState<number | null | undefined>(undefined);
+  const shown = pending === undefined ? value : pending;
+
   // Nearest step, so a value set from outside this slider still lands
   // somewhere sensible on it rather than snapping to the start.
   let index = steps.length - 1;
-  if (value !== null) {
+  if (shown !== null) {
     let best = Number.POSITIVE_INFINITY;
     steps.forEach((step, i) => {
       if (step === null) return;
-      const distance = Math.abs(step - value);
+      const distance = Math.abs(step - shown);
       if (distance < best) {
         best = distance;
         index = i;
@@ -120,7 +144,17 @@ export function SteppedSlider({
     });
   }
 
-  const text = value === null ? "No limit" : format(value);
+  const text = shown === null ? "No limit" : format(shown);
+
+  // Also on blur, not only on pointer-up: a drag released outside the window,
+  // or a keyboard user tabbing away mid-adjustment, must not leave the value
+  // shown and uncommitted.
+  const release = () => {
+    if (pending === undefined) return;
+    const next = pending;
+    setPending(undefined);
+    if (next !== value) onChange(next);
+  };
 
   return (
     <div className="flex items-center gap-2.5">
@@ -132,9 +166,14 @@ export function SteppedSlider({
         value={index}
         aria-label={label}
         aria-valuetext={text}
-        onChange={(event) =>
-          onChange(steps[Number(event.target.value)] ?? null)
-        }
+        onChange={(event) => {
+          const next = steps[Number(event.target.value)] ?? null;
+          if (commit === "release") setPending(next);
+          else onChange(next);
+        }}
+        onPointerUp={release}
+        onKeyUp={release}
+        onBlur={release}
         className="accent-acc w-[150px]"
       />
       <span

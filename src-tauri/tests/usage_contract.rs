@@ -70,6 +70,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::FilesDownloadDir,
         SettingKey::NetDht,
         SettingKey::NetListenPort,
+        SettingKey::NetPeerLimit,
         SettingKey::NetUpnp,
         SettingKey::NetProxy,
         SettingKey::NetEgressGuard,

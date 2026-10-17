@@ -32,6 +32,7 @@
         "files.downloadDir",
         "net.dht",
         "net.listenPort",
+        "net.peerLimit",
         "net.upnp",
         "net.proxy",
         "net.egressGuard",
