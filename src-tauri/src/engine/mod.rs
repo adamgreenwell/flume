@@ -36,7 +36,7 @@ use librqbit::{
 
 pub use add::{TorrentFile, TorrentPreview, TorrentSource};
 pub use bottleneck::{Bottleneck, LimitFactor};
-pub use config::{ConfigError, DEFAULT_LISTEN_PORT, EngineConfig};
+pub use config::{ConfigError, DEFAULT_LISTEN_PORT, DEFAULT_PEER_LIMIT, EngineConfig};
 pub use detail::{
     MAX_FILE_PIECE_BUCKETS, MAX_PIECE_BUCKETS, PeerInfo, PieceMap, SwarmStats, TorrentDetail,
 };
@@ -310,6 +310,12 @@ impl Engine {
                     proxy_url: Some(proxy_url.clone()),
                     ..Default::default()
                 }),
+
+            // Set explicitly even though librqbit has a fallback, because the
+            // fallback is invisible: `None` here means 128, chosen inside the
+            // dependency, which Flume could neither show the user nor hold
+            // itself to. Passing the number makes it ours.
+            peer_limit: Some(config.peer_limit as usize),
 
             client_name_and_version: Some(format!("Flume {}", env!("CARGO_PKG_VERSION"))),
 
@@ -939,6 +945,7 @@ impl Engine {
                     dead: p.dead as usize,
                     live_tcp: p.live_tcp as usize,
                     live_utp: p.live_utp as usize,
+                    peer_limit: self.config.peer_limit,
                     seeds: avail.as_ref().map(|a| a.summary.seeds as usize),
                     availability: avail.as_ref().map(|a| a.summary.average),
                     rarest: avail.as_ref().map(|a| a.summary.rarest),
@@ -952,6 +959,11 @@ impl Engine {
                 dead: 0,
                 live_tcp: 0,
                 live_utp: 0,
+                // Carried even when the torrent is not live: the ceiling is a
+                // property of the configuration, not of the connection state,
+                // and a panel that showed "0 / --" would read as though the
+                // limit had gone away.
+                peer_limit: self.config.peer_limit,
                 // Not live, so there is nothing to judge availability from.
                 // None rather than zero: no seeds seen is not the same claim
                 // as no seeds exist.

@@ -210,6 +210,7 @@ fn settings_match_the_typescript_mirror() {
         &[
             "downloadDir",
             "listenPort",
+            "peerLimit",
             "enableDht",
             "enableUpnp",
             "downloadLimitBps",
@@ -415,6 +416,7 @@ fn torrent_detail_matches_the_typescript_mirror() {
             dead: 2,
             live_tcp: 2,
             live_utp: 1,
+            peer_limit: 128,
             seeds: Some(1),
             availability: Some(2.5),
             rarest: Some(2),
@@ -452,6 +454,7 @@ fn torrent_detail_matches_the_typescript_mirror() {
             "rarest",
             "liveTcp",
             "liveUtp",
+            "peerLimit",
         ],
         "SwarmStats",
     );

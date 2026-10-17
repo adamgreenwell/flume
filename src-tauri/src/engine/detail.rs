@@ -34,6 +34,14 @@ pub struct SwarmStats {
     pub connecting: usize,
     /// Known peers waiting for a connection slot.
     pub queued: usize,
+    /// Most peers this torrent may connect to at once.
+    ///
+    /// Reported from the running engine's configuration rather than from
+    /// settings on disk, because the two can disagree: the limit is fixed when
+    /// a torrent goes live, so a user who changes the setting and has not
+    /// restarted is still being held to the old one. The panel shows the
+    /// number actually being enforced.
+    pub peer_limit: u32,
     /// Distinct peers discovered for this torrent, ever.
     pub seen: usize,
     /// Peers that failed and were dropped.

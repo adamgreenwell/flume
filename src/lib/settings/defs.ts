@@ -85,6 +85,14 @@ export type Control =
   | { kind: "duration" }
   /** A count of torrents, as a stepped slider whose top stop is "no limit". */
   | { kind: "count" }
+  /**
+   * A count of peers per torrent, as a stepped slider with no "no limit" stop.
+   *
+   * Distinct from {@link Control} `count` for that reason alone: every other
+   * limit here can be switched off, and this one cannot — leaving it unset
+   * means 128, not unbounded.
+   */
+  | { kind: "peers" }
   | { kind: "port" }
   | { kind: "path" }
   | { kind: "text"; placeholder: string }
@@ -310,6 +318,17 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     restartsSession: true,
     consequence: (port) =>
       `Peers reach you on port ${port}. If your router does not forward it you can still download, but only peers you contact first will connect — which is slower, and contributes less back to the swarm.`,
+  },
+  {
+    id: "peerLimit",
+    section: "network",
+    label: "Connect to at most",
+    key: "net.peerLimit",
+    control: { kind: "peers" },
+    keywords: ["peers", "connections", "sockets", "nat", "router", "slots"],
+    restartsSession: true,
+    consequence: (peers) =>
+      `Each torrent connects to at most ${peers} peers at once. Ten torrents running is up to ${peers * 10} connections, which is what a modest router's NAT table has to hold — the usual reason a busy client is blamed for "breaking the internet" in a shared house.`,
   },
   {
     id: "enableUpnp",

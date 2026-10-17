@@ -63,6 +63,7 @@ function detail(peers: PeerInfo[]): TorrentDetail {
       dead: 0,
       liveTcp: peers.length,
       liveUtp: 0,
+      peerLimit: 128,
       seeds: null,
       availability: null,
       rarest: null,

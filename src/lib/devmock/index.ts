@@ -351,6 +351,7 @@ const FILES: TorrentFileState[] = [
 const SETTINGS: Settings = {
   downloadDir: "/Users/you/Downloads",
   listenPort: 42221,
+  peerLimit: 128,
   enableDht: true,
   enableUpnp: true,
   downloadLimitBps: null,
@@ -670,6 +671,7 @@ const DETAIL: TorrentDetail = {
     dead: 19,
     liveTcp: 26,
     liveUtp: 2,
+    peerLimit: 128,
     // Consistent with the 28 live peers above: a subset are seeds, and the
     // rarest piece cannot be held by more peers than are connected.
     seeds: 6,

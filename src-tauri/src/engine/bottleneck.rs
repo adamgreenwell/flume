@@ -15,11 +15,23 @@
 //! | Peer upload       | Measured, by elimination — see below.                  |
 //! | Your download cap | Measured exactly: rate against the configured cap.     |
 //! | Piece availability| Measured from peer bitfields (not in the design's list).|
-//! | Connection slots  | Absent. `SessionOptions.peer_limit` is `None`, so there |
-//! |                   | is no ceiling to be a fraction of.                     |
+//! | Connection slots  | Not yet ranked here, though the ceiling now exists --  |
+//! |                   | see below.                                             |
 //! | Disk writes       | Absent. librqbit exposes no write-queue depth.         |
 //! | Hash checking     | Absent. No CPU accounting, and sampling it would be a  |
 //! |                   | platform-specific guess.                               |
+//!
+//! **Connection slots are measurable now, and still not claimed here.** This
+//! table used to say the ceiling did not exist, on the grounds that
+//! `SessionOptions.peer_limit` was `None`. That was wrong in a way worth
+//! recording: `None` meant librqbit's own fallback of 128, not unlimited, so
+//! there was always a ceiling -- Flume just did not know its value and could
+//! not have shown a fraction of it. Flume now sets the limit explicitly and
+//! reports it on `SwarmStats`, so the fraction is computable. Ranking it as a
+//! factor is a separate judgement about what the panel claims, and is not made
+//! here yet: a torrent sitting at its slot ceiling is only *constrained* by it
+//! if the peers it is not connecting to would have supplied more, which is the
+//! same unobservable this module is careful about everywhere else.
 //!
 //! **"Peer upload is binding" is a deduction, not a guess.** The rate a swarm
 //! will supply is not observable, but its *complement* is: if the configured
