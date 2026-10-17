@@ -24,7 +24,8 @@ vi.mock("@/lib/ipc/client", () => ({
     destinationPreflight(hash, dir),
   discardPreview: () => discardPreview(),
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+const pickFolder = vi.fn<() => Promise<string | null>>();
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => pickFolder() }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   readText: vi.fn(async () => ""),
 }));
@@ -44,6 +45,8 @@ const PREVIEW: TorrentPreview = {
 };
 
 beforeEach(() => {
+  pickFolder.mockReset();
+  pickFolder.mockResolvedValue(null);
   previewTorrent.mockReset();
   confirmAdd.mockReset();
   destinationPreflight.mockReset();
@@ -152,6 +155,53 @@ describe("a remembered destination", () => {
 
     await waitFor(() => expect(confirmAdd).toHaveBeenCalled());
     expect(onFolderUsed).not.toHaveBeenCalled();
+  });
+
+  it("discards a check that was still running when the default came back", async () => {
+    // Going back to the session folder leaves any in-flight check about
+    // somewhere else. Without marking it obsolete the older reply still
+    // matched its guard and installed the custom folder's free space and
+    // on-disk marks beside a destination that had already changed.
+    let release: (value: DestinationPreflight) => void = () => {};
+    destinationPreflight.mockImplementation(
+      () =>
+        new Promise<DestinationPreflight>((resolve) => {
+          release = resolve;
+        }),
+    );
+    pickFolder.mockResolvedValue(PREVIEW.savePath);
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Media"
+        onClose={() => {}}
+      />,
+    );
+
+    // The adopted folder's check is hanging.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Checking that folder…" }),
+      ).toBeDefined(),
+    );
+
+    // Back to the default while it is still in flight.
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+
+    // The stale reply lands. It must not be installed.
+    release({ exists: true, freeBytes: 42, alreadyOnDisk: [true] });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+    await waitFor(() =>
+      expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
+    );
   });
 
   it("will not send a remembered folder that is no longer there", async () => {

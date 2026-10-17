@@ -328,6 +328,13 @@ export function AddTorrentDialog({
     // the next add then collapsed it back to `null` without ever clearing
     // what was stored, so changing the global folder revived the old path.
     if (sameFolder(picked, preview.savePath)) {
+      // Any check still in flight is now about somewhere else, so it is
+      // marked obsolete rather than left to land. Its guard compares against
+      // this ref, and without clearing it the older request still matched --
+      // installing the custom folder's free space and on-disk marks beside a
+      // destination that had gone back to the session default.
+      checkingFor.current = null;
+      setChecking(false);
       setFolder(null);
       setChecked(null);
       setFolderError(null);
