@@ -78,6 +78,21 @@ pub struct Record {
     /// the same data. A backfill would invent a different fictional order every
     /// time.
     pub added_at: Option<u64>,
+    /// Where the user put this torrent in the queue, counting from zero.
+    ///
+    /// `None` means nobody has placed it, and the queue falls back to arrival
+    /// order for it -- which is what every torrent is until someone reorders
+    /// one. The first reorder writes a position for the whole queued set, so
+    /// afterwards the order is explicit rather than half-derived: a mix of
+    /// placed and unplaced torrents makes "move this down" ambiguous, and an
+    /// ambiguous reorder is worse than none.
+    ///
+    /// Here rather than in `settings` for the usual reason -- keyed by info
+    /// hash, and pruned when the torrent goes away. A map of positions in
+    /// `settings.json` would accumulate the info hash of every torrent anyone
+    /// ever reordered, for the life of the install.
+    #[serde(default)]
+    pub queue_position: Option<u32>,
     /// Seconds this torrent has spent seeding, accumulated across runs.
     ///
     /// Belongs here rather than in `settings` -- where #54 assumed it would
@@ -458,6 +473,54 @@ impl Library {
             let record = self.records.entry(hash.to_ascii_lowercase()).or_default();
             if record.seed_seconds != Some(secs) {
                 record.seed_seconds = Some(secs);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Every explicit queue position, keyed by info hash.
+    #[must_use]
+    pub fn queue_positions(&self) -> HashMap<String, u32> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| record.queue_position.map(|at| (hash.clone(), at)))
+            .collect()
+    }
+
+    /// Replaces the queue positions wholesale.
+    ///
+    /// Wholesale rather than per torrent, because a reorder is a statement
+    /// about the order of a set and not about one member of it. Writing one
+    /// position at a time would leave the set briefly inconsistent, and an
+    /// inconsistent queue admits the wrong torrent.
+    ///
+    /// Positions for torrents absent from `order` are cleared, so a torrent
+    /// that leaves the queue does not keep a stale place in it.
+    ///
+    /// Suppressed when the record did not load cleanly, like every other
+    /// write here: see [`Self::set_forced`].
+    /// Returns whether anything changed.
+    pub fn set_queue_order(&mut self, order: &[String]) -> bool {
+        if !self.healthy {
+            return false;
+        }
+        let places: HashMap<String, u32> = order
+            .iter()
+            .enumerate()
+            .map(|(at, hash)| {
+                (
+                    hash.to_ascii_lowercase(),
+                    u32::try_from(at).unwrap_or(u32::MAX),
+                )
+            })
+            .collect();
+
+        let mut changed = false;
+        for (hash, record) in &mut self.records {
+            let next = places.get(hash).copied();
+            if record.queue_position != next {
+                record.queue_position = next;
                 changed = true;
             }
         }

@@ -121,6 +121,35 @@ const BACKOFF_FIRST: Duration = Duration::from_secs(2);
 /// user who fixes the cause does not conclude the app is broken.
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 
+/// The per-torrent facts the engine is handed each tick, owned.
+///
+/// A holder for [`crate::engine::LibraryFacts`], which borrows. The engine
+/// takes references so a tick does not clone four maps; something has to own
+/// them for the duration of the call, and this is it.
+pub struct LibrarySnapshot {
+    /// When each torrent was first added, in seconds since the epoch.
+    pub added: std::collections::HashMap<String, u64>,
+    /// Why Flume stopped each torrent it stopped itself.
+    pub pause_reasons: std::collections::HashMap<String, PauseReason>,
+    /// Torrents the user started past the active limits.
+    pub forced: std::collections::HashSet<String>,
+    /// Explicit queue places, counting from zero.
+    pub queue_positions: std::collections::HashMap<String, u32>,
+}
+
+impl LibrarySnapshot {
+    /// Borrows this as the engine's parameter type.
+    #[must_use]
+    pub fn facts(&self) -> crate::engine::LibraryFacts<'_> {
+        crate::engine::LibraryFacts {
+            added: &self.added,
+            pause_reasons: &self.pause_reasons,
+            forced: &self.forced,
+            queue_positions: &self.queue_positions,
+        }
+    }
+}
+
 impl AppState {
     /// Creates state with the given settings and session directory.
     pub fn new(settings: Settings, session_dir: PathBuf, first_run: bool) -> Self {
@@ -646,6 +675,23 @@ impl AppState {
         self.persist_library(json);
     }
 
+    /// Everything the engine needs from above it, read in one pass.
+    ///
+    /// Owned rather than borrowed, because the three locks behind it must not
+    /// be held while the engine walks its torrents -- and gathered in one
+    /// call so a tick cannot read half of it before an evaluation and half
+    /// after.
+    pub async fn library_snapshot(&self) -> LibrarySnapshot {
+        let library = self.library.read().await;
+        let policy = self.policy_state.read().await;
+        LibrarySnapshot {
+            added: library.added_times(),
+            pause_reasons: policy.pause_reasons().clone(),
+            forced: library.forced(),
+            queue_positions: library.queue_positions(),
+        }
+    }
+
     /// When each torrent was added, keyed by info hash.
     pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
         let library = self.library.read().await;
@@ -677,6 +723,52 @@ impl AppState {
             library.to_json()
         };
         self.persist_library(json);
+    }
+
+    /// Moves one torrent one place up or down the queue.
+    ///
+    /// `order` is the queue as it stands, newest-eligible last, exactly as
+    /// the policy engine would admit from it. Passed in rather than
+    /// recomputed here because deciding who is eligible needs a telemetry
+    /// snapshot, and that belongs to the caller that already has one -- this
+    /// method's job is the move and the write.
+    ///
+    /// The whole order is written, not one position. A reorder is a statement
+    /// about a set, and writing one place at a time would leave a queue that
+    /// briefly admits the wrong torrent.
+    ///
+    /// Returns whether anything moved: `false` for a torrent already at the
+    /// end it was asked to move towards, or one not in the queue at all.
+    pub async fn move_in_queue(&self, order: &[String], info_hash: &str, up: bool) -> bool {
+        let hash = info_hash.to_ascii_lowercase();
+        let Some(at) = order.iter().position(|h| h.eq_ignore_ascii_case(&hash)) else {
+            return false;
+        };
+        let swap_with = if up {
+            match at.checked_sub(1) {
+                Some(above) => above,
+                // Already first. Reported rather than silently written, so a
+                // UI can grey the action instead of offering a no-op.
+                None => return false,
+            }
+        } else if at + 1 < order.len() {
+            at + 1
+        } else {
+            return false;
+        };
+
+        let mut next = order.to_vec();
+        next.swap(at, swap_with);
+
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.set_queue_order(&next) {
+                return false;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+        true
     }
 
     /// Records that the user started a torrent out of the queue by hand.

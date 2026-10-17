@@ -59,6 +59,7 @@ import {
   removeTorrent,
   keepSeeding as keepSeedingCall,
   resumeTorrent,
+  moveInQueue,
   updateSettings,
 } from "@/lib/ipc/client";
 import { applyDensity, applyRail, applyTheme } from "@/lib/theme";
@@ -273,6 +274,22 @@ export default function Home() {
 
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
+  }, []);
+
+  /**
+   * Moves a torrent one place in the queue.
+   *
+   * No optimistic update: the order is the policy engine's answer and the
+   * next telemetry tick carries it. Guessing it here would mean
+   * reimplementing admission in the UI, which is the one thing a queue must
+   * have exactly one definition of.
+   */
+  const reorder = useCallback(async (torrent: TorrentSummary, up: boolean) => {
+    await moveInQueue(torrent.infoHash, up).catch(() => {
+      // Already at that end, or it left the queue between the right-click and
+      // the click. Neither is worth a banner -- the row stays where it is and
+      // says so.
+    });
   }, []);
 
   const keepSeeding = useCallback(
@@ -582,6 +599,24 @@ export default function Home() {
                         : ("pause" as const),
                     run: () => void toggle(menu.torrent),
                   },
+              // Only for a torrent the queue is actually holding. Offering
+              // them elsewhere would imply the queue decides an order it does
+              // not -- a running torrent that no limit applies to has no
+              // place to move.
+              ...(menu.torrent.queuePosition === null
+                ? []
+                : [
+                    {
+                      label: "Move up in queue",
+                      icon: "arrow-up" as const,
+                      run: () => void reorder(menu.torrent, true),
+                    },
+                    {
+                      label: "Move down in queue",
+                      icon: "arrow-down" as const,
+                      run: () => void reorder(menu.torrent, false),
+                    },
+                  ]),
               {
                 label: "Files and details",
                 icon: "files",

@@ -66,6 +66,17 @@ fn seeding(hash: &str, id: usize, uploaded: u64, downloaded: u64) -> TorrentSumm
         added_at: None,
         error: None,
         output_folder: "/tmp".into(),
+        forced: false,
+        queue_position: None,
+    }
+}
+
+/// A torrent waiting on a queue slot.
+fn queued(hash: &str, id: usize) -> TorrentSummary {
+    TorrentSummary {
+        state: TorrentState::Queued,
+        finished: false,
+        ..seeding(hash, id, 0, 1_000)
     }
 }
 
@@ -1359,4 +1370,64 @@ async fn changing_a_setting_clears_the_backoff() {
 
     state.clear_start_backoff().await;
     assert!(state.start_allowed(now).await);
+}
+
+/// An explicit queue order is admitted in, ahead of arrival order.
+///
+/// The queue admitted oldest-first and had no way to change it, which was
+/// #56's last open bullet. A position placed by the user has to beat arrival
+/// time or reordering means nothing.
+#[test]
+fn an_explicit_queue_position_beats_arrival_order() {
+    let older = TorrentSummary {
+        added_at: Some(1_000),
+        queue_position: Some(1),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let newer = TorrentSummary {
+        added_at: Some(2_000),
+        queue_position: Some(0),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+
+    let snapshot = snapshot(vec![older.clone(), newer.clone()]);
+    let state = PolicyState::default();
+
+    let order: Vec<&str> = flume_lib::policy::queue_order(&snapshot, &state)
+        .into_iter()
+        .map(|t| t.info_hash.as_str())
+        .collect();
+
+    assert_eq!(
+        order,
+        vec![newer.info_hash.as_str(), older.info_hash.as_str()],
+        "the placed order must win; without it this is arrival order and the \
+         newer torrent sorts second"
+    );
+}
+
+/// Without positions it is still arrival order, oldest first.
+#[test]
+fn arrival_order_still_decides_when_nobody_has_reordered() {
+    let older = TorrentSummary {
+        added_at: Some(1_000),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let newer = TorrentSummary {
+        added_at: Some(2_000),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+
+    let snapshot = snapshot(vec![newer.clone(), older.clone()]);
+    let state = PolicyState::default();
+
+    let order: Vec<&str> = flume_lib::policy::queue_order(&snapshot, &state)
+        .into_iter()
+        .map(|t| t.info_hash.as_str())
+        .collect();
+
+    assert_eq!(
+        order,
+        vec![older.info_hash.as_str(), newer.info_hash.as_str()]
+    );
 }

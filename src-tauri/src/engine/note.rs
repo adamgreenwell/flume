@@ -346,6 +346,8 @@ mod tests {
             pause_reason: None,
             error: None,
             output_folder: "/tmp".into(),
+            forced: false,
+            queue_position: None,
         }
     }
 

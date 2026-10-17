@@ -106,6 +106,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 2,
@@ -127,6 +129,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Datasets",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 3,
@@ -148,6 +152,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 4,
@@ -169,6 +175,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Archive/NASA",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 5,
@@ -190,6 +198,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     // Waiting on a slot, not stopped. Sits beside the plain pause and the
@@ -214,6 +224,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: "queued",
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     // Stopped by a rule rather than by the user, so the two sit next to each
@@ -238,6 +250,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: "ratioReached",
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 6,
@@ -259,6 +273,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Datasets",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 7,
@@ -280,6 +296,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Archive/Wikipedia",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 8,
@@ -301,6 +319,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: "/Volumes/Scratch has 0 B free",
     outputFolder: "/Volumes/Scratch/Film",
+    forced: false,
+    queuePosition: null,
   },
 ];
 

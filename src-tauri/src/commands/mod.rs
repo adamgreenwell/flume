@@ -153,7 +153,8 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = require_engine(&state).await?;
-    Ok(engine.telemetry_with(&state.added_times().await, &state.pause_reasons().await))
+    let snapshot = state.library_snapshot().await;
+    Ok(engine.telemetry_with(&snapshot.facts()))
 }
 
 impl From<SettingsError> for CommandError {
@@ -512,6 +513,41 @@ pub async fn confirm_add(
             Err(err)
         }
     }
+}
+
+/// Moves one torrent one place up or down the queue.
+///
+/// The order is computed here from the current snapshot, because deciding
+/// which torrents are even in the queue is the policy engine's answer and not
+/// something the UI can be trusted to have in sync -- the list it shows is
+/// sorted by whatever the user chose, which has nothing to do with admission
+/// order.
+///
+/// Returns whether anything moved: `false` for a torrent already at the end
+/// it was asked to move towards, or one the queue does not hold.
+///
+/// # Errors
+///
+/// `engineNotReady` whenever there is no engine.
+#[tauri::command]
+pub async fn move_in_queue(
+    state: State<'_, AppState>,
+    info_hash: String,
+    up: bool,
+) -> Result<bool, CommandError> {
+    let engine = require_engine(&state).await?;
+    let snapshot = {
+        let facts = state.library_snapshot().await;
+        engine.telemetry_with(&facts.facts())
+    };
+    let order: Vec<String> = {
+        let policy = state.policy_state().await;
+        crate::policy::queue_order(&snapshot, &policy)
+            .into_iter()
+            .map(|t| t.info_hash.clone())
+            .collect()
+    };
+    Ok(state.move_in_queue(&order, &info_hash, up).await)
 }
 
 /// Releases a preview the user cancelled.

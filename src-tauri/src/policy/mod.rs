@@ -177,6 +177,67 @@ pub fn evaluate(
     Outcome { actions, state }
 }
 
+/// The queue in the order it would be admitted from.
+///
+/// Extracted so the order has one definition. The command that reorders the
+/// queue has to agree with the evaluation that admits from it, and two copies
+/// of a sort are two copies that can disagree -- which here would mean a user
+/// moving a torrent up and a different one starting.
+///
+/// Eligible means running, or waiting because this queue stopped it. A
+/// torrent stopped for any other reason is neither admitted nor counted, and
+/// a forced one is out of the queue's hands whatever it is currently doing.
+///
+/// The user's order where they have given one, arrival order where they have
+/// not. `queue_position` is absent until somebody reorders, and the first
+/// reorder writes a place for the whole set -- so in practice this is either
+/// all arrival order or all explicit, and the mixed case only exists for a
+/// torrent that joined since. Those sort last, which is where a new arrival
+/// belongs anyway.
+///
+/// `added_at` is absent for torrents predating the library record, and those
+/// sort last rather than first: an unknown arrival time is not evidence of
+/// being early.
+#[must_use]
+pub fn queue_order<'a>(
+    snapshot: &'a TelemetrySnapshot,
+    state: &PolicyState,
+) -> Vec<&'a TorrentSummary> {
+    let queued_by_us =
+        |state: &PolicyState, hash: &str| state.paused_reason(hash) == Some(PauseReason::Queued);
+
+    let mut eligible: Vec<&TorrentSummary> = snapshot
+        .torrents
+        .iter()
+        .filter(|t| !state.is_forced(&t.info_hash))
+        .filter(|t| match t.state {
+            TorrentState::Downloading | TorrentState::Seeding => state
+                .paused_reason(&t.info_hash)
+                .is_none_or(|r| r == PauseReason::Queued),
+            // Ours by definition -- the state exists only because this queue
+            // put the torrent there.
+            TorrentState::Queued => true,
+            // Still reachable for one tick after the queue decides, before
+            // `summarize` reports `Queued`.
+            TorrentState::Paused => queued_by_us(state, &t.info_hash),
+            TorrentState::Checking | TorrentState::Error => false,
+        })
+        .collect();
+
+    eligible.sort_by(|a, b| {
+        a.queue_position
+            .unwrap_or(u32::MAX)
+            .cmp(&b.queue_position.unwrap_or(u32::MAX))
+            .then_with(|| {
+                a.added_at
+                    .unwrap_or(u64::MAX)
+                    .cmp(&b.added_at.unwrap_or(u64::MAX))
+            })
+            .then_with(|| a.info_hash.cmp(&b.info_hash))
+    });
+    eligible
+}
+
 /// Decides which torrents run and which wait, across the whole session.
 ///
 /// The one rule that cannot be answered per torrent: a slot limit is a
@@ -220,42 +281,9 @@ fn apply_queue(
         return;
     }
 
+    let eligible = queue_order(snapshot, state);
     let queued_by_us =
         |state: &PolicyState, hash: &str| state.paused_reason(hash) == Some(PauseReason::Queued);
-
-    // Eligible: running, or waiting because this queue stopped it. A torrent
-    // stopped for any other reason is neither admitted nor counted.
-    let mut eligible: Vec<&TorrentSummary> = snapshot
-        .torrents
-        .iter()
-        // Checked before the state match rather than inside it: a forced
-        // torrent is out of the queue's hands whatever it is currently doing,
-        // including while it is still `Paused` for the one tick between the
-        // resume and the next snapshot.
-        .filter(|t| !state.is_forced(&t.info_hash))
-        .filter(|t| match t.state {
-            TorrentState::Downloading | TorrentState::Seeding => state
-                .paused_reason(&t.info_hash)
-                .is_none_or(|r| r == PauseReason::Queued),
-            // Ours by definition -- the state exists only because this queue
-            // put the torrent there.
-            TorrentState::Queued => true,
-            // Still reachable for one tick after the queue decides, before
-            // `summarize` reports `Queued`.
-            TorrentState::Paused => queued_by_us(state, &t.info_hash),
-            TorrentState::Checking | TorrentState::Error => false,
-        })
-        .collect();
-
-    // Oldest first. `added_at` is absent for torrents that predate the library
-    // record, and those sort last rather than first -- an unknown arrival time
-    // is not evidence of being early.
-    eligible.sort_by(|a, b| {
-        a.added_at
-            .unwrap_or(u64::MAX)
-            .cmp(&b.added_at.unwrap_or(u64::MAX))
-            .then_with(|| a.info_hash.cmp(&b.info_hash))
-    });
 
     let mut downloads = 0;
     let mut seeds = 0;

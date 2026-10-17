@@ -24,6 +24,8 @@ function torrent(over: Partial<TorrentSummary> = {}): TorrentSummary {
     pauseReason: null,
     error: null,
     outputFolder: "/tmp",
+    forced: false,
+    queuePosition: null,
     ...over,
   };
 }
