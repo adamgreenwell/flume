@@ -266,6 +266,33 @@ pub fn queue_order<'a>(
     eligible
 }
 
+/// The queue as the user sees it and can reorder it.
+///
+/// Narrower than [`queue_order`], and the difference is the point.
+/// `queue_order` is *admission* order over every eligible torrent, because
+/// admission has to count a seed against the total limit whether or not a
+/// seed limit exists. A displayed place and a move action mean something
+/// else: that this torrent is waiting its turn among these others, and that
+/// moving it changes which goes next.
+///
+/// With only `max_active_downloads` set, seed admission is unconstrained, so
+/// a seed is not waiting for anything and a download moving past one changes
+/// nothing about its priority against any other download. Those torrents are
+/// therefore not in the line at all -- see [`QueueLimits::governs`].
+///
+/// Filtered after the sort, so whatever survives keeps its admission order.
+#[must_use]
+pub fn queue_line<'a>(
+    snapshot: &'a TelemetrySnapshot,
+    state: &PolicyState,
+    limits: &QueueLimits,
+) -> Vec<&'a TorrentSummary> {
+    queue_order(snapshot, state)
+        .into_iter()
+        .filter(|torrent| limits.governs(torrent.finished))
+        .collect()
+}
+
 /// Decides which torrents run and which wait, across the whole session.
 ///
 /// The one rule that cannot be answered per torrent: a slot limit is a

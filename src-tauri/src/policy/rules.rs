@@ -67,6 +67,25 @@ impl QueueLimits {
             && self.max_active_seeds.is_none()
             && self.max_active_total.is_none()
     }
+
+    /// Whether any limit is deciding between torrents of this kind.
+    ///
+    /// A limit on downloads says nothing about which seed runs next, so with
+    /// only `max_active_downloads` set there is no line of seeds to be in --
+    /// and ranking them anyway would have the UI offer to reorder one that
+    /// does not exist. The total limit governs both kinds, because under it
+    /// a download starting does keep a seed waiting.
+    #[must_use]
+    pub const fn governs(&self, is_seed: bool) -> bool {
+        if self.max_active_total.is_some() {
+            return true;
+        }
+        if is_seed {
+            self.max_active_seeds.is_some()
+        } else {
+            self.max_active_downloads.is_some()
+        }
+    }
 }
 
 /// Global rules, plus per-torrent overrides.

@@ -735,15 +735,18 @@ impl AppState {
         let facts = self.library_snapshot().await;
         let mut snapshot = engine.telemetry_with(&facts.facts());
 
-        if self.policy_rules().await.queue.is_empty() {
-            return snapshot;
-        }
+        let limits = self.policy_rules().await.queue;
 
         // Collected before the mutation so the immutable borrow of the
         // snapshot ends first.
+        //
+        // `queue_line` rather than `queue_order`: a place is only meaningful
+        // where a limit is deciding between torrents of that kind. No limits
+        // at all is the degenerate case of that and needs no separate check
+        // -- it yields an empty line, so nothing is stamped.
         let order: Vec<String> = {
             let policy = self.policy_state.read().await;
-            crate::policy::queue_order(&snapshot, &policy)
+            crate::policy::queue_line(&snapshot, &policy, &limits)
                 .into_iter()
                 .map(|t| t.info_hash.clone())
                 .collect()
@@ -842,9 +845,15 @@ impl AppState {
         // is the one in force at this moment. The snapshot decides membership
         // -- which torrents the queue holds -- and the policy state decides
         // their order, which is what a previous reorder wrote.
+        let limits = self.policy_rules().await.queue;
+
         let next = {
             let policy = self.policy_state.read().await;
-            let order: Vec<String> = crate::policy::queue_order(snapshot, &policy)
+            // The same line the UI shows. Reordering has to be over exactly
+            // the set the user was looking at, and a torrent whose kind no
+            // limit governs is not in it -- so moving one is refused below
+            // rather than silently writing a place nothing consults.
+            let order: Vec<String> = crate::policy::queue_line(snapshot, &policy, &limits)
                 .into_iter()
                 .map(|torrent| torrent.info_hash.clone())
                 .collect();

@@ -1507,6 +1507,122 @@ fn a_torrent_outside_the_queue_has_no_place() {
     );
 }
 
+/// A kind no limit governs is not in the line at all.
+///
+/// With only `max_active_downloads` set, seed admission is unconstrained: a
+/// seed is not waiting for anything, and a download moving past one changes
+/// nothing about its priority against any other download. Giving those seeds
+/// places had the UI offer a move action that could not affect what ran next.
+#[test]
+fn a_kind_with_no_limit_has_no_line_to_be_in() {
+    let downloading = |hash: &str, id: usize, at: u64| TorrentSummary {
+        added_at: Some(at),
+        ..queued(hash, id)
+    };
+    let seeding_now = |hash: &str, id: usize, at: u64| TorrentSummary {
+        added_at: Some(at),
+        ..seeding(hash, id, 0, 1_000)
+    };
+
+    let early_download = downloading(&"a".repeat(40), 1, 100);
+    let late_download = downloading(&"b".repeat(40), 2, 400);
+    let seed = seeding_now(&"c".repeat(40), 3, 200);
+    let mut snap = snapshot(vec![
+        early_download.clone(),
+        seed.clone(),
+        late_download.clone(),
+    ]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: None,
+        max_active_total: None,
+    };
+
+    // Admission still counts every eligible torrent, seeds included: that is
+    // what the total limit would need, and it is not this function's call.
+    let admission: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert!(
+        admission.contains(&seed.info_hash),
+        "admission order is over every eligible torrent"
+    );
+
+    // The line the user sees is not.
+    let line: Vec<String> = flume_lib::policy::queue_line(&snap, &state, &limits)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        line,
+        vec![
+            early_download.info_hash.clone(),
+            late_download.info_hash.clone()
+        ],
+        "only the downloads, and in admission order"
+    );
+
+    flume_lib::policy::stamp_queue_places(&mut snap, &line);
+    let place = |hash: &str| {
+        snap.torrents
+            .iter()
+            .find(|t| t.info_hash == hash)
+            .and_then(|t| t.queue_position)
+    };
+    assert_eq!(place(&early_download.info_hash), Some(1));
+    assert_eq!(place(&late_download.info_hash), Some(2));
+    assert_eq!(
+        place(&seed.info_hash),
+        None,
+        "a dash, so the UI offers no move action for a seed nothing is queuing"
+    );
+}
+
+/// A total limit puts both kinds back in one line.
+///
+/// Under it a download starting does keep a seed waiting, so they are
+/// competing for the same slots and ordering one against the other means
+/// something.
+#[test]
+fn a_total_limit_governs_both_kinds() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let snap = snapshot(vec![download.clone(), seed.clone()]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+
+    let line: Vec<String> = flume_lib::policy::queue_line(&snap, &state, &limits)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        line,
+        vec![download.info_hash.clone(), seed.info_hash.clone()],
+        "both kinds, because the total limit decides between them"
+    );
+
+    // And no limits at all is no line, which needs no separate check for it.
+    let none = flume_lib::policy::queue_line(&snap, &state, &QueueLimits::default());
+    assert!(
+        none.is_empty(),
+        "with nothing limited there is no queue to be in"
+    );
+}
+
 /// A reorder leaves the place of a torrent it does not mention.
 ///
 /// `queue_order` returns only the torrents eligible to run, so one that is
