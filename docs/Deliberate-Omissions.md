@@ -58,11 +58,17 @@ Transmission's daemon plus web UI is central to how a lot of people use it, and
 librqbit ships an `http-api` cargo feature that would provide most of it.
 
 Declined anyway, and this is the one most likely to be worth arguing about.
-Flume's architecture commits to no listening service, minimal Tauri
-permissions, and a locked-down webview CSP. Adding an HTTP server — even bound
-to localhost — is a different product with a different threat model: it is a
-second way in, it needs its own authentication story, and it turns "what can
-reach the engine" from a settled question into an ongoing one.
+Flume's architecture commits to no HTTP or control API, minimal Tauri
+permissions, and a locked-down webview CSP. Worth being exact about that
+first one, since this is a paragraph about network exposure: Flume _does_
+listen, on the BitTorrent port it binds deliberately so it can accept
+incoming peers and seed, and that port is a setting. What it has no listener
+for is anything that can be told what to do.
+
+Adding an HTTP server — even bound to localhost — is a different product with
+a different threat model: it is a way in that takes instructions rather than
+pieces, it needs its own authentication story, and it turns "what can reach
+the engine" from a settled question into an ongoing one.
 
 The honest version of this decision is that it is about scope and attention
 rather than about security being unachievable. A client with a remote API is a

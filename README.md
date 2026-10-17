@@ -46,9 +46,15 @@ into the part that is not solved: **the experience**.
 
 ## Installation
 
-> No release has been tagged yet, so there is nothing to download. The pipeline
-> that builds these is in place and runs on a `v*` tag; until then, build from
-> source with the [development setup](#development) below.
+> Download the build for your platform from the
+> [latest release](https://github.com/adamgreenwell/flume/releases/latest).
+> macOS builds are signed and notarized, so they open normally. **Windows
+> builds are not signed** — SmartScreen will warn, and the Run anyway button
+> is behind **More info**. Every release carries a `SHA256SUMS.txt` if you
+> would rather verify the download than trust the dialog.
+>
+> Building from source is covered by the [development setup](#development)
+> below.
 
 | Platform                              | Format                |
 | ------------------------------------- | --------------------- |
