@@ -121,6 +121,24 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   }, [onClose]);
 
   /**
+   * Serialises the writes, so a slow one cannot land on top of a newer one.
+   *
+   * `update_settings` takes the whole object and returns the whole object,
+   * and `change` installs whatever comes back. Two of those in flight at
+   * once is a lost update in both directions: a restart-triggering change
+   * can take seconds -- a filter URL is fetched while the session is built
+   * -- and the dialog stays interactive throughout, so a theme toggle
+   * started later can finish first. The slow reply then overwrites the
+   * theme in the UI, and the next edit posts that stale snapshot back and
+   * loses it on disk too.
+   *
+   * The same queue `page.tsx` grew for the same reason when the rail and
+   * density chips began racing each other. Here it matters more, because
+   * the slow case is now seconds rather than milliseconds.
+   */
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+
+  /**
    * Writes one field and records it as an undoable change.
    *
    * The optimistic update is deliberate: a control that waits for a round trip
@@ -154,14 +172,33 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       }
 
       try {
-        setSettings(await updateSettings(updated));
+        // Queued, and the payload is built when the turn comes rather than
+        // now. Queueing `updated` would send a snapshot of the whole object
+        // taken before the writes ahead of it ran -- so if one of those
+        // fails and the backend rolls its field back, this write posts the
+        // rolled-back value straight over the top and fails in its turn.
+        //
+        // One field, applied to whatever the backend actually holds. The
+        // same read-then-merge `page.tsx` uses, which is the half of that
+        // pattern this screen was missing.
+        const write = writes.current
+          .catch(() => {})
+          .then(() => getSettings())
+          .then((current) =>
+            updateSettings({ ...current, [def.id]: next } as Settings),
+          );
+        writes.current = write.catch(() => {});
+        setSettings(await write);
       } catch (caught: unknown) {
-        // Put the control back where it was: leaving it showing a value the
-        // engine rejected is the one outcome worse than the failure itself.
-        setSettings(settings);
-        if (def.id === "theme") applyTheme(settings.theme);
-        if (def.id === "density") applyDensity(settings.density);
-        if (def.id === "rail") applyRail(settings.rail);
+        // Put the control back -- but to what the backend holds, not to the
+        // snapshot this render closed over. A failed session change is
+        // rolled back on the Rust side, and that rollback is the truth; the
+        // local snapshot still carries the value that was rejected.
+        const authoritative = await getSettings().catch(() => settings);
+        setSettings(authoritative);
+        if (def.id === "theme") applyTheme(authoritative.theme);
+        if (def.id === "density") applyDensity(authoritative.density);
+        if (def.id === "rail") applyRail(authoritative.rail);
         setChanges((current) => current.slice(0, -1));
         setError(
           isCommandError(caught)

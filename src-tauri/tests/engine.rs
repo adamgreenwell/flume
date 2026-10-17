@@ -1004,3 +1004,72 @@ async fn shutting_down_clears_the_last_start_failure() {
 
     assert_eq!(state.start_failure().await, None);
 }
+
+/// Overlapping restarts must not both build a session.
+///
+/// `restart_engine` takes the old engine out, releases the engine lock, and
+/// awaits `Engine::start`. A second call arriving in that window used to find
+/// no engine, build its own, and race the first to bind the same port and
+/// session directory — with the *slower* one publishing itself last, which
+/// can be the one carrying the older settings.
+///
+/// The window was microseconds wide until a blocklist URL made `Engine::start`
+/// fetch over the network. Serialising it means the later call is also the
+/// later publish, which is what this asserts: the engine left running is the
+/// one the second caller asked for.
+#[tokio::test]
+async fn the_later_of_two_overlapping_restarts_is_the_one_left_running() {
+    let tmp = TempDir::new().expect("tempdir");
+    let first = tmp.path().join("first");
+    let second = tmp.path().join("second");
+
+    let settings = |dir: &std::path::Path| flume_lib::settings::Settings {
+        download_dir: dir.to_path_buf(),
+        listen_port: 0,
+        enable_dht: false,
+        enable_upnp: false,
+        ..flume_lib::settings::Settings::default()
+    };
+
+    let state = std::sync::Arc::new(flume_lib::state::AppState::new(
+        settings(&first),
+        tmp.path().join("session"),
+        false,
+    ));
+
+    // Raced twice rather than once, and that is a compromise worth naming.
+    //
+    // Without serialisation the winner is whichever `Engine::start` finishes
+    // last, which is usually still the second one -- so a single pass caught
+    // the regression in two runs out of eight when it was measured. Each
+    // pass costs about two seconds of real session construction, so eight of
+    // them made this test longer than the entire rest of the file put
+    // together. Two passes is roughly a coin flip per run, on every PR.
+    //
+    // The guarantee is the lock and the reasoning on the field, not this. The
+    // test is here to make a regression visible eventually rather than to
+    // prove the property.
+    for pass in 0..2 {
+        let a = {
+            let state = state.clone();
+            let settings = settings(&first);
+            tokio::spawn(async move { state.restart_engine(&settings).await })
+        };
+        let b = {
+            let state = state.clone();
+            let settings = settings(&second);
+            tokio::spawn(async move { state.restart_engine(&settings).await })
+        };
+
+        a.await.expect("join").expect("first restart");
+        b.await.expect("join").expect("second restart");
+
+        let engine = state.engine().await.expect("an engine is running");
+        assert_eq!(
+            engine.core_status().download_dir,
+            second.display().to_string(),
+            "pass {pass}: the engine left running is not the one the later \
+             restart built"
+        );
+    }
+}

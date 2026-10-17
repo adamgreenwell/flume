@@ -81,6 +81,22 @@ pub struct AppState {
     /// would make this module depend on `crate::commands`, which is the wrong
     /// direction.
     start_failure: RwLock<Option<String>>,
+    /// Held for the whole of [`Self::restart_engine`], so two never overlap.
+    ///
+    /// Without it the method takes the old engine out, releases the engine
+    /// lock, and awaits `Engine::start` -- so a second call arriving in that
+    /// window finds no engine, builds its own, and the two race to bind the
+    /// same listen port and session directory. One fails, and whichever
+    /// finishes *last* publishes itself, which can be the one carrying the
+    /// older settings.
+    ///
+    /// That window used to be microseconds wide. A blocklist URL made
+    /// `Engine::start` fetch over the network, which is what turned a
+    /// theoretical race into a reachable one.
+    ///
+    /// `tokio::sync::Mutex` is FIFO, so callers are served in the order they
+    /// arrive and the newest settings are the last applied.
+    restart: Mutex<()>,
     /// When the guard may next attempt a start, and the delay that produced
     /// it.
     ///
@@ -157,6 +173,7 @@ impl AppState {
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
             start_failure: RwLock::new(None),
+            restart: Mutex::new(()),
             start_backoff: Mutex::new(None),
         }
     }
@@ -207,6 +224,41 @@ impl AppState {
         };
         *self.status.write().await = status.clone();
         status
+    }
+
+    /// Whether the egress path permits transfer **right now**, probed afresh.
+    ///
+    /// Deliberately not [`Self::egress_status`], which returns the last
+    /// published verdict. That value cannot change while the guard's own
+    /// task is awaiting something, because the loop is sequential -- so a
+    /// guard-initiated engine start reads the status from before the start
+    /// began, however long the start takes, and a check against it is a
+    /// no-op on exactly the path that needs it most.
+    ///
+    /// The hysteresis gate is left alone. It exists to delay *release*, not
+    /// to delay holding -- "hold on the first failing probe, release after
+    /// ten seconds", asymmetric on purpose -- so a raw verdict is the right
+    /// input for a decision that only ever refuses. Touching the gate from
+    /// here would also corrupt a settle window the guard is counting down.
+    ///
+    /// Returns `true` when the guard is not set to hold, since then nothing
+    /// is being refused.
+    async fn transfer_permitted_now(&self) -> bool {
+        // Copied out so the settings lock is released before the egress lock
+        // is taken; they are never held together.
+        let (guard, pinned) = {
+            let settings = self.settings.read().await;
+            (settings.egress_guard, settings.egress_interface.clone())
+        };
+        if !guard.holds_transfer() {
+            return true;
+        }
+        self.egress
+            .lock()
+            .await
+            .report(pinned.as_deref())
+            .verdict
+            .allows_transfer()
     }
 
     /// Drops the settle window so a user-initiated change takes effect at once.
@@ -327,6 +379,39 @@ impl AppState {
         // A caller can therefore wait as long as `SESSION_START_TIMEOUT`.
         // That is the right trade: the alternative is not "faster", it is
         // two sessions fighting over a socket.
+        let _restarting = self.restart.lock().await;
+        self.restart_locked(settings).await
+    }
+
+    /// Starts an engine only if there is still no engine.
+    ///
+    /// What the guard actually wants, which is not the same as a restart.
+    /// Its test is `engine().is_none()`, and that is briefly true in the
+    /// middle of someone else's restart -- `restart_locked` takes the old
+    /// engine out before building the new one, and with a filter list to
+    /// fetch that gap is wide enough to span several one-second ticks.
+    ///
+    /// Reading the gap as "no engine, start one" made the guard queue behind
+    /// the restart and then tear down the engine that restart had just
+    /// published, to build the same thing again. For an unreachable list it
+    /// would spend the whole timeout doing it.
+    ///
+    /// So the check is repeated *after* the lock, where it is answering a
+    /// settled question rather than a transient one.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`EngineError`] if a start was needed and failed.
+    pub async fn ensure_engine(&self, settings: &Settings) -> Result<(), EngineError> {
+        let _restarting = self.restart.lock().await;
+        if self.engine.read().await.is_some() {
+            return Ok(());
+        }
+        self.restart_locked(settings).await
+    }
+
+    /// The body of [`Self::restart_engine`], with the lock already held.
+    async fn restart_locked(&self, settings: &Settings) -> Result<(), EngineError> {
         // Take the old engine out before shutting it down, so nothing observes
         // a half-stopped session.
         if let Some(old) = self.engine.write().await.take() {
@@ -361,6 +446,27 @@ impl AppState {
         // onto, and the guard builds a fresh one on release anyway.
         //
         // Architecture rule 12 -- the guard fails closed, everywhere.
+        // Two questions, and both must be answered before publishing.
+        //
+        // The published status covers a hold decided while this was running,
+        // including one still inside its settle window. It is enough when the
+        // start came from `update_settings`, because the guard loop keeps
+        // ticking alongside it.
+        //
+        // It is not enough when the guard itself started this: that loop is
+        // sequential, so it cannot publish a new status while awaiting the
+        // construction it is waiting on. A fresh probe is the only thing that
+        // can see a tunnel that dropped in between.
+        if self.egress_status().await.held || !self.transfer_permitted_now().await {
+            log::info!("egress guard began holding while the engine was starting; discarding it");
+            engine.shutdown().await;
+            // The start itself worked, so an older failure message is no
+            // longer the reason there is no engine -- the guard is, and the
+            // guard status says so on its own.
+            *self.start_failure.write().await = None;
+            return Ok(());
+        }
+
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
         // Reconciled *before* the engine is published. Every command gates on
         // `engine()`, so publishing first opens a window in which a
@@ -655,5 +761,153 @@ impl AppState {
         // standing would have the guard explain a hold with the last thing
         // that went wrong, possibly hours earlier.
         *self.start_failure.write().await = None;
+    }
+}
+
+#[cfg(test)]
+// `expect` is right in tests: a failed expectation is the diagnostic.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::egress::EgressGuard;
+
+    /// The fresh probe refuses a path the guard would not accept.
+    ///
+    /// Its reason for existing is narrower than this test can reproduce: the
+    /// published status cannot change while the guard's own task awaits a
+    /// start, so a check against it is a no-op on that path. Constructing
+    /// that needs a status published as permitted and a path that changes
+    /// mid-start, and the status starts *held* by design, so there is no
+    /// honest way to stage it here. What is testable is the contract the fix
+    /// rests on: the probe answers from the path as it is now, and refuses
+    /// one the guard would not accept.
+    #[tokio::test]
+    async fn the_fresh_probe_answers_from_the_path_not_from_the_last_verdict() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let held = AppState::new(
+            Settings {
+                egress_guard: EgressGuard::Hold,
+                egress_interface: Some("flume-test-no-such-interface".to_owned()),
+                ..Settings::default()
+            },
+            tmp.path().join("a"),
+            false,
+        );
+        assert!(
+            !held.transfer_permitted_now().await,
+            "pinned to an interface no machine has, so no path can satisfy it"
+        );
+
+        let off = AppState::new(
+            Settings {
+                egress_guard: EgressGuard::Off,
+                ..Settings::default()
+            },
+            tmp.path().join("b"),
+            false,
+        );
+        assert!(
+            off.transfer_permitted_now().await,
+            "nothing is being refused when the guard is not set to hold"
+        );
+    }
+
+    /// The guard must not tear down an engine someone else just published.
+    ///
+    /// Its test is "is there an engine", and that is briefly false in the
+    /// middle of a restart -- which, with a list to fetch, spans several
+    /// one-second ticks. Reading that gap as "nobody has started one" made
+    /// it queue behind the restart and then replace the engine that restart
+    /// had just built.
+    #[tokio::test]
+    async fn ensure_engine_leaves_an_engine_that_already_exists_alone() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let settings = Settings {
+            download_dir: tmp.path().join("downloads"),
+            listen_port: 0,
+            enable_dht: false,
+            enable_upnp: false,
+            ..Settings::default()
+        };
+        let state = AppState::new(settings.clone(), tmp.path().join("session"), false);
+
+        state.restart_engine(&settings).await.expect("first start");
+        // The bound port, not the uptime: `listen_port` is 0 in the fixture,
+        // so the OS picks an ephemeral one and a rebuild almost certainly
+        // picks a different one. Uptime is in whole seconds and reads 0 on
+        // both sides of a rebuild this fast, which makes it no evidence at
+        // all -- the first version of this test asserted on it and passed
+        // with the fix removed.
+        let before = state
+            .engine()
+            .await
+            .expect("an engine is running")
+            .core_status()
+            .listen_port;
+        assert!(before.is_some(), "the fixture needs a bound listener");
+
+        // Would be a full teardown and rebuild if this read the absence of
+        // an engine rather than its presence.
+        state.ensure_engine(&settings).await.expect("ensure");
+
+        let after = state
+            .engine()
+            .await
+            .expect("the engine is still running")
+            .core_status()
+            .listen_port;
+        assert_eq!(
+            after, before,
+            "the listener was rebound, so the engine was torn down and rebuilt"
+        );
+    }
+
+    /// An engine finished while the guard is holding must not be published.
+    ///
+    /// `Engine::start` is not instant, and `guard::tick` cannot stop what
+    /// does not exist yet -- its held branch looks for an engine to shut
+    /// down, and `restart_engine` has already taken the old one out. So a
+    /// start that begins before a hold and finishes after it would publish a
+    /// session under a held guard, which transfers until the next tick.
+    ///
+    /// Architecture rule 12: the guard fails closed, everywhere.
+    #[tokio::test]
+    async fn an_engine_that_finishes_under_a_held_guard_is_discarded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let settings = Settings {
+            download_dir: tmp.path().join("downloads"),
+            listen_port: 0,
+            enable_dht: false,
+            enable_upnp: false,
+            egress_guard: EgressGuard::Hold,
+            egress_interface: Some("flume-test-no-such-interface".to_owned()),
+            ..Settings::default()
+        };
+        let state = AppState::new(settings.clone(), tmp.path().join("session"), false);
+
+        // Pinned to an interface no machine has, so the verdict is "not the
+        // one you asked for" wherever this runs. A probe that fails outright
+        // also holds, by the same rule, so this is deterministic either way.
+        let status = state.observe_egress(Instant::now()).await;
+        assert!(
+            status.held,
+            "the fixture is meant to leave the guard holding"
+        );
+        assert!(
+            !state.transfer_permitted_now().await,
+            "the fresh probe must refuse too; it is the only check that can \
+             see a drop while the guard's own task is awaiting a start"
+        );
+
+        state
+            .restart_engine(&settings)
+            .await
+            .expect("the start itself succeeds; it is the publish that is refused");
+
+        assert!(
+            state.engine().await.is_none(),
+            "a session was published while the guard was holding"
+        );
     }
 }
