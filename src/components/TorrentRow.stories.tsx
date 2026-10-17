@@ -32,6 +32,8 @@ function make(over: Partial<TorrentSummary>): TorrentSummary {
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
     ...over,
   };
 }

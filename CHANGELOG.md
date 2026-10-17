@@ -28,6 +28,33 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   new folder now shows unmarked and unselected rather than being silently
   ticked back on.
 
+- **A queue you can reorder, and a queue that says what it is doing.** Right-
+  click a waiting torrent for **Move up in queue** and **Move down in queue**.
+  Before this the queue admitted strictly oldest-first with no way to change
+  it, which was the last open item on the queue work.
+
+  The order is decided in Rust from the engine's own snapshot, not from the
+  list on screen — that is sorted by whatever you chose, and has nothing to do
+  with what the queue admits next. The expanded row now shows a torrent's
+  place in the line, and shows it _only_ when the queue holds one: a dash
+  would imply the queue has an opinion about every torrent, and it does not.
+
+  **There can be more than one line, and that is worth knowing if you set
+  limits per kind.** A cap on downloads says nothing about which seed runs
+  next, so with only that set your seeds show a dash and offer no move
+  action — there is no line for them to be in. Cap both kinds and you have two
+  lines, ranked separately: a download and a seed can both read "1", because
+  each is first of what it is actually waiting behind, and a download cannot
+  be moved past a seed because doing so would change neither one's turn. A
+  total limit puts them in one line together — but only if it can actually
+  bite: one download and one seed cannot breach a total of ten, so that total
+  decides nothing and the two lines stay separate.
+
+  A torrent you started past the limits now says so, as **Queue: Started by
+  you**. It runs on top of the limits rather than inside them — neither
+  admitted nor counted — and without saying that, a limit that is being
+  overridden reads as a limit that is broken.
+
 - **A peer limit you can see and set.** Settings → Network now carries "Connect
   to at most", a per-torrent cap on connected peers, and the detail panel shows
   the live count against it — `28 / 128` rather than `28`.

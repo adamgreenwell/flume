@@ -32,6 +32,8 @@ function torrent(over: Partial<TorrentSummary> = {}): TorrentSummary {
     pauseReason: null,
     error: null,
     outputFolder: "/tmp",
+    forced: false,
+    queuePosition: null,
     ...over,
   };
 }
@@ -188,5 +190,43 @@ describe("keeping a torrent seeding", () => {
     screen.getByText("Keep seeding").click();
 
     expect(got).toBe("a".repeat(40));
+  });
+});
+
+/** Renders the panel for a summary with the given overrides. */
+function withQueue(over: Partial<TorrentSummary>) {
+  render(
+    <ExpandedRow
+      torrent={torrent(over)}
+      detail={null}
+      error={null}
+      onToggle={() => {}}
+      onKeepSeeding={() => {}}
+      onReveal={() => {}}
+      onOpen={() => {}}
+    />,
+  );
+}
+
+describe("the queue", () => {
+  it("shows a place only when the queue holds one", () => {
+    // A dash would imply the queue has an opinion about every torrent. A
+    // running torrent that no limit applies to simply is not in a line.
+    withQueue({ queuePosition: null, forced: false });
+    expect(screen.queryByText("In queue")).toBeNull();
+  });
+
+  it("says where in the queue a waiting torrent is", () => {
+    withQueue({ queuePosition: 3, forced: false });
+    expect(screen.getByText("In queue")).toBeDefined();
+    expect(screen.getByText("3")).toBeDefined();
+  });
+
+  it("says when the user started a torrent past the limits", () => {
+    // Without this a torrent running over the limit is indistinguishable
+    // from one the queue admitted, and the limit reads as broken rather
+    // than overridden.
+    withQueue({ queuePosition: null, forced: true });
+    expect(screen.getByText("Started by you")).toBeDefined();
   });
 });

@@ -114,6 +114,25 @@ export async function destinationPreflight(
 }
 
 /**
+ * Moves one torrent one place up or down the queue.
+ *
+ * The order is decided in Rust from the current snapshot, because which
+ * torrents are even in the queue is the policy engine's answer — the list on
+ * screen is sorted by whatever the user chose.
+ *
+ * @param infoHash - The torrent to move.
+ * @param up - `true` to move it towards the front.
+ * @returns Whether anything moved. `false` for a torrent already at that end
+ *   of the queue, or one the queue does not hold.
+ */
+export async function moveInQueue(
+  infoHash: string,
+  up: boolean,
+): Promise<boolean> {
+  return invoke<boolean>("move_in_queue", { infoHash, up });
+}
+
+/**
  * Releases a preview the user cancelled, so its metadata is not retained.
  *
  * @param infoHash - From the preview.

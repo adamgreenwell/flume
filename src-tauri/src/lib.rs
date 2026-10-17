@@ -100,6 +100,7 @@ pub fn run() {
             commands::preview_torrent,
             commands::confirm_add,
             commands::destination_preflight,
+            commands::move_in_queue,
             commands::discard_preview,
             commands::pause_torrent,
             commands::resume_torrent,

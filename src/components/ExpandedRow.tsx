@@ -186,6 +186,23 @@ export function ExpandedRow({
                 : "—"
             }
           />
+          {/*
+            Only when the queue holds a place for it. A dash would imply the
+            queue has an opinion about every torrent, and it does not -- a
+            running torrent no limit applies to simply is not in a line.
+          */}
+          {torrent.queuePosition === null ? null : (
+            <Stat label="In queue" value={`${torrent.queuePosition}`} />
+          )}
+          {/*
+            The counterpart, and the reason it is worth a line of its own: a
+            forced torrent runs *over* the limits rather than inside them, so
+            without saying so the limit reads as broken rather than
+            overridden.
+          */}
+          {torrent.forced ? (
+            <Stat label="Queue" value="Started by you" mono={false} />
+          ) : null}
           <Stat label="Saving to" value={torrent.outputFolder} mono={false} />
         </div>
 

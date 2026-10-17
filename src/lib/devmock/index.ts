@@ -106,6 +106,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 2,
@@ -127,6 +129,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Datasets",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 3,
@@ -148,6 +152,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 4,
@@ -169,6 +175,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Archive/NASA",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 5,
@@ -190,6 +198,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     // Waiting on a slot, not stopped. Sits beside the plain pause and the
@@ -214,6 +224,35 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: "queued",
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: 1,
+  },
+  {
+    // A second torrent in the queue, because a queue of one cannot be
+    // reordered: the only member is both first and last, so both move
+    // actions are correctly no-ops and the feature cannot be seen working.
+    // Two is the smallest fixture that exercises it.
+    id: 11,
+    infoHash: "aa11b8d8ea35a5b4e52837468fc8f03d55ce6666",
+    name: "Tails 6.12 amd64",
+    state: "queued",
+    progressBytes: 0,
+    totalBytes: 1_480_000_000,
+    uploadedBytes: 0,
+    downloadBps: 0,
+    uploadBps: 0,
+    livePeers: 0,
+    knownPeers: 0,
+    health: "idle",
+    detail: "queued — starts on its own when a slot frees",
+    etaSeconds: null,
+    finished: false,
+    addedAt: null,
+    pauseReason: "queued",
+    error: null,
+    outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: 2,
   },
   {
     // Stopped by a rule rather than by the user, so the two sit next to each
@@ -238,6 +277,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: "ratioReached",
     error: null,
     outputFolder: "/Volumes/Media/Linux",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 6,
@@ -259,6 +300,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Media/Datasets",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 7,
@@ -280,6 +323,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: null,
     outputFolder: "/Volumes/Archive/Wikipedia",
+    forced: false,
+    queuePosition: null,
   },
   {
     id: 8,
@@ -301,6 +346,8 @@ const TORRENTS: TorrentSummary[] = [
     pauseReason: null,
     error: "/Volumes/Scratch has 0 B free",
     outputFolder: "/Volumes/Scratch/Film",
+    forced: false,
+    queuePosition: null,
   },
 ];
 
@@ -803,6 +850,27 @@ export function install(): void {
             target.detail = "seeding to 0 of 0 peers · ratio 2.00";
           }
           return null;
+        }
+        case "move_in_queue": {
+          // Mirrors the real command's shape rather than its internals: it
+          // reorders the torrents that have a place and returns whether
+          // anything moved, so the UI's no-op-at-the-end behaviour is
+          // exercisable here too.
+          const { infoHash, up } =
+            (args as { infoHash?: string; up?: boolean } | undefined) ?? {};
+          const queue = TORRENTS.filter((t) => t.queuePosition !== null).sort(
+            (a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0),
+          );
+          const at = queue.findIndex((t) => t.infoHash === infoHash);
+          if (at === -1) return false;
+          const swapWith = up ? at - 1 : at + 1;
+          if (swapWith < 0 || swapWith >= queue.length) return false;
+
+          [queue[at], queue[swapWith]] = [queue[swapWith], queue[at]];
+          queue.forEach((torrent, index) => {
+            torrent.queuePosition = index + 1;
+          });
+          return true;
         }
         default:
           return null;

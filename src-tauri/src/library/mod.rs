@@ -78,6 +78,21 @@ pub struct Record {
     /// the same data. A backfill would invent a different fictional order every
     /// time.
     pub added_at: Option<u64>,
+    /// Where the user put this torrent in the queue, counting from zero.
+    ///
+    /// `None` means nobody has placed it, and the queue falls back to arrival
+    /// order for it -- which is what every torrent is until someone reorders
+    /// one. The first reorder writes a position for the whole queued set, so
+    /// afterwards the order is explicit rather than half-derived: a mix of
+    /// placed and unplaced torrents makes "move this down" ambiguous, and an
+    /// ambiguous reorder is worse than none.
+    ///
+    /// Here rather than in `settings` for the usual reason -- keyed by info
+    /// hash, and pruned when the torrent goes away. A map of positions in
+    /// `settings.json` would accumulate the info hash of every torrent anyone
+    /// ever reordered, for the life of the install.
+    #[serde(default)]
+    pub queue_position: Option<u32>,
     /// Seconds this torrent has spent seeding, accumulated across runs.
     ///
     /// Belongs here rather than in `settings` -- where #54 assumed it would
@@ -464,6 +479,65 @@ impl Library {
         changed
     }
 
+    /// Every explicit queue position, keyed by info hash.
+    #[must_use]
+    pub fn queue_positions(&self) -> HashMap<String, u32> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| record.queue_position.map(|at| (hash.clone(), at)))
+            .collect()
+    }
+
+    /// Replaces the queue positions wholesale.
+    ///
+    /// Wholesale rather than per torrent, because a reorder is a statement
+    /// about the order of a set and not about one member of it. Writing one
+    /// position at a time would leave the set briefly inconsistent, and an
+    /// inconsistent queue admits the wrong torrent.
+    ///
+    /// Takes the numbering [`crate::policy::PolicyState::set_queue_order`]
+    /// produced rather than deriving its own from the order. Two independent
+    /// numberings over the same reorder drift the moment either changes, and
+    /// the drift is invisible: this store is read back only at launch, so it
+    /// shows up as the queue rearranging itself after a restart.
+    ///
+    /// Records absent from `assigned` keep whatever place they had.
+    ///
+    /// They are not in the queue *right now*, and that is not the same as
+    /// having left it. A persisted torrent whose drive is unmounted fails to
+    /// restore and is missing from the live session while staying in this
+    /// record on purpose -- so clearing on absence would throw away its
+    /// place, and it would come back at the end of the queue after a
+    /// successful restore. [`Self::forget`] is how a real removal is said,
+    /// and it drops the whole record, position included.
+    ///
+    /// A place left on a torrent that is merely not eligible is not stale
+    /// either: `set_queue_order` assigns around the slots such torrents hold,
+    /// so nothing is given a number one of them already has, and the torrent
+    /// comes back exactly where the user put it.
+    ///
+    /// Suppressed when the record did not load cleanly, like every other
+    /// write here: see [`Self::set_forced`].
+    ///
+    /// Returns whether anything changed.
+    pub fn set_queue_positions(&mut self, assigned: &[(String, u32)]) -> bool {
+        if !self.healthy {
+            return false;
+        }
+
+        let mut changed = false;
+        for (hash, at) in assigned {
+            let Some(record) = self.records.get_mut(&hash.to_ascii_lowercase()) else {
+                continue;
+            };
+            if record.queue_position != Some(*at) {
+                record.queue_position = Some(*at);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Every torrent the user forced past the queue, by info hash.
     ///
     /// A set rather than a map because the only thing worth knowing is
@@ -603,6 +677,55 @@ mod tests {
 
     fn loaded(dir: &Path) -> Library {
         Library::load(dir).0
+    }
+
+    /// A torrent missing from the live session keeps its place.
+    ///
+    /// A persisted torrent whose drive is unmounted fails to restore and is
+    /// absent from the snapshot a reorder derives its order from, while
+    /// staying in this record on purpose. Clearing on absence threw its
+    /// place away and persisted the loss, so it came back at the end of the
+    /// queue after a successful restore. `forget` is how a real removal is
+    /// said, and it drops the whole record.
+    #[test]
+    fn a_reorder_does_not_disturb_a_torrent_it_does_not_mention() {
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1));
+        let _ = library.note_added(B, Some(2));
+        assert!(library.set_queue_positions(&[(A.to_owned(), 0), (B.to_owned(), 1)]));
+
+        // B alone, as a reorder would derive it while A cannot be restored.
+        // Slot 2 rather than 0: `set_queue_order` does not hand out the slot
+        // A is holding, so A's place is never written over.
+        assert!(
+            library.set_queue_positions(&[(B.to_owned(), 2)]),
+            "B moved, so something did change"
+        );
+
+        assert_eq!(
+            library.get(A).and_then(|r| r.queue_position),
+            Some(0),
+            "A's place was thrown away because it was not in the live session"
+        );
+        assert_eq!(
+            library.get(B).and_then(|r| r.queue_position),
+            Some(2),
+            "and B took the number it was given, not one derived here"
+        );
+    }
+
+    #[test]
+    fn forgetting_a_torrent_takes_its_queue_place_with_it() {
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1));
+        assert!(library.set_queue_positions(&[(A.to_owned(), 0)]));
+
+        assert!(library.forget(A));
+
+        assert!(
+            library.get(A).is_none(),
+            "removal drops the record, so there is no place left to inherit"
+        );
     }
 
     #[test]

@@ -59,6 +59,7 @@ import {
   removeTorrent,
   keepSeeding as keepSeedingCall,
   resumeTorrent,
+  moveInQueue,
   updateSettings,
 } from "@/lib/ipc/client";
 import { applyDensity, applyRail, applyTheme } from "@/lib/theme";
@@ -283,6 +284,37 @@ export default function Home() {
   const report = useCallback((caught: unknown, fallback: string) => {
     setActionError(isCommandError(caught) ? caught.message : fallback);
   }, []);
+
+  /**
+   * Moves a torrent one place in the queue.
+   *
+   * No optimistic update: the order is the policy engine's answer and the
+   * next telemetry tick carries it. Guessing it here would mean
+   * reimplementing admission in the UI, which is the one thing a queue must
+   * have exactly one definition of.
+   */
+  const reorder = useCallback(
+    async (torrent: TorrentSummary, up: boolean) => {
+      // Cleared first, like every other action here. Without it a banner
+      // from an earlier failure -- including a failed move -- outlived the
+      // successful one that followed, so the queue moved while the alert
+      // still said it had not.
+      setActionError(null);
+      try {
+        // `false` is the benign answer: already at that end of the queue, or
+        // it left the queue between the right-click and the click. The row
+        // stays where it is, which says so without a banner.
+        //
+        // A rejection is something else entirely -- `engineNotReady` if the
+        // engine stopped or restarted since the menu opened -- and swallowing
+        // it left the user with an action that silently did nothing.
+        await moveInQueue(torrent.infoHash, up);
+      } catch (caught: unknown) {
+        report(caught, "Could not move that torrent in the queue.");
+      }
+    },
+    [report],
+  );
 
   const keepSeeding = useCallback(
     async (t: TorrentSummary) => {
@@ -602,6 +634,24 @@ export default function Home() {
                         : ("pause" as const),
                     run: () => void toggle(menu.torrent),
                   },
+              // Only for a torrent the queue is actually holding. Offering
+              // them elsewhere would imply the queue decides an order it does
+              // not -- a running torrent that no limit applies to has no
+              // place to move.
+              ...(menu.torrent.queuePosition === null
+                ? []
+                : [
+                    {
+                      label: "Move up in queue",
+                      icon: "arrow-up" as const,
+                      run: () => void reorder(menu.torrent, true),
+                    },
+                    {
+                      label: "Move down in queue",
+                      icon: "arrow-down" as const,
+                      run: () => void reorder(menu.torrent, false),
+                    },
+                  ]),
               {
                 label: "Files and details",
                 icon: "files",

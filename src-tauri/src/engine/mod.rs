@@ -45,6 +45,29 @@ pub use note::{Note, NoteSeverity};
 pub use status::{CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, TelemetrySnapshot};
 pub use torrent::{PauseReason, SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
+/// The per-torrent facts the engine cannot know about itself.
+///
+/// Arrival times, policy pause reasons, which torrents the user forced past
+/// the queue, and where each sits in it. All of them live in `AppState` or
+/// the library record, above the engine -- and this module imports no Tauri
+/// types and does not reach upwards, so they are handed in.
+///
+/// A struct rather than four parameters because they arrive together, they
+/// all mean nothing to the engine, and the list has grown twice already.
+///
+/// Borrowed rather than owned so a 1 Hz tick does not clone four maps. That
+/// rules out `Default`, which is why the callers that have nothing to supply
+/// build empties of their own -- see [`Engine::torrent_summaries`].
+#[derive(Debug)]
+pub struct LibraryFacts<'a> {
+    /// When each torrent was first added, in seconds since the epoch.
+    pub added: &'a std::collections::HashMap<String, u64>,
+    /// Why Flume stopped each torrent it stopped itself.
+    pub pause_reasons: &'a std::collections::HashMap<String, PauseReason>,
+    /// Torrents the user started past the active limits.
+    pub forced: &'a std::collections::HashSet<String>,
+}
+
 /// How long `Session::new_with_opts` may take before Flume gives up on it.
 ///
 /// Generous, because a legitimate start is not fast: librqbit rewrites the
@@ -522,10 +545,14 @@ impl Engine {
 
     /// session's internal ordering is not guaranteed.
     pub fn torrent_summaries(&self) -> Vec<TorrentSummary> {
-        self.torrent_summaries_with(
-            &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
-        )
+        // Empties owned here so the borrows in `LibraryFacts` have something
+        // to point at for the length of the call.
+        let (added, pause_reasons, forced) = Default::default();
+        self.torrent_summaries_with(&LibraryFacts {
+            added: &added,
+            pause_reasons: &pause_reasons,
+            forced: &forced,
+        })
     }
 
     /// [`Self::torrent_summaries`] with arrival times from the library record.
@@ -533,11 +560,7 @@ impl Engine {
     /// Threaded in as a parameter the way `availability` already is, because
     /// the record lives in `AppState`, above the engine — and this module
     /// imports no Tauri types and does not reach upwards.
-    pub fn torrent_summaries_with(
-        &self,
-        added: &std::collections::HashMap<String, u64>,
-        pause_reasons: &std::collections::HashMap<String, PauseReason>,
-    ) -> Vec<TorrentSummary> {
+    pub fn torrent_summaries_with(&self, facts: &LibraryFacts) -> Vec<TorrentSummary> {
         // Handles are collected before anything is computed from them:
         // `availability_of` goes back through the session, and doing that while
         // `with_torrents` holds its lock would re-enter it.
@@ -566,8 +589,17 @@ impl Engine {
                 // to produce the same thing, but relying on a Debug format for
                 // a wire value is a trap.
                 let info_hash = handle.info_hash().as_string();
-                let added_at = added.get(&info_hash).copied();
-                let pause_reason = pause_reasons.get(&info_hash).copied();
+                let added_at = facts.added.get(&info_hash).copied();
+                let pause_reason = facts.pause_reasons.get(&info_hash).copied();
+                let forced = facts.forced.contains(&info_hash);
+                // Left unset here and stamped by the caller.
+                //
+                // A torrent's place in the queue is a *rank over the eligible
+                // set*, which cannot be known from one torrent -- it needs
+                // the whole snapshot, and deciding who is even eligible is
+                // the policy engine's answer. So this builds the snapshot the
+                // rank is computed from, and `AppState` fills it in.
+                let queue_position = None;
 
                 torrent::summarize(
                     id,
@@ -579,6 +611,8 @@ impl Engine {
                     torrent::Supplied {
                         added_at,
                         pause_reason,
+                        forced,
+                        queue_position,
                     },
                 )
             })
@@ -589,10 +623,12 @@ impl Engine {
 
     /// Builds the full telemetry payload pushed to the UI each tick.
     pub fn telemetry(&self) -> TelemetrySnapshot {
-        self.telemetry_with(
-            &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
-        )
+        let (added, pause_reasons, forced) = Default::default();
+        self.telemetry_with(&LibraryFacts {
+            added: &added,
+            pause_reasons: &pause_reasons,
+            forced: &forced,
+        })
     }
 
     /// [`Self::telemetry`] with the two things the engine cannot know itself.
@@ -603,14 +639,10 @@ impl Engine {
     ///
     /// Both are passed in rather than reached for, which is what keeps this
     /// module free of Tauri and of `policy`.
-    pub fn telemetry_with(
-        &self,
-        added: &std::collections::HashMap<String, u64>,
-        pause_reasons: &std::collections::HashMap<String, PauseReason>,
-    ) -> TelemetrySnapshot {
+    pub fn telemetry_with(&self, facts: &LibraryFacts) -> TelemetrySnapshot {
         TelemetrySnapshot {
             core: self.core_status(),
-            torrents: self.torrent_summaries_with(added, pause_reasons),
+            torrents: self.torrent_summaries_with(facts),
         }
     }
 
@@ -1129,6 +1161,11 @@ impl Engine {
             torrent::Supplied {
                 added_at: None,
                 pause_reason: pause_reasons.get(&handle.info_hash().as_string()).copied(),
+                // The detail panel is about one torrent, and neither of these
+                // says anything the panel renders -- the row above it carries
+                // the queue place and the forced mark.
+                forced: false,
+                queue_position: None,
             },
         );
         let note = note::describe(&summary, &swarm);

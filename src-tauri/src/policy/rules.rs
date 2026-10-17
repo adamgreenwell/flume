@@ -31,6 +31,22 @@ impl TorrentRules {
     }
 }
 
+/// One line of torrents waiting on the same limit.
+///
+/// Which line a torrent is in decides what a place and a move action mean:
+/// both are claims about the torrents it is actually competing with. Two
+/// kinds counted against separate limits are not competing, so ranking them
+/// together would report a move that changed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueLine {
+    /// Downloads and seeds together, under `max_active_total`.
+    Shared,
+    /// Downloads alone, under `max_active_downloads`.
+    Downloads,
+    /// Seeds alone, under `max_active_seeds`.
+    Seeds,
+}
+
 /// How many torrents may run at once.
 ///
 /// Session-wide rather than per-torrent: a slot limit is a statement about
@@ -66,6 +82,112 @@ impl QueueLimits {
         self.max_active_downloads.is_none()
             && self.max_active_seeds.is_none()
             && self.max_active_total.is_none()
+    }
+
+    /// The most torrents of this kind that may run, or `None` for no limit.
+    ///
+    /// Both limits apply, so the binding one is whichever is lower -- which
+    /// is also what makes a cap of zero worth naming: nothing of that kind
+    /// can ever be admitted.
+    #[must_use]
+    pub const fn cap_for(&self, is_seed: bool) -> Option<u32> {
+        let own = if is_seed {
+            self.max_active_seeds
+        } else {
+            self.max_active_downloads
+        };
+        match (own, self.max_active_total) {
+            (None, total) => total,
+            (Some(own), None) => Some(own),
+            (Some(own), Some(total)) => Some(if own < total { own } else { total }),
+        }
+    }
+
+    /// Whether any torrent of this kind can be admitted at all.
+    ///
+    /// A cap of zero is accepted: `Settings::validate` says nothing about the
+    /// queue limits, and a settings file that fails validation has its
+    /// choices honoured rather than clamped. So this is reachable by hand,
+    /// and the honest answer for such a kind is that it has no queue -- it is
+    /// not waiting its turn, it has no turn.
+    #[must_use]
+    pub const fn can_run(&self, is_seed: bool) -> bool {
+        match self.cap_for(is_seed) {
+            None => true,
+            Some(cap) => cap > 0,
+        }
+    }
+
+    /// Whether the total limit can ever refuse what the per-kind caps allow.
+    ///
+    /// `apply_queue` enforces all three, so a total above everything the
+    /// per-kind caps can reach together is dead weight: one download and one
+    /// seed cannot breach a total of ten, so that total decides nothing and
+    /// the two kinds are not competing after all. Treating it as though they
+    /// were put them in one line, where moving a download past a seed
+    /// reported success and changed nothing about what ran.
+    ///
+    /// A kind with no cap of its own is unbounded, so the total is the only
+    /// thing holding it and always binds.
+    ///
+    /// And both kinds have to be able to run, or there is nothing for the
+    /// total to arbitrate: with downloads capped at zero, no download ever
+    /// takes a total slot, so the seeds are queuing against each other alone.
+    #[must_use]
+    pub const fn total_can_bind(&self) -> bool {
+        if !self.can_run(false) || !self.can_run(true) {
+            return false;
+        }
+        match (
+            self.max_active_total,
+            self.max_active_downloads,
+            self.max_active_seeds,
+        ) {
+            (None, _, _) => false,
+            (Some(_), None, _) | (Some(_), _, None) => true,
+            // Saturating because the sum is a ceiling, not a count: a pair of
+            // caps near `u32::MAX` is already further than any total can
+            // reach, and wrapping would say the opposite.
+            (Some(total), Some(downloads), Some(seeds)) => total < downloads.saturating_add(seeds),
+        }
+    }
+
+    /// Which queue line a torrent of this kind waits in, if any.
+    ///
+    /// Not a yes-or-no question, which is the mistake this replaces. A limit
+    /// on downloads says nothing about which seed runs next, so with only
+    /// `max_active_downloads` set there is no line of seeds to be in. But
+    /// with *both* per-kind limits set and no total, `apply_queue` counts the
+    /// two kinds against separate counters -- so they are two lines, not one,
+    /// and moving a download past a seed would change both their displayed
+    /// places without changing which download or seed runs next.
+    ///
+    /// A total limit is what makes them compete -- but only if it can
+    /// actually bind. Set to more than the two per-kind caps can reach
+    /// together, it never refuses anything `apply_queue` would otherwise
+    /// have admitted, so the counters stay independent and the kinds are
+    /// still two lines. See [`Self::total_can_bind`].
+    #[must_use]
+    pub const fn line_for(&self, is_seed: bool) -> Option<QueueLine> {
+        // Bounded by nothing, so there is no queue for this kind to be in.
+        // Asked through `cap_for` rather than of the per-kind field, because
+        // a kind with no cap of its own is still held by the total.
+        let Some(cap) = self.cap_for(is_seed) else {
+            return None;
+        };
+        // Capped at zero: it has no turn, so a place and a move both claim
+        // something false about it.
+        if cap == 0 {
+            return None;
+        }
+        if self.total_can_bind() {
+            return Some(QueueLine::Shared);
+        }
+        if is_seed {
+            Some(QueueLine::Seeds)
+        } else {
+            Some(QueueLine::Downloads)
+        }
     }
 }
 

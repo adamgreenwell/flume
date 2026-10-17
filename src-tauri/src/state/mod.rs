@@ -81,6 +81,21 @@ pub struct AppState {
     /// would make this module depend on `crate::commands`, which is the wrong
     /// direction.
     start_failure: RwLock<Option<String>>,
+    /// Held for the whole of [`Self::move_in_queue`], so two never overlap.
+    ///
+    /// The order a reorder swaps within is derived from the current one, so
+    /// deriving and writing have to be one step: two overlapping moves
+    /// otherwise derive the same starting order, both report success, and
+    /// the later write silently discards the earlier swap. The UI makes that
+    /// reachable -- it fires the move without awaiting it and closes the
+    /// menu, so repeated clicks overlap.
+    ///
+    /// A lock of its own rather than the policy state's, because the
+    /// operation writes the library too and `library_snapshot` takes the
+    /// library before the policy state. Holding policy across a library
+    /// write would invert that order and deadlock against it. Nothing else
+    /// takes this one, so it cannot be half of a cycle.
+    reorder: Mutex<()>,
     /// Held for the whole of [`Self::restart_engine`], so two never overlap.
     ///
     /// Without it the method takes the old engine out, releases the engine
@@ -121,6 +136,32 @@ const BACKOFF_FIRST: Duration = Duration::from_secs(2);
 /// user who fixes the cause does not conclude the app is broken.
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 
+/// The per-torrent facts the engine is handed each tick, owned.
+///
+/// A holder for [`crate::engine::LibraryFacts`], which borrows. The engine
+/// takes references so a tick does not clone four maps; something has to own
+/// them for the duration of the call, and this is it.
+pub struct LibrarySnapshot {
+    /// When each torrent was first added, in seconds since the epoch.
+    pub added: std::collections::HashMap<String, u64>,
+    /// Why Flume stopped each torrent it stopped itself.
+    pub pause_reasons: std::collections::HashMap<String, PauseReason>,
+    /// Torrents the user started past the active limits.
+    pub forced: std::collections::HashSet<String>,
+}
+
+impl LibrarySnapshot {
+    /// Borrows this as the engine's parameter type.
+    #[must_use]
+    pub fn facts(&self) -> crate::engine::LibraryFacts<'_> {
+        crate::engine::LibraryFacts {
+            added: &self.added,
+            pause_reasons: &self.pause_reasons,
+            forced: &self.forced,
+        }
+    }
+}
+
 impl AppState {
     /// Creates state with the given settings and session directory.
     pub fn new(settings: Settings, session_dir: PathBuf, first_run: bool) -> Self {
@@ -157,8 +198,9 @@ impl AppState {
         // policy evaluation already knows how long each torrent has seeded.
         // Without this a seed-time limit would restart its count on every
         // launch and never fire for anyone who quits Flume daily.
-        let policy_state =
-            PolicyState::with_seed_times(library.seed_times()).with_forced(library.forced());
+        let policy_state = PolicyState::with_seed_times(library.seed_times())
+            .with_forced(library.forced())
+            .with_queue_positions(library.queue_positions());
 
         Self {
             engine: RwLock::new(None),
@@ -173,6 +215,7 @@ impl AppState {
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
             start_failure: RwLock::new(None),
+            reorder: Mutex::new(()),
             restart: Mutex::new(()),
             start_backoff: Mutex::new(None),
         }
@@ -349,6 +392,32 @@ impl AppState {
     /// A copy of the bookkeeping carried between policy evaluations.
     pub async fn policy_state(&self) -> PolicyState {
         self.policy_state.read().await.clone()
+    }
+
+    /// Evaluates policy against `snapshot` and commits the new bookkeeping.
+    ///
+    /// Read, evaluate and write under one lock, which is the whole point of
+    /// the method existing rather than the caller doing those three things
+    /// itself. The loop used to clone the state, evaluate from the clone, and
+    /// write the result back a moment later -- so anything written in between
+    /// was overwritten by a value computed before it happened. A queue
+    /// reorder would be accepted, persisted, and then silently reverted until
+    /// the next one or a relaunch, and the same was already true of forcing a
+    /// torrent past the queue.
+    ///
+    /// `evaluate` is pure and synchronous, so nothing is awaited while the
+    /// lock is held. The actions come back for the caller to perform, which
+    /// keeps everything that touches the engine out of here.
+    pub async fn evaluate_policy(
+        &self,
+        snapshot: &crate::engine::TelemetrySnapshot,
+        rules: &Rules,
+        elapsed_secs: u64,
+    ) -> Vec<crate::policy::Action> {
+        let mut state = self.policy_state.write().await;
+        let outcome = crate::policy::evaluate(snapshot, rules, &state, elapsed_secs);
+        *state = outcome.state;
+        outcome.actions
     }
 
     /// Replaces the policy bookkeeping.
@@ -646,6 +715,81 @@ impl AppState {
         self.persist_library(json);
     }
 
+    /// The telemetry snapshot the UI gets, with queue places stamped on.
+    ///
+    /// The one place a snapshot is built for display, because a torrent's
+    /// place in the queue is not a property of the torrent. It is a rank over
+    /// the eligible set, and deciding who is eligible is the policy engine's
+    /// answer -- so it takes the whole snapshot, which means it has to be a
+    /// second pass over one the engine has already built.
+    ///
+    /// Reported for every torrent the queue is actually holding, and `None`
+    /// for the rest. The stored sort key would have been the wrong thing to
+    /// send: it is absent until somebody reorders, so a UI that gated its
+    /// move actions on it could never make the first reorder.
+    ///
+    /// No queue limits means no places at all. Ranking torrents the queue is
+    /// not deciding between would have the UI offer to reorder a line that
+    /// does not exist.
+    pub async fn telemetry(&self, engine: &Engine) -> crate::engine::TelemetrySnapshot {
+        let facts = self.library_snapshot().await;
+        let mut snapshot = engine.telemetry_with(&facts.facts());
+
+        let limits = self.policy_rules().await.queue;
+
+        // Collected before the mutation so the immutable borrow of the
+        // snapshot ends first.
+        //
+        // `queue_lines` rather than `queue_order`: a place is only meaningful
+        // among the torrents a limit is actually deciding between, and two
+        // kinds counted against separate limits are two lines. Each is
+        // ranked from one within itself, so a download and a seed can both
+        // be first -- which is the truth when nothing makes them compete.
+        //
+        // No limits at all is the degenerate case and needs no check of its
+        // own: there are no lines, so nothing is stamped.
+        let lines: Vec<Vec<String>> = {
+            let policy = self.policy_state.read().await;
+            crate::policy::queue_lines(&snapshot, &policy, &limits)
+                .into_iter()
+                .map(|line| line.into_iter().map(|t| t.info_hash.clone()).collect())
+                .collect()
+        };
+
+        // Per line, which composes because `stamp_queue_places` writes only
+        // the hashes it is given and leaves the rest alone.
+        for line in &lines {
+            crate::policy::stamp_queue_places(&mut snapshot, line);
+        }
+        snapshot
+    }
+
+    /// Everything the engine needs from above it, read in one pass.
+    ///
+    /// Owned rather than borrowed, because the three locks behind it must not
+    /// be held while the engine walks its torrents -- and gathered in one
+    /// call so a tick cannot read half of it before an evaluation and half
+    /// after.
+    pub async fn library_snapshot(&self) -> LibrarySnapshot {
+        let library = self.library.read().await;
+        let policy = self.policy_state.read().await;
+        LibrarySnapshot {
+            added: library.added_times(),
+            pause_reasons: policy.pause_reasons().clone(),
+            // From the policy bookkeeping, not the library record, because
+            // that is what policy actually enforces.
+            //
+            // The two agree until `library.json` cannot be read. The library
+            // then refuses every write and keeps reporting an empty set,
+            // while `mark_forced` still lands in the policy state -- so the
+            // queue correctly leaves the torrent alone and the UI would have
+            // said `forced: false` forever, making an overridden limit look
+            // broken in exactly the degraded mode the library is built to
+            // survive.
+            forced: policy.forced().clone(),
+        }
+    }
+
     /// When each torrent was added, keyed by info hash.
     pub async fn added_times(&self) -> std::collections::HashMap<String, u64> {
         let library = self.library.read().await;
@@ -677,6 +821,136 @@ impl AppState {
             library.to_json()
         };
         self.persist_library(json);
+    }
+
+    /// Moves one torrent one place up or down the queue.
+    ///
+    /// `order` is the queue as it stands, newest-eligible last, exactly as
+    /// the policy engine would admit from it. Passed in rather than
+    /// recomputed here because deciding who is eligible needs a telemetry
+    /// snapshot, and that belongs to the caller that already has one -- this
+    /// method's job is the move and the write.
+    ///
+    /// The whole order is written, not one position. A reorder is a statement
+    /// about a set, and writing one place at a time would leave a queue that
+    /// briefly admits the wrong torrent.
+    ///
+    /// Returns whether anything moved: `false` for a torrent already at the
+    /// end it was asked to move towards, or one not in the queue at all.
+    pub async fn move_in_queue(
+        &self,
+        snapshot: &crate::engine::TelemetrySnapshot,
+        info_hash: &str,
+        up: bool,
+    ) -> bool {
+        // One reorder at a time, across the derivation as well as the write.
+        // See the field's doc for what overlapping ones do to each other.
+        let _reordering = self.reorder.lock().await;
+
+        let hash = info_hash.to_ascii_lowercase();
+
+        // Derived here rather than by the caller, so the order swapped within
+        // is the one in force at this moment. The snapshot decides membership
+        // -- which torrents the queue holds -- and the policy state decides
+        // their order, which is what a previous reorder wrote.
+        let limits = self.policy_rules().await.queue;
+
+        let next = {
+            let policy = self.policy_state.read().await;
+            // The torrent's own line, which is the set the user was looking
+            // at. A move is a claim about what goes next, so it has to be
+            // within the group competing for the same slots: across two
+            // independently limited kinds it would report success and change
+            // nothing. A torrent in no line at all is simply not found here,
+            // which is already a refusal.
+            let Some(line) = crate::policy::queue_lines(snapshot, &policy, &limits)
+                .into_iter()
+                .find(|line| {
+                    line.iter()
+                        .any(|torrent| torrent.info_hash.eq_ignore_ascii_case(&hash))
+                })
+            else {
+                return false;
+            };
+            let order: Vec<String> = line
+                .into_iter()
+                .map(|torrent| torrent.info_hash.clone())
+                .collect();
+
+            let Some(at) = order.iter().position(|h| h.eq_ignore_ascii_case(&hash)) else {
+                return false;
+            };
+            let swap_with = if up {
+                match at.checked_sub(1) {
+                    Some(above) => above,
+                    // Already first. Reported rather than silently written,
+                    // so a UI can grey the action instead of offering a
+                    // no-op.
+                    None => return false,
+                }
+            } else if at + 1 < order.len() {
+                at + 1
+            } else {
+                return false;
+            };
+
+            let mut moved = order.clone();
+            moved.swap(at, swap_with);
+
+            // Merged back into the full admission order rather than written
+            // on its own, because a move inside one line must not say
+            // anything about the torrents outside it.
+            //
+            // Written alone, a first reorder of the downloads gave every
+            // download a place while the seeds kept none -- and
+            // `queue_order` sorts an absent place last, so changing the
+            // limits later so the kinds share a line would have put every
+            // download ahead of every seed. The user moved one download past
+            // another; they did not say that.
+            //
+            // So the line's members are substituted back into the places
+            // they occupied in admission order, and everything else keeps
+            // its own. Torrents outside the snapshot still keep their slots:
+            // `set_queue_order` assigns around whatever it is not given.
+            let in_line: std::collections::HashSet<String> = order.into_iter().collect();
+            let full = crate::policy::queue_order(snapshot, &policy);
+            let mut taking = moved.into_iter();
+            full.into_iter()
+                .map(|torrent| {
+                    let hash = torrent.info_hash.clone();
+                    if in_line.contains(&hash) {
+                        // Counts match by construction: the line is a
+                        // subsequence of the admission order, and `moved` is
+                        // a permutation of the line.
+                        taking.next().unwrap_or(hash)
+                    } else {
+                        hash
+                    }
+                })
+                .collect::<Vec<String>>()
+        };
+
+        // Both halves, like `set_forced`: the policy state the next tick
+        // reads, and the library record that survives a restart. Writing only
+        // the record would leave the order unchanged until relaunch, which
+        // reads as the action having done nothing.
+        //
+        // Scoped so the policy lock is released before the library lock is
+        // taken, which is the ordering `set_forced` established and the
+        // reason this method does not simply hold the policy write across
+        // everything.
+        // The policy state decides the numbering and the library is written
+        // with the same pairs. Deriving it twice is what the two stores
+        // disagreeing looks like from the inside.
+        let assigned = self.policy_state.write().await.set_queue_order(&next);
+
+        let json = {
+            let mut library = self.library.write().await;
+            library.set_queue_positions(&assigned);
+            library.to_json()
+        };
+        self.persist_library(json);
+        true
     }
 
     /// Records that the user started a torrent out of the queue by hand.

@@ -164,6 +164,23 @@ pub struct TorrentSummary {
     pub error: Option<String>,
     /// Absolute directory the files are written to.
     pub output_folder: String,
+
+    /// Whether the user started this torrent past the active limits.
+    ///
+    /// A forced torrent runs on top of the queue rather than inside it: it is
+    /// neither admitted nor counted, and the queue leaves it alone until the
+    /// user pauses it again. Reported because without it a torrent running
+    /// over the limit is indistinguishable from one the queue admitted, and
+    /// the limit then looks broken rather than overridden.
+    pub forced: bool,
+
+    /// Its place in the queue, counting from 1, or `None` for no place.
+    ///
+    /// `None` covers two cases that read the same to a user: a torrent nobody
+    /// has placed, and one the queue does not apply to. Reported rather than
+    /// derived in the UI, because the list's own order is a sort the user
+    /// controls and has nothing to do with what the queue will admit next.
+    pub queue_position: Option<u32>,
 }
 
 /// One file inside an *added* torrent, with its download progress.
@@ -408,6 +425,10 @@ pub(super) struct Supplied {
     pub added_at: Option<u64>,
     /// Why Flume stopped it, when Flume rather than the user did.
     pub pause_reason: Option<PauseReason>,
+    /// Whether the user started this past the active limits.
+    pub forced: bool,
+    /// Its place in the queue, when the user has put it in one.
+    pub queue_position: Option<u32>,
 }
 
 /// Folds the caller's pause reason into the state librqbit reported.
@@ -441,6 +462,8 @@ pub(super) fn summarize(
     let Supplied {
         added_at,
         pause_reason,
+        forced,
+        queue_position,
     } = supplied;
     let (download_bps, upload_bps, live_peers, known_peers) = match stats.live.as_ref() {
         Some(live) => (
@@ -484,6 +507,8 @@ pub(super) fn summarize(
         added_at,
         error: stats.error.clone(),
         output_folder,
+        forced,
+        queue_position,
     };
     summary.detail = describe(&summary);
     summary
@@ -577,6 +602,8 @@ mod tests {
             added_at: None,
             error: error.map(str::to_owned),
             output_folder: "/tmp".into(),
+            forced: false,
+            queue_position: None,
         })
     }
 
@@ -833,6 +860,8 @@ mod tests {
             added_at: None,
             error: None,
             output_folder: "/tmp".into(),
+            forced: false,
+            queue_position: None,
         }
     }
 

@@ -117,6 +117,8 @@ fn sample_summary() -> TorrentSummary {
         added_at: Some(1_700_000_000),
         error: None,
         output_folder: "/tmp/downloads".into(),
+        forced: false,
+        queue_position: None,
     }
 }
 
@@ -213,6 +215,8 @@ fn torrent_summary_matches_the_typescript_mirror() {
             "pauseReason",
             "error",
             "outputFolder",
+            "forced",
+            "queuePosition",
         ],
         "TorrentSummary",
     );

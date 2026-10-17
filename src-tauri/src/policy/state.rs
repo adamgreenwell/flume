@@ -1,6 +1,6 @@
 //! Bookkeeping that policy rules need to carry between evaluations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +21,12 @@ pub struct PolicyState {
     seed_seconds: HashMap<String, u64>,
     /// Torrents the user started out of the queue by hand.
     forced: HashSet<String>,
+    /// The user's explicit queue order, as a place per info hash.
+    ///
+    /// Here as well as in the library record for the same reason `forced` is:
+    /// this is what the next tick reads, and the record is what survives a
+    /// restart. A reorder writes both.
+    queue_positions: HashMap<String, u32>,
 }
 
 impl PolicyState {
@@ -38,6 +44,7 @@ impl PolicyState {
             paused: HashMap::new(),
             seed_seconds,
             forced: HashSet::new(),
+            queue_positions: HashMap::new(),
         }
     }
 
@@ -51,6 +58,82 @@ impl PolicyState {
     pub fn with_forced(mut self, forced: HashSet<String>) -> Self {
         self.forced = forced;
         self
+    }
+
+    /// Restores the explicit queue order from the library record.
+    #[must_use]
+    pub fn with_queue_positions(mut self, positions: HashMap<String, u32>) -> Self {
+        self.queue_positions = positions;
+        self
+    }
+
+    /// Places the torrents the order names, without taking a slot that a
+    /// torrent outside it already holds.
+    ///
+    /// Returns exactly what it assigned, so the library can be written with
+    /// the same numbers. That return value is the point: these places live in
+    /// two stores -- here, for the next tick, and in `library.json`, to
+    /// survive a restart -- and two independent numberings drift the moment
+    /// either one changes. One numbering, computed here, applied to both.
+    ///
+    /// # Why not simply renumber from zero
+    ///
+    /// The order handed in is `queue_order`'s result, which holds only the
+    /// torrents *eligible* to run. One that is manually paused, stopped by a
+    /// limit, or forced is absent from it while still holding a place the user
+    /// gave it, so renumbering the eligible ones from zero writes over that
+    /// place.
+    ///
+    /// Keeping the absent torrent's old number is not enough either, and this
+    /// is the subtle part: a newer torrent promoted to the front and then
+    /// paused would share slot 0 with whichever torrent the reorder put
+    /// first, and `queue_order` breaks equal places by arrival time -- which
+    /// never favours the newer one. The user's explicit "this first" would
+    /// lose to arrival order, permanently and silently.
+    ///
+    /// So the absent torrents keep their slots and the eligible ones are
+    /// distributed around them. No two positioned torrents end up equal, and
+    /// a torrent nobody mentioned comes back exactly where it was.
+    pub fn set_queue_order(&mut self, order: &[String]) -> Vec<(String, u32)> {
+        // Slots held by torrents this order says nothing about.
+        let held: BTreeSet<u32> = self
+            .queue_positions
+            .iter()
+            .filter(|(hash, _)| !order.iter().any(|named| named == *hash))
+            .map(|(_, at)| *at)
+            .collect();
+
+        let mut assigned = Vec::with_capacity(order.len());
+        let mut slot: u32 = 0;
+        for hash in order {
+            // Bounded by `slot < u32::MAX` rather than left to run: without
+            // it, a held `u32::MAX` would spin here for ever. Reaching it
+            // needs four billion torrents, and the degenerate answer -- the
+            // remainder all land on `u32::MAX` -- is one `queue_order`
+            // already breaks by arrival time.
+            while slot < u32::MAX && held.contains(&slot) {
+                slot += 1;
+            }
+            assigned.push((hash.clone(), slot));
+            slot = slot.saturating_add(1);
+        }
+
+        for (hash, at) in &assigned {
+            self.queue_positions.insert(hash.clone(), *at);
+        }
+        assigned
+    }
+
+    /// Where the user put this torrent, if they have.
+    ///
+    /// `None` is the overwhelmingly common answer: nobody has reordered, so
+    /// the queue falls back to arrival order. It is deliberately *not* the
+    /// same thing as the place a torrent currently occupies in the line --
+    /// that is a rank over the eligible set, computed per tick, and it is
+    /// what `TorrentSummary::queue_position` reports.
+    #[must_use]
+    pub fn queue_position(&self, info_hash: &str) -> Option<u32> {
+        self.queue_positions.get(info_hash).copied()
     }
 
     /// Accumulated seeding time for every torrent that has any.
@@ -135,5 +218,9 @@ impl PolicyState {
         self.paused.retain(|hash, _| keep(hash));
         self.seed_seconds.retain(|hash, _| keep(hash));
         self.forced.retain(|hash| keep(hash));
+        // Pruned with the rest, or a re-added torrent inherits the place its
+        // predecessor had -- `Library::forget` drops the persisted record,
+        // and this map would be the only thing still claiming one.
+        self.queue_positions.retain(|hash, _| keep(hash));
     }
 }

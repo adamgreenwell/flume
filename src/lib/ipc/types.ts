@@ -187,6 +187,23 @@ export interface TorrentSummary {
   error: string | null;
   /** Absolute directory the files are written to. */
   outputFolder: string;
+  /**
+   * Whether the user started this torrent past the active limits.
+   *
+   * A forced torrent runs on top of the queue rather than inside it — it is
+   * neither admitted nor counted, and the queue leaves it alone until it is
+   * paused again. Reported because without it a torrent running over the
+   * limit is indistinguishable from one the queue admitted, which makes the
+   * limit look broken rather than overridden.
+   */
+  forced: boolean;
+  /**
+   * Its place in the queue, counting from 1, or `null` for no place.
+   *
+   * Reported rather than derived from the list's own order, which is a sort
+   * the user controls and has nothing to do with what the queue admits next.
+   */
+  queuePosition: number | null;
 }
 
 /** Everything the UI needs for one render tick. Mirrors Rust `TelemetrySnapshot`. */

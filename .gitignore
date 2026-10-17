@@ -51,6 +51,15 @@ Thumbs.db
 # Same accident as `.claude/launch.json` above: picked up by `git add -A` and
 # carried onto a feature branch, where it had nothing to do with the change.
 .codex/
+
+# The usage dashboard's generated output. The third instance of the accident
+# the two entries above describe, and the only one that mattered: `git add -A`
+# carried it onto a feature branch, and it holds live data pulled from the
+# collector -- activity dates, session buckets, platform -- for the installs
+# that opted in, on a public repository, under a heading that calls itself a
+# private operator view. Generated output does not belong in git at the best
+# of times; this particular output must never reach it.
+collector/.dashboard/
 .idea/
 .vscode/*
 !.vscode/extensions.json

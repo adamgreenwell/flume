@@ -66,6 +66,17 @@ fn seeding(hash: &str, id: usize, uploaded: u64, downloaded: u64) -> TorrentSumm
         added_at: None,
         error: None,
         output_folder: "/tmp".into(),
+        forced: false,
+        queue_position: None,
+    }
+}
+
+/// A torrent waiting on a queue slot.
+fn queued(hash: &str, id: usize) -> TorrentSummary {
+    TorrentSummary {
+        state: TorrentState::Queued,
+        finished: false,
+        ..seeding(hash, id, 0, 1_000)
     }
 }
 
@@ -74,6 +85,26 @@ fn snapshot(torrents: Vec<TorrentSummary>) -> TelemetrySnapshot {
         core: core(),
         torrents,
     }
+}
+
+/// The queue lines as info hashes, which is what the assertions compare.
+fn lines_of(
+    snap: &TelemetrySnapshot,
+    state: &PolicyState,
+    limits: &QueueLimits,
+) -> Vec<Vec<String>> {
+    flume_lib::policy::queue_lines(snap, state, limits)
+        .into_iter()
+        .map(|line| line.into_iter().map(|t| t.info_hash.clone()).collect())
+        .collect()
+}
+
+/// A torrent's stamped place, or `None` for the dash.
+fn place(snap: &TelemetrySnapshot, hash: &str) -> Option<u32> {
+    snap.torrents
+        .iter()
+        .find(|t| t.info_hash == hash)
+        .and_then(|t| t.queue_position)
 }
 
 fn ratio_limit(limit: f64) -> Rules {
@@ -1359,4 +1390,820 @@ async fn changing_a_setting_clears_the_backoff() {
 
     state.clear_start_backoff().await;
     assert!(state.start_allowed(now).await);
+}
+
+/// An explicit queue order is admitted in, ahead of arrival order.
+///
+/// The queue admitted oldest-first and had no way to change it, which was
+/// #56's last open bullet. A position placed by the user has to beat arrival
+/// time or reordering means nothing.
+#[test]
+fn an_explicit_queue_position_beats_arrival_order() {
+    let older = TorrentSummary {
+        added_at: Some(1_000),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let newer = TorrentSummary {
+        added_at: Some(2_000),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+
+    let snapshot = snapshot(vec![older.clone(), newer.clone()]);
+    // The stored order lives in the policy bookkeeping, not on the summary.
+    // `TorrentSummary::queue_position` is the rank this order produces, so
+    // reading it here would be circular.
+    let state = PolicyState::default().with_queue_positions(
+        [(newer.info_hash.clone(), 0), (older.info_hash.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
+
+    let order: Vec<&str> = flume_lib::policy::queue_order(&snapshot, &state)
+        .into_iter()
+        .map(|t| t.info_hash.as_str())
+        .collect();
+
+    assert_eq!(
+        order,
+        vec![newer.info_hash.as_str(), older.info_hash.as_str()],
+        "the placed order must win; without it this is arrival order and the \
+         newer torrent sorts second"
+    );
+}
+
+/// Without positions it is still arrival order, oldest first.
+#[test]
+fn arrival_order_still_decides_when_nobody_has_reordered() {
+    let older = TorrentSummary {
+        added_at: Some(1_000),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let newer = TorrentSummary {
+        added_at: Some(2_000),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+
+    let snapshot = snapshot(vec![newer.clone(), older.clone()]);
+    let state = PolicyState::default();
+
+    let order: Vec<&str> = flume_lib::policy::queue_order(&snapshot, &state)
+        .into_iter()
+        .map(|t| t.info_hash.as_str())
+        .collect();
+
+    assert_eq!(
+        order,
+        vec![older.info_hash.as_str(), newer.info_hash.as_str()]
+    );
+}
+
+/// Every torrent the queue holds gets a place, even before anyone reorders.
+///
+/// The regression this covers made the feature unusable rather than wrong:
+/// the wire carried the *stored* sort key, which is absent until somebody
+/// reorders, so every queued torrent reported no place -- and the UI gates
+/// its move actions on having one. Nothing could ever make the first
+/// reorder.
+#[test]
+fn a_queued_torrent_has_a_place_before_anybody_has_reordered() {
+    let first = TorrentSummary {
+        added_at: Some(1_000),
+        ..queued("a".repeat(40).as_str(), 1)
+    };
+    let second = TorrentSummary {
+        added_at: Some(2_000),
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+    let mut snap = snapshot(vec![second.clone(), first.clone()]);
+
+    // Nothing stored: the default state is what a fresh or upgraded library
+    // produces, which is exactly the case that was broken.
+    let state = PolicyState::default();
+    let order: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    flume_lib::policy::stamp_queue_places(&mut snap, &order);
+
+    let place = |hash: &str| {
+        snap.torrents
+            .iter()
+            .find(|t| t.info_hash == hash)
+            .and_then(|t| t.queue_position)
+    };
+    assert_eq!(place(&first.info_hash), Some(1), "oldest is first in line");
+    assert_eq!(place(&second.info_hash), Some(2));
+}
+
+/// A torrent the queue does not hold has no place, rather than place zero.
+#[test]
+fn a_torrent_outside_the_queue_has_no_place() {
+    let waiting = queued("a".repeat(40).as_str(), 1);
+    // Checking is never eligible: the queue does not decide about it.
+    let checking = TorrentSummary {
+        state: TorrentState::Checking,
+        ..queued("b".repeat(40).as_str(), 2)
+    };
+    let mut snap = snapshot(vec![waiting.clone(), checking.clone()]);
+
+    let state = PolicyState::default();
+    let order: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    flume_lib::policy::stamp_queue_places(&mut snap, &order);
+
+    let place = |hash: &str| {
+        snap.torrents
+            .iter()
+            .find(|t| t.info_hash == hash)
+            .and_then(|t| t.queue_position)
+    };
+    assert_eq!(place(&waiting.info_hash), Some(1));
+    assert_eq!(
+        place(&checking.info_hash),
+        None,
+        "a dash, not a place: the queue has no opinion about this torrent"
+    );
+}
+
+/// A kind no limit governs is not in any line.
+///
+/// With only `max_active_downloads` set, seed admission is unconstrained: a
+/// seed is not waiting for anything, and a download moving past one changes
+/// nothing about its priority against any other download. Giving those seeds
+/// places had the UI offer a move action that could not affect what ran next.
+#[test]
+fn a_kind_with_no_limit_has_no_line_to_be_in() {
+    let early_download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let late_download = TorrentSummary {
+        added_at: Some(400),
+        ..queued(&"b".repeat(40), 2)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
+    let mut snap = snapshot(vec![
+        early_download.clone(),
+        seed.clone(),
+        late_download.clone(),
+    ]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: None,
+        max_active_total: None,
+    };
+
+    // Admission still counts every eligible torrent, seeds included: that is
+    // what a total limit would need, and it is not this function's call.
+    let admission: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert!(
+        admission.contains(&seed.info_hash),
+        "admission order is over every eligible torrent"
+    );
+
+    // The lines the user sees are not.
+    let lines = lines_of(&snap, &state, &limits);
+    assert_eq!(
+        lines,
+        vec![vec![
+            early_download.info_hash.clone(),
+            late_download.info_hash.clone(),
+        ]],
+        "one line, the downloads, in admission order"
+    );
+
+    for line in &lines {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+    assert_eq!(place(&snap, &early_download.info_hash), Some(1));
+    assert_eq!(place(&snap, &late_download.info_hash), Some(2));
+    assert_eq!(
+        place(&snap, &seed.info_hash),
+        None,
+        "a dash, so the UI offers no move action for a seed nothing is queuing"
+    );
+}
+
+/// Two per-kind limits are two lines, not one.
+///
+/// `apply_queue` counts downloads and seeds against separate counters, so
+/// with both limits set and no total they are not competing. Ranking them
+/// together let a download move past a seed, which reported success and
+/// changed both their displayed places without changing which download or
+/// seed ran next.
+#[test]
+fn independent_per_kind_limits_keep_their_own_lines() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let other_download = TorrentSummary {
+        added_at: Some(400),
+        ..queued(&"d".repeat(40), 4)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let other_seed = TorrentSummary {
+        added_at: Some(300),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
+    let mut snap = snapshot(vec![
+        download.clone(),
+        seed.clone(),
+        other_seed.clone(),
+        other_download.clone(),
+    ]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        max_active_total: None,
+    };
+
+    assert_eq!(
+        lines_of(&snap, &state, &limits),
+        vec![
+            vec![download.info_hash.clone(), other_download.info_hash.clone()],
+            vec![seed.info_hash.clone(), other_seed.info_hash.clone()],
+        ],
+        "downloads and seeds are separate lines when nothing makes them compete"
+    );
+
+    for line in &lines_of(&snap, &state, &limits) {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+
+    // Each line is ranked from one within itself. A download and a seed both
+    // reading "1" is the honest answer: each is first of what it is actually
+    // waiting behind.
+    assert_eq!(place(&snap, &download.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_download.info_hash), Some(2));
+    assert_eq!(place(&snap, &seed.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_seed.info_hash), Some(2));
+}
+
+/// A total limit puts both kinds into one line.
+///
+/// Under it a download starting does keep a seed waiting, so they are
+/// competing for the same slots and ordering one against the other means
+/// something.
+#[test]
+fn a_total_limit_governs_both_kinds() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let snap = snapshot(vec![download.clone(), seed.clone()]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+
+    assert_eq!(
+        lines_of(&snap, &state, &limits),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "one line, because the total limit decides between them"
+    );
+
+    // And no limits at all is no lines, which needs no check of its own.
+    assert!(
+        lines_of(&snap, &state, &QueueLimits::default()).is_empty(),
+        "with nothing limited there is no queue to be in"
+    );
+}
+
+/// A total limit the per-kind caps cannot reach decides nothing.
+///
+/// `apply_queue` enforces all three, so a total above everything the per-kind
+/// caps can reach together never refuses anything: one download and one seed
+/// cannot breach a total of ten. The counters stay independent, so the kinds
+/// are still two lines — merging them on the mere presence of a total
+/// reported successful moves that changed nothing.
+#[test]
+fn a_total_limit_that_cannot_bind_does_not_merge_the_lines() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let snap = snapshot(vec![download.clone(), seed.clone()]);
+    let state = PolicyState::default();
+
+    let redundant = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        max_active_total: Some(10),
+    };
+    assert!(!redundant.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &redundant),
+        vec![
+            vec![download.info_hash.clone()],
+            vec![seed.info_hash.clone()],
+        ],
+        "a total of ten cannot hold back one download and one seed"
+    );
+
+    // Exactly reachable is still not binding: one of each is two, and a
+    // total of two refuses nothing the caps already allow.
+    let exact = QueueLimits {
+        max_active_total: Some(2),
+        ..redundant
+    };
+    assert!(!exact.total_can_bind());
+
+    // One lower, and it decides: now only one of the two may run.
+    let binding = QueueLimits {
+        max_active_total: Some(1),
+        ..redundant
+    };
+    assert!(binding.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &binding),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "one line, because the total now refuses what the caps allow"
+    );
+
+    // An uncapped kind is unbounded, so the total is the only thing holding
+    // it and always binds.
+    let one_kind_uncapped = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: None,
+        max_active_total: Some(10),
+    };
+    assert!(one_kind_uncapped.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &state, &one_kind_uncapped),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "ten seeds would breach a total of ten, so they are competing"
+    );
+}
+
+/// A move is within the torrent's own line, and refused across lines.
+///
+/// `move_in_queue` had no test at all, which is worth recording given it is
+/// the whole of the reorder feature: it derives the order, swaps inside it,
+/// and writes both the policy state and the library under one lock. With two
+/// independently limited kinds, a download at the bottom of its line is
+/// followed in *admission* order by a seed — so a move that walked admission
+/// order would report success and change nothing about what runs next.
+#[tokio::test]
+async fn a_move_stays_inside_its_own_line() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let first_download = "a".repeat(40);
+    let second_download = "d".repeat(40);
+    let seed = "b".repeat(40);
+
+    let snap = snapshot(vec![
+        TorrentSummary {
+            added_at: Some(100),
+            ..queued(&first_download, 1)
+        },
+        TorrentSummary {
+            added_at: Some(200),
+            ..seeding(&seed, 2, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(400),
+            ..queued(&second_download, 4)
+        },
+    ]);
+
+    // Promoting the later download over the earlier one is a real move.
+    assert!(
+        state.move_in_queue(&snap, &second_download, true).await,
+        "a download can be moved within the line of downloads"
+    );
+    let policy = state.policy_state().await;
+    assert!(
+        policy.queue_position(&second_download) < policy.queue_position(&first_download),
+        "and the stored places reflect it"
+    );
+
+    // The only seed cannot move: there is nothing in its line to move past,
+    // even though downloads sit either side of it in admission order.
+    assert!(
+        !state.move_in_queue(&snap, &seed, true).await,
+        "a lone seed has nobody to overtake"
+    );
+    assert!(
+        !state.move_in_queue(&snap, &seed, false).await,
+        "in either direction"
+    );
+
+    // And the earlier download, now last of two, cannot move down past the
+    // seed that follows it in admission order.
+    assert!(
+        !state.move_in_queue(&snap, &first_download, false).await,
+        "the end of a line is the end, whatever admission order says next"
+    );
+}
+
+/// A kind capped at zero has no turn, so it has no place either.
+///
+/// `Settings::validate` says nothing about the queue limits, and a settings
+/// file that fails validation has its choices honoured rather than clamped —
+/// so a cap of zero is reachable by hand. `apply_queue` can then never admit
+/// that kind, so ranking it reported moves that changed nothing, and with a
+/// total limit set it also dragged the other kind into a shared line it was
+/// not sharing.
+#[test]
+fn a_kind_capped_at_zero_is_in_no_line() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let other_download = TorrentSummary {
+        added_at: Some(150),
+        ..queued(&"d".repeat(40), 4)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let other_seed = TorrentSummary {
+        added_at: Some(300),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
+    let mut snap = snapshot(vec![
+        download.clone(),
+        other_download.clone(),
+        seed.clone(),
+        other_seed.clone(),
+    ]);
+    let state = PolicyState::default();
+
+    // No download can run, and the seeds are held by the total alone.
+    let limits = QueueLimits {
+        max_active_downloads: Some(0),
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+    assert!(
+        !limits.can_run(false),
+        "nothing gets in under a cap of zero"
+    );
+    assert!(limits.can_run(true));
+    assert!(
+        !limits.total_can_bind(),
+        "a download that can never run takes no total slot, so nothing is \
+         arbitrated"
+    );
+
+    assert_eq!(
+        lines_of(&snap, &state, &limits),
+        vec![vec![seed.info_hash.clone(), other_seed.info_hash.clone()]],
+        "the seeds queue against each other; the downloads are not in a line"
+    );
+
+    for line in &lines_of(&snap, &state, &limits) {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+    assert_eq!(place(&snap, &seed.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_seed.info_hash), Some(2));
+    assert_eq!(
+        place(&snap, &download.info_hash),
+        None,
+        "a dash: it is not waiting its turn, it has no turn"
+    );
+    assert_eq!(place(&snap, &other_download.info_hash), None);
+
+    // The same holds with no total at all, which the finding did not name but
+    // is the same thing: a cap of zero is a cap of zero.
+    let no_total = QueueLimits {
+        max_active_downloads: Some(0),
+        max_active_seeds: Some(2),
+        max_active_total: None,
+    };
+    assert_eq!(
+        lines_of(&snap, &state, &no_total),
+        vec![vec![seed.info_hash.clone(), other_seed.info_hash.clone()]],
+        "still no line of downloads"
+    );
+
+    // And a total of zero stops everything, so there are no lines at all.
+    let nothing_runs = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(0),
+    };
+    assert!(
+        lines_of(&snap, &state, &nothing_runs).is_empty(),
+        "nothing can run, so nobody is in a queue"
+    );
+}
+
+/// A move inside one line says nothing about the other line.
+///
+/// Written as the line alone, a first reorder of the downloads gave every
+/// download a place while the seeds kept none — and `queue_order` sorts an
+/// absent place last. So raising the limits later, so that the two kinds
+/// share a line, put every download ahead of every seed. The user moved one
+/// download past another; they did not say that.
+#[tokio::test]
+async fn a_move_does_not_reorder_the_line_it_was_not_in() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    // Two lines: each kind capped, no total, so nothing makes them compete.
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let early_download = "a".repeat(40);
+    let first_seed = "b".repeat(40);
+    let second_seed = "c".repeat(40);
+    let late_download = "d".repeat(40);
+
+    // Admission order by arrival, since nobody has reordered: download,
+    // seed, seed, download.
+    let snap = snapshot(vec![
+        TorrentSummary {
+            added_at: Some(100),
+            ..queued(&early_download, 1)
+        },
+        TorrentSummary {
+            added_at: Some(200),
+            ..seeding(&first_seed, 2, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(300),
+            ..seeding(&second_seed, 3, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(400),
+            ..queued(&late_download, 4)
+        },
+    ]);
+
+    assert!(state.move_in_queue(&snap, &late_download, true).await);
+
+    // Every eligible torrent now has a place, not just the downloads.
+    let policy = state.policy_state().await;
+    for hash in [&early_download, &first_seed, &second_seed, &late_download] {
+        assert!(
+            policy.queue_position(hash).is_some(),
+            "{hash} has no place, so a later limits change would sort it last"
+        );
+    }
+
+    // The test: under a total that binds, the two kinds share one line, and
+    // that line must be the original arrival order with only the two
+    // downloads swapped.
+    let binding = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+    assert!(binding.total_can_bind());
+    assert_eq!(
+        lines_of(&snap, &policy, &binding),
+        vec![vec![
+            late_download.clone(),
+            first_seed.clone(),
+            second_seed.clone(),
+            early_download.clone(),
+        ]],
+        "the seeds keep their place between the downloads"
+    );
+}
+
+/// A reorder leaves the place of a torrent it does not mention.
+///
+/// `queue_order` returns only the torrents eligible to run, so one that is
+/// manually paused, stopped by a limit or forced is absent from it while
+/// still holding a place the user gave it. `PolicyState::set_queue_order`
+/// replaced its whole map from that order, so reordering anything else
+/// silently dropped the absent torrent's place and it sorted last on resume
+/// — while `Library::set_queue_order` had kept the record, so a restart
+/// restored it and the queue appeared to change on its own.
+#[test]
+fn a_paused_torrent_keeps_its_place_while_the_rest_are_reordered() {
+    let first = "b".repeat(40);
+    let second = "c".repeat(40);
+    let third = "a".repeat(40);
+
+    // The user put `first` at the top and then paused it themselves, which
+    // policy does not record -- so it is not "queued by us" and drops out of
+    // the eligible set.
+    let mut state = PolicyState::default().with_queue_positions(
+        [(first.clone(), 0), (second.clone(), 2), (third.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
+
+    let paused = TorrentSummary {
+        state: TorrentState::Paused,
+        ..seeding(&first, 1, 0, 1_000)
+    };
+    let snap = snapshot(vec![
+        paused.clone(),
+        seeding(&second, 2, 0, 1_000),
+        seeding(&third, 3, 0, 1_000),
+    ]);
+
+    let eligible: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        eligible,
+        vec![third.clone(), second.clone()],
+        "the paused torrent is not eligible, so a reorder cannot name it"
+    );
+
+    // Promote `second` over `third`, which is a statement about those two.
+    state.set_queue_order(&[second.clone(), third.clone()]);
+
+    assert_eq!(
+        state.queue_position(&first),
+        Some(0),
+        "the reorder said nothing about this torrent and must not move it"
+    );
+
+    // Resumed, it is back in the running and still ahead of the one it was
+    // ahead of. Its 0 now ties with `second`'s, which `queue_order` breaks on
+    // arrival time and then info hash -- a total order either way, and the tie
+    // leaves it beside where it was rather than at the end.
+    let snap = snapshot(vec![
+        seeding(&first, 1, 0, 1_000),
+        seeding(&second, 2, 0, 1_000),
+        seeding(&third, 3, 0, 1_000),
+    ]);
+    let resumed: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        resumed,
+        vec![first.clone(), second.clone(), third.clone()],
+        "a place the user gave survived a reorder it was not part of"
+    );
+}
+
+/// A reorder does not hand out a slot an absent torrent is already holding.
+///
+/// Keeping the absent torrent's old number is not enough on its own. A newer
+/// torrent promoted to the front and then paused would share slot 0 with
+/// whichever torrent the reorder put first, and `queue_order` breaks equal
+/// places by arrival time — which never favours the newer one. So the user's
+/// explicit "this one first" would lose to arrival order, silently, and stay
+/// lost.
+#[test]
+fn a_promoted_torrent_that_is_paused_does_not_lose_its_slot_to_an_older_one() {
+    // Promoted to the front by the user, then paused by them, and the newest
+    // of the three — so every tie goes against it.
+    let promoted = "c".repeat(40);
+    let older = "b".repeat(40);
+    let middling = "a".repeat(40);
+
+    let mut state = PolicyState::default().with_queue_positions(
+        [
+            (promoted.clone(), 0),
+            (middling.clone(), 1),
+            (older.clone(), 2),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
+    let arrived = |hash: &str, id: usize, at: u64| TorrentSummary {
+        added_at: Some(at),
+        ..seeding(hash, id, 0, 1_000)
+    };
+
+    let paused = TorrentSummary {
+        state: TorrentState::Paused,
+        ..arrived(&promoted, 1, 200)
+    };
+    let snap = snapshot(vec![
+        paused,
+        arrived(&middling, 2, 100),
+        arrived(&older, 3, 50),
+    ]);
+
+    let eligible: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(eligible, vec![middling.clone(), older.clone()]);
+
+    // The user promotes `older` over `middling`, which says nothing about the
+    // paused one.
+    let assigned = state.set_queue_order(&[older.clone(), middling.clone()]);
+    assert_eq!(
+        assigned,
+        vec![(older.clone(), 1), (middling.clone(), 2)],
+        "slot 0 is taken, so the reorder starts at 1 rather than over the top"
+    );
+    assert_eq!(
+        state.queue_position(&promoted),
+        Some(0),
+        "and the promoted torrent keeps the slot it was given"
+    );
+
+    // Resumed, it is still first. Numbering from zero would have put `older`
+    // at 0 beside it, and the arrival-time tie-break would have gone to
+    // `older`.
+    let snap = snapshot(vec![
+        arrived(&promoted, 1, 200),
+        arrived(&middling, 2, 100),
+        arrived(&older, 3, 50),
+    ]);
+    let resumed: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        resumed,
+        vec![promoted.clone(), older.clone(), middling.clone()],
+        "an explicit place must not lose to arrival order"
+    );
+}
+
+/// A removed torrent's queue place is pruned with the rest of its state.
+///
+/// `retain` drops the bookkeeping for torrents that are gone. Queue places
+/// were not in that list, so re-adding the same info hash inherited the
+/// place its predecessor had — ahead of torrents that had been waiting —
+/// even though `Library::forget` had dropped the persisted record.
+#[test]
+fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
+    let gone = "a".repeat(40);
+    let staying = "b".repeat(40);
+
+    let mut state = PolicyState::default().with_queue_positions(
+        [(gone.clone(), 0), (staying.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
+
+    state.retain(|hash| hash != gone);
+
+    assert_eq!(
+        state.queue_position(&gone),
+        None,
+        "the place outlived the torrent, so a re-add would inherit it"
+    );
+    assert_eq!(
+        state.queue_position(&staying),
+        Some(1),
+        "pruning one must not drop the others"
+    );
+}
+
+/// A force survives a library that cannot be written, and is still reported.
+///
+/// `Library::set_forced` refuses every write when `library.json` could not
+/// be read, so the record stays empty — but `mark_forced` still lands in the
+/// policy state, which is what admission actually consults. Reporting from
+/// the record meant the queue correctly left the torrent alone while the UI
+/// said it was not forced, so an overridden limit read as a broken one in
+/// exactly the degraded mode the library is built to survive.
+#[test]
+fn a_force_is_known_to_policy_even_when_the_library_cannot_record_it() {
+    let hash = "a".repeat(40);
+    let mut state = PolicyState::default();
+
+    state.mark_forced(&hash);
+
+    assert!(
+        state.is_forced(&hash),
+        "admission reads this, so it has to hold the force"
+    );
+    assert!(
+        state.forced().contains(&hash),
+        "and the snapshot reads this, so the two cannot disagree"
+    );
 }

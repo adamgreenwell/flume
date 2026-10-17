@@ -158,7 +158,7 @@ pub async fn get_core_status(state: State<'_, AppState>) -> Result<CoreStatus, C
 #[tauri::command]
 pub async fn get_telemetry(state: State<'_, AppState>) -> Result<TelemetrySnapshot, CommandError> {
     let engine = require_engine(&state).await?;
-    Ok(engine.telemetry_with(&state.added_times().await, &state.pause_reasons().await))
+    Ok(state.telemetry(&engine).await)
 }
 
 impl From<SettingsError> for CommandError {
@@ -542,6 +542,36 @@ pub async fn destination_preflight(
         .destination_preflight(&info_hash, &folder)
         .await
         .map_err(CommandError::from)
+}
+
+/// Moves one torrent one place up or down the queue.
+///
+/// The order is computed here from the current snapshot, because deciding
+/// which torrents are even in the queue is the policy engine's answer and not
+/// something the UI can be trusted to have in sync -- the list it shows is
+/// sorted by whatever the user chose, which has nothing to do with admission
+/// order.
+///
+/// Returns whether anything moved: `false` for a torrent already at the end
+/// it was asked to move towards, or one the queue does not hold.
+///
+/// # Errors
+///
+/// `engineNotReady` whenever there is no engine.
+#[tauri::command]
+pub async fn move_in_queue(
+    state: State<'_, AppState>,
+    info_hash: String,
+    up: bool,
+) -> Result<bool, CommandError> {
+    let engine = require_engine(&state).await?;
+    // The snapshot decides which torrents the queue holds; the order within
+    // it is derived inside `move_in_queue`, under the lock that makes the
+    // whole reorder one step. Deriving it here left two overlapping moves
+    // swapping from the same starting order, with the later write discarding
+    // the earlier swap.
+    let snapshot = state.telemetry(&engine).await;
+    Ok(state.move_in_queue(&snapshot, &info_hash, up).await)
 }
 
 /// Releases a preview the user cancelled.
