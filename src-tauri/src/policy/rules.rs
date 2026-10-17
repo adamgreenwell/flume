@@ -84,6 +84,40 @@ impl QueueLimits {
             && self.max_active_total.is_none()
     }
 
+    /// The most torrents of this kind that may run, or `None` for no limit.
+    ///
+    /// Both limits apply, so the binding one is whichever is lower -- which
+    /// is also what makes a cap of zero worth naming: nothing of that kind
+    /// can ever be admitted.
+    #[must_use]
+    pub const fn cap_for(&self, is_seed: bool) -> Option<u32> {
+        let own = if is_seed {
+            self.max_active_seeds
+        } else {
+            self.max_active_downloads
+        };
+        match (own, self.max_active_total) {
+            (None, total) => total,
+            (Some(own), None) => Some(own),
+            (Some(own), Some(total)) => Some(if own < total { own } else { total }),
+        }
+    }
+
+    /// Whether any torrent of this kind can be admitted at all.
+    ///
+    /// A cap of zero is accepted: `Settings::validate` says nothing about the
+    /// queue limits, and a settings file that fails validation has its
+    /// choices honoured rather than clamped. So this is reachable by hand,
+    /// and the honest answer for such a kind is that it has no queue -- it is
+    /// not waiting its turn, it has no turn.
+    #[must_use]
+    pub const fn can_run(&self, is_seed: bool) -> bool {
+        match self.cap_for(is_seed) {
+            None => true,
+            Some(cap) => cap > 0,
+        }
+    }
+
     /// Whether the total limit can ever refuse what the per-kind caps allow.
     ///
     /// `apply_queue` enforces all three, so a total above everything the
@@ -95,8 +129,15 @@ impl QueueLimits {
     ///
     /// A kind with no cap of its own is unbounded, so the total is the only
     /// thing holding it and always binds.
+    ///
+    /// And both kinds have to be able to run, or there is nothing for the
+    /// total to arbitrate: with downloads capped at zero, no download ever
+    /// takes a total slot, so the seeds are queuing against each other alone.
     #[must_use]
     pub const fn total_can_bind(&self) -> bool {
+        if !self.can_run(false) || !self.can_run(true) {
+            return false;
+        }
         match (
             self.max_active_total,
             self.max_active_downloads,
@@ -128,19 +169,24 @@ impl QueueLimits {
     /// still two lines. See [`Self::total_can_bind`].
     #[must_use]
     pub const fn line_for(&self, is_seed: bool) -> Option<QueueLine> {
+        // Bounded by nothing, so there is no queue for this kind to be in.
+        // Asked through `cap_for` rather than of the per-kind field, because
+        // a kind with no cap of its own is still held by the total.
+        let Some(cap) = self.cap_for(is_seed) else {
+            return None;
+        };
+        // Capped at zero: it has no turn, so a place and a move both claim
+        // something false about it.
+        if cap == 0 {
+            return None;
+        }
         if self.total_can_bind() {
             return Some(QueueLine::Shared);
         }
         if is_seed {
-            if self.max_active_seeds.is_some() {
-                Some(QueueLine::Seeds)
-            } else {
-                None
-            }
-        } else if self.max_active_downloads.is_some() {
-            Some(QueueLine::Downloads)
+            Some(QueueLine::Seeds)
         } else {
-            None
+            Some(QueueLine::Downloads)
         }
     }
 }

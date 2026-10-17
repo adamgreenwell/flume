@@ -1829,6 +1829,100 @@ async fn a_move_stays_inside_its_own_line() {
     );
 }
 
+/// A kind capped at zero has no turn, so it has no place either.
+///
+/// `Settings::validate` says nothing about the queue limits, and a settings
+/// file that fails validation has its choices honoured rather than clamped —
+/// so a cap of zero is reachable by hand. `apply_queue` can then never admit
+/// that kind, so ranking it reported moves that changed nothing, and with a
+/// total limit set it also dragged the other kind into a shared line it was
+/// not sharing.
+#[test]
+fn a_kind_capped_at_zero_is_in_no_line() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let other_download = TorrentSummary {
+        added_at: Some(150),
+        ..queued(&"d".repeat(40), 4)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let other_seed = TorrentSummary {
+        added_at: Some(300),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
+    let mut snap = snapshot(vec![
+        download.clone(),
+        other_download.clone(),
+        seed.clone(),
+        other_seed.clone(),
+    ]);
+    let state = PolicyState::default();
+
+    // No download can run, and the seeds are held by the total alone.
+    let limits = QueueLimits {
+        max_active_downloads: Some(0),
+        max_active_seeds: None,
+        max_active_total: Some(1),
+    };
+    assert!(
+        !limits.can_run(false),
+        "nothing gets in under a cap of zero"
+    );
+    assert!(limits.can_run(true));
+    assert!(
+        !limits.total_can_bind(),
+        "a download that can never run takes no total slot, so nothing is \
+         arbitrated"
+    );
+
+    assert_eq!(
+        lines_of(&snap, &state, &limits),
+        vec![vec![seed.info_hash.clone(), other_seed.info_hash.clone()]],
+        "the seeds queue against each other; the downloads are not in a line"
+    );
+
+    for line in &lines_of(&snap, &state, &limits) {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+    assert_eq!(place(&snap, &seed.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_seed.info_hash), Some(2));
+    assert_eq!(
+        place(&snap, &download.info_hash),
+        None,
+        "a dash: it is not waiting its turn, it has no turn"
+    );
+    assert_eq!(place(&snap, &other_download.info_hash), None);
+
+    // The same holds with no total at all, which the finding did not name but
+    // is the same thing: a cap of zero is a cap of zero.
+    let no_total = QueueLimits {
+        max_active_downloads: Some(0),
+        max_active_seeds: Some(2),
+        max_active_total: None,
+    };
+    assert_eq!(
+        lines_of(&snap, &state, &no_total),
+        vec![vec![seed.info_hash.clone(), other_seed.info_hash.clone()]],
+        "still no line of downloads"
+    );
+
+    // And a total of zero stops everything, so there are no lines at all.
+    let nothing_runs = QueueLimits {
+        max_active_downloads: None,
+        max_active_seeds: None,
+        max_active_total: Some(0),
+    };
+    assert!(
+        lines_of(&snap, &state, &nothing_runs).is_empty(),
+        "nothing can run, so nobody is in a queue"
+    );
+}
+
 /// A reorder leaves the place of a torrent it does not mention.
 ///
 /// `queue_order` returns only the torrents eligible to run, so one that is
