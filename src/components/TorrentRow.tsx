@@ -1,6 +1,7 @@
 "use client";
 
 import { formatBytes, formatSpeed } from "@/lib/format";
+import { progressFraction } from "@/lib/torrent";
 import type {
   PauseReason,
   TorrentState,
@@ -71,21 +72,6 @@ const STOPPED_LABEL: Record<PauseReason, string> = {
   seedTimeReached: "Stopped at seed time limit",
   queued: "Queued, waiting for a slot",
 };
-
-/**
- * Completion fraction for a summary.
- *
- * Mirrors the Rust `progress_fraction`, including treating a finished torrent
- * as complete before its metadata resolves.
- *
- * @param t - The torrent summary.
- * @returns A value in `0..=1`.
- */
-export function progressFraction(t: TorrentSummary): number {
-  if (t.finished) return 1;
-  if (t.totalBytes === 0) return 0;
-  return Math.min(Math.max(t.progressBytes / t.totalBytes, 0), 1);
-}
 
 /**
  * A rate cell.

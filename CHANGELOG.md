@@ -27,6 +27,26 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   actually enforcing rather than the one saved on disk, so the two cannot
   silently disagree while a restart is pending.
 
+- **Sort the list by any of ten keys, either way round, and it is remembered.**
+  Name, size, progress, both speeds, ratio, time left, date added, state, and
+  activity — the download and upload rates together, which stays the default.
+  The toolbar's three chips become a picker and a direction toggle; ten chips
+  would not fit, and the overflow would have to be a menu anyway.
+
+  The ordering is a tested module rather than a comparator inline in the list,
+  because the properties are easy to get subtly wrong. It is **total**: every
+  comparison ends on the session id, so no two rows ever tie. Rows update
+  every second and the list re-sorts on each tick, so without that, equal rows
+  swap places continuously and clicking one is aiming at a moving target.
+  Rows with **no value stay last whichever way the arrow points** — "no
+  estimate" is not "finishes soonest" — and flipping the direction never
+  reorders rows that tie, because the tie-breaks do not reverse.
+
+  Choosing a key starts it in the direction it is useful in: largest first for
+  the numbers, A to Z for the name. The key names are column names, so #147
+  can read this value when sorting moves into the column headers rather than
+  having to migrate it.
+
 - **IP blocklists and allowlists.** Settings → Network takes a URL for each —
   `http://`, `https://` or `file://`. A blocklist refuses peers inside it; an
   allowlist refuses everything outside it.

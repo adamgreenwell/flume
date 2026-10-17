@@ -1,17 +1,11 @@
 "use client";
 
+import type { SortState } from "@/lib/ipc/types";
+import { SORTS, defaultDirectionFor } from "@/lib/sort";
+
 import { Button } from "./Button";
 import { Chip } from "./Chip";
 import { Icon } from "./Icon";
-
-/** How the list is ordered. */
-export type SortId = "activity" | "added" | "size";
-
-const SORTS: ReadonlyArray<{ id: SortId; name: string }> = [
-  { id: "activity", name: "Activity" },
-  { id: "added", name: "Recently added" },
-  { id: "size", name: "Size" },
-];
 
 /** Props for {@link LibraryToolbar}. */
 export interface LibraryToolbarProps {
@@ -19,10 +13,10 @@ export interface LibraryToolbarProps {
   title: string;
   /** How many rows the list is showing after filtering. */
   count: number;
-  /** The active sort. */
-  sort: SortId;
-  /** Change the sort. */
-  onSortChange: (s: SortId) => void;
+  /** The active sort key and direction. */
+  sort: SortState;
+  /** Change the sort key, its direction, or both. */
+  onSortChange: (s: SortState) => void;
   /** Whether rows are drawn at compact density. */
   compact: boolean;
   /** Toggle row density. */
@@ -59,15 +53,58 @@ export function LibraryToolbar({
       <span className="grow" />
 
       <div className="flex items-center gap-1.5" role="group" aria-label="Sort">
-        {SORTS.map((s) => (
-          <Chip
-            key={s.id}
-            selected={s.id === sort}
-            onClick={() => onSortChange(s.id)}
-          >
-            {s.name}
-          </Chip>
-        ))}
+        {/*
+          A select rather than the chips this used to be. Three keys fitted
+          across a toolbar; ten do not, and the overflow would have to be a
+          menu anyway. Native, because a custom listbox would have to
+          reimplement type-ahead, Home/End and the platform's own touch
+          handling to be no better than this.
+        */}
+        <select
+          aria-label="Sort by"
+          value={sort.by}
+          onChange={(event) => {
+            const by = event.target.value as SortState["by"];
+            // The direction resets to the one the key is useful in. Choosing
+            // "Size" and getting the smallest torrent first is a small,
+            // constant annoyance, and carrying the previous key's direction
+            // over is how that happens.
+            onSortChange({ by, direction: defaultDirectionFor(by) });
+          }}
+          className="border-line bg-bg-2 text-fg-1 hover:text-fg-0 h-[var(--flume-h-control)] rounded-md border px-2 text-[12.5px]"
+        >
+          {SORTS.map((s) => (
+            <option key={s.by} value={s.by}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        {/*
+          The direction is a word in the accessible name, not a rotation of
+          the glyph alone. An arrow that only differs by which way it points
+          is still a shape rather than a colour, so it passes -- but a screen
+          reader gets nothing from it, and this control has exactly two
+          states that must be told apart.
+        */}
+        <Chip
+          selected={false}
+          onClick={() =>
+            onSortChange({
+              by: sort.by,
+              direction: sort.direction === "asc" ? "desc" : "asc",
+            })
+          }
+          aria-label={
+            sort.direction === "asc"
+              ? "Sorted ascending, press to reverse"
+              : "Sorted descending, press to reverse"
+          }
+        >
+          <Icon
+            name={sort.direction === "asc" ? "arrow-up" : "arrow-down"}
+            size={14}
+          />
+        </Chip>
         <Chip
           selected={compact}
           onClick={onDensityToggle}

@@ -725,6 +725,43 @@ export interface GuardStatus {
   resumesInSeconds: number | null;
 }
 
+/**
+ * Which key the torrent list is ordered by. Mirrors Rust `SortBy`.
+ *
+ * The names are column names deliberately: #147 moves sorting from the
+ * toolbar into the column headers, and a value keyed to toolbar labels would
+ * need migrating when it does. `activity` is the exception — the sum of the
+ * two rate columns rather than a column of its own — and stays because it is
+ * the order someone glancing at a running client wants.
+ */
+export type SortBy =
+  | "activity"
+  | "name"
+  | "size"
+  | "progress"
+  | "downloadBps"
+  | "uploadBps"
+  | "ratio"
+  | "eta"
+  | "added"
+  | "state";
+
+/** Which way a {@link SortBy} runs. Mirrors Rust `SortDirection`. */
+export type SortDirection = "asc" | "desc";
+
+/**
+ * How the torrent list is ordered. Mirrors Rust `SortState`.
+ *
+ * A pair rather than a single id so the direction survives a relaunch too —
+ * flipping the arrow and finding it flipped back next launch reads as a bug.
+ */
+export interface SortState {
+  /** The key rows are ordered by. */
+  by: SortBy;
+  /** Which way that key runs. */
+  direction: SortDirection;
+}
+
 /** Everything the user can configure. Mirrors Rust `Settings`. */
 export interface Settings {
   /** Where downloads are written. Changing this restarts the session. */
@@ -818,6 +855,8 @@ export interface Settings {
    * reason: a preference the user re-sets on every launch is not a preference.
    */
   density: Density;
+  /** How the torrent list is ordered. Frontend-only, persisted likewise. */
+  sort: SortState;
   /** Sidebar width. Frontend-only, persisted for the same reason as theme. */
   rail: RailState;
   /**

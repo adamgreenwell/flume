@@ -371,6 +371,7 @@ const SETTINGS: Settings = {
   maxActiveTotal: null,
   theme: "system",
   density: "comfortable",
+  sort: { by: "activity", direction: "desc" },
   rail: "expanded",
   egressGuard: "off",
   egressInterface: null,

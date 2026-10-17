@@ -22,6 +22,7 @@ const SETTINGS: Settings = {
   maxActiveTotal: null,
   theme: "system",
   density: "comfortable",
+  sort: { by: "activity", direction: "desc" },
   rail: "expanded",
   egressGuard: "off",
   egressInterface: null,
@@ -32,8 +33,21 @@ describe("the definition table", () => {
   it("covers every field of Settings", () => {
     // The screen is generated from this table, so a field missing here is a
     // setting the user simply cannot reach — and nothing else would notice.
+    //
+    // Except for the fields below, which are reachable somewhere else. They
+    // live in `Settings` because that is what survives a relaunch, not
+    // because the settings screen is where they are set, and putting them on
+    // the screen as well would give the same state two controls that have to
+    // be kept in step. Listed rather than skipped, so adding a third is a
+    // decision someone makes on purpose.
+    const setElsewhere = new Set<keyof Settings>([
+      // The library toolbar: a ten-key picker and a direction toggle.
+      "sort",
+    ]);
+
     const defined = new Set(SETTING_DEFS.map((d) => d.id));
     for (const key of Object.keys(SETTINGS) as (keyof Settings)[]) {
+      if (setElsewhere.has(key)) continue;
       expect(defined.has(key), `${key} has no definition`).toBe(true);
     }
   });
