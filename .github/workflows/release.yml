@@ -276,7 +276,7 @@ jobs:
           dnf install -y \
             webkit2gtk4.1-devel openssl-devel curl wget file \
             libappindicator-gtk3-devel librsvg2-devel \
-            gcc gcc-c++ make rpm-build git xz
+            gcc gcc-c++ make rpm-build git tar xz
 
       - uses: actions/checkout@v7
         with:
@@ -333,9 +333,35 @@ jobs:
           echo "FLUME_USAGE_ENDPOINT=$ENDPOINT" >> "$GITHUB_ENV"
           echo "Collector endpoint configured."
 
+      # `cargo install tauri-cli` compiled the CLI from source inside the
+      # container on every single release, before any of Flume's own code was
+      # touched, and was reliably the leg that decided how long a release took.
+      # binstall fetches the prebuilt binary instead. Tauri publishes one for
+      # both targets this matrix builds -- `cargo-tauri-x86_64-unknown-linux-gnu`
+      # and `cargo-tauri-aarch64-unknown-linux-gnu` -- so neither leg compiles
+      # it any more.
+      #
+      # The other legs do not need this: `tauri-action` brings its own CLI, and
+      # this job cannot use that action because it runs in a container.
+      - name: Install the Tauri CLI
+        uses: cargo-bins/cargo-binstall@v1.25.3
+
       - name: Bundle the .rpm
         working-directory: src-tauri
-        run: cargo install tauri-cli --version "^2" --locked && cargo tauri build --bundles rpm
+        # `--disable-strategies compile` is the point of the change, not a
+        # detail of it: binstall's default fallback when it cannot find a
+        # prebuilt binary is to compile from source, which would quietly
+        # restore the ten minutes this removes and nothing would report it. A
+        # target tauri stops publishing should fail this leg loudly instead.
+        #
+        # `--version "^2"` is carried over unchanged, so the CLI still tracks
+        # the same major as everywhere else. `--locked` is not: it tells
+        # `cargo install` to build from the crate's own lockfile, and there is
+        # no build here to lock.
+        run: |
+          cargo binstall --no-confirm --disable-strategies compile \
+            tauri-cli --version "^2"
+          cargo tauri build --bundles rpm
 
       # Kept for dispatch runs that build no release, and as a fallback if the
       # release upload below fails.
