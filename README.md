@@ -25,7 +25,7 @@ cryptocurrency, no chat, no RSS automation, no bundled search, and no paid
 tier.
 
 > [!NOTE]
-> Flume is at 1.3.0. The core torrent lifecycle, the polish pass and the
+> Flume is at 1.4.0. The core torrent lifecycle, the polish pass and the
 > release pipeline are all built and shipped, along with seed and queue
 > limits, an opt-in tunnel guard, per-torrent peer limits and IP filtering.
 > What is not established is a line-by-line pass of the smoke-test checklist

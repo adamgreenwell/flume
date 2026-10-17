@@ -26,6 +26,29 @@ Non-torrent files are ignored rather than reported as an error.
 add dialog, Flume prefills it. The clipboard is read only at that moment, when
 you have deliberately opened the dialog — never in the background.
 
+**Where it goes.** The add sheet shows the folder the torrent will be written
+to, with a **Change** button. It defaults to wherever your last add went, so a
+run of torrents bound for the same disk is one choice rather than one per
+torrent.
+
+Changing it re-asks the two questions the sheet exists to answer, because both
+belong to the destination rather than to the torrent: free space belongs to a
+volume, and "you already have this file" belongs to a folder. Picking a
+different disk is usually _why_ you are changing it, so the figures you arrived
+with would be about the wrong volume exactly when you are relying on them.
+
+Your file selection is left alone. It starts as "everything you do not already
+have", and a file that is absent from the new folder shows unmarked and
+unselected rather than being quietly ticked back on.
+
+This is set when the torrent is added and not afterwards. Moving a torrent's
+data later is a different operation and is not built yet.
+
+If the folder has gone by the time you press Add — an unplugged drive, an
+unmounted share — the add is refused rather than redirected, and the sheet
+re-checks the folder so your next press goes somewhere that exists. Nothing is
+written, and nothing is quietly re-created at a dead mount point.
+
 ## Selecting files
 
 Each torrent has a file tree with checkboxes. Deselected files are not
@@ -36,12 +59,13 @@ checksum files when you want one image.
 
 ## Controlling torrents
 
-| Action      | Effect                                                  |
-| ----------- | ------------------------------------------------------- |
-| Pause       | Stops transfer, keeps the torrent                       |
-| Resume      | Restarts transfer from existing progress                |
-| Remove      | Removes from the list, **asks** whether to delete files |
-| Open folder | Reveals the download in your file manager               |
+| Action        | Effect                                                  |
+| ------------- | ------------------------------------------------------- |
+| Pause         | Stops transfer, keeps the torrent                       |
+| Resume        | Restarts transfer from existing progress                |
+| Remove        | Removes from the list, **asks** whether to delete files |
+| Open folder   | Reveals the download in your file manager               |
+| Move in queue | Sends a waiting torrent up or down the line — see below |
 
 Removal always asks before deleting data. Deleting a partially downloaded ISO
 by accident is a bad afternoon.
@@ -58,17 +82,19 @@ rejoins the queue and waits its turn like everything else.
 
 ## Settings
 
-| Setting         | Notes                                              |
-| --------------- | -------------------------------------------------- |
-| Download folder | Where completed and in-progress files go           |
-| Rate limits     | Global, plus per-torrent overrides                 |
-| Queue           | How many downloads, seeds and torrents run at once |
-| Seed limits     | Stop seeding at a ratio or after a time            |
-| Listen port     | Default 42221                                      |
-| UPnP            | Automatic router port forwarding                   |
-| DHT             | Required for magnet links                          |
-| Theme           | Light, dark, or follow system                      |
-| Tunnel check    | Off, warn, or hold transfer — see below            |
+| Setting               | Notes                                               |
+| --------------------- | --------------------------------------------------- |
+| Download folder       | Where completed and in-progress files go            |
+| Rate limits           | Global, plus per-torrent overrides                  |
+| Queue                 | How many downloads, seeds and torrents run at once  |
+| Connect to at most    | Peers per torrent; 128 is the engine's own default  |
+| Blocklist / allowlist | Fetch IP ranges to refuse, or to permit exclusively |
+| Seed limits           | Stop seeding at a ratio or after a time             |
+| Listen port           | Default 42221                                       |
+| UPnP                  | Automatic router port forwarding                    |
+| DHT                   | Required for magnet links                           |
+| Theme                 | Light, dark, or follow system                       |
+| Tunnel check          | Off, warn, or hold transfer — see below             |
 
 ### How many run at once
 
@@ -82,9 +108,67 @@ is the limit.
 Leave any of them unset and that limit does not apply. With none of them set
 there is no queue at all and everything runs.
 
-Torrents are admitted oldest first. A torrent that was added before Flume
+Torrents are admitted oldest first, until you say otherwise. Right-click a
+waiting torrent for **Move up in queue** and **Move down in queue**, and the
+expanded row shows its place in the line. A torrent that was added before Flume
 started recording arrival times sorts last rather than first — an unknown
 arrival time is not evidence of being early.
+
+#### There can be more than one line
+
+A place is a claim about the torrents you are competing with, so it depends on
+which limit is holding you.
+
+Cap only downloads and your seeds are not queued at all: they show a dash
+rather than a number, and offer no move action. There is no line for them to be
+in, and offering to reorder one would be offering to change something that
+cannot change.
+
+Cap both kinds and you have two lines, ranked separately — a download and a
+seed can both read "1", because each is first of what it is actually waiting
+behind. A download cannot be moved past a seed, because that would change
+neither one's turn.
+
+Only a total limit puts both kinds in one line, and only when it can actually
+bite: one download and one seed cannot breach a total of ten, so that total
+decides nothing and the two lines stay separate.
+
+A move says nothing about the line it was not in. Moving one download past
+another leaves every seed exactly where it was, including for later — if you
+raise the limits so the two kinds end up sharing a line, the order you see is
+the one you would expect rather than every download suddenly ahead of every
+seed.
+
+### How many peers per torrent
+
+**Connect to at most** caps connected peers for each torrent. The default is
+128, which is worth being plain about: that was always the ceiling. Flume used
+to pass the engine nothing for this, and nothing did not mean unlimited — the
+engine fell back to 128 on its own. So this setting moves a limit that was
+already there rather than introducing one, and upgrading changes how no
+existing install behaves.
+
+It is per torrent, because that is the only shape the engine offers. Ten
+torrents at 128 is a ceiling of 1280 connections, so raise it with that
+multiplication in mind rather than the single number.
+
+### Refusing or restricting addresses
+
+**Blocklist** fetches a list of IP ranges to refuse. **Allowlist** fetches one
+to permit _exclusively_ — everything not on it is refused, which is a much
+stronger statement and easy to set by accident.
+
+Both are fetched when the torrent session starts, so a change takes effect on
+the next restart rather than immediately, and Flume restarts the session for
+you when you save one. A list that cannot be fetched stops the session from
+starting at all, which is deliberate: silently running with no filter is the
+one outcome worse than not running.
+
+The status panel reports how many ranges each list actually loaded. That number
+is the only honest confirmation, because a file that downloads cleanly but
+parses to nothing loads zero ranges without reporting an error — so "it saved"
+and "it is filtering" are different claims, and only the count settles the
+second.
 
 ## Only transfer through a tunnel
 

@@ -8,6 +8,8 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-17
+
 ### Added
 
 - **A download folder per torrent.** The add sheet shows where the torrent
@@ -327,6 +329,8 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.4.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.0
+[1.3.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.3.0
 [1.2.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.2.0
 [1.1.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.1.0
 [r644]: https://github.com/ikatson/rqbit/pull/644

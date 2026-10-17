@@ -22,7 +22,7 @@ all the effort can go into the interface.
 
 ## Status
 
-Phases 0 and 1 are complete, and 1.3.0 has shipped. Torrents can be added by
+Phases 0 and 1 are complete, and 1.4.0 has shipped. Torrents can be added by
 magnet or file with a select-files-first flow, paused, resumed and removed;
 state survives a restart without re-hashing. On top of that sits the design
 work Phase 1 did not ask for — swarm health, the limiting-factor panel, the
