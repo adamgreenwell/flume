@@ -39,11 +39,15 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   place in the line, and shows it _only_ when the queue holds one: a dash
   would imply the queue has an opinion about every torrent, and it does not.
 
-  That is decided per kind, which is worth knowing if you limit only one of
-  them. A cap on downloads says nothing about which seed runs next, so with
-  only that set your seeds show a dash and offer no move action — there is no
-  line for them to be in. A total limit puts both kinds back in one line,
-  because under it a download starting does keep a seed waiting.
+  **There can be more than one line, and that is worth knowing if you set
+  limits per kind.** A cap on downloads says nothing about which seed runs
+  next, so with only that set your seeds show a dash and offer no move
+  action — there is no line for them to be in. Cap both kinds and you have two
+  lines, ranked separately: a download and a seed can both read "1", because
+  each is first of what it is actually waiting behind, and a download cannot
+  be moved past a seed because doing so would change neither one's turn. Only
+  a total limit puts them in one line together, because under it a download
+  starting does keep a seed waiting.
 
   A torrent you started past the limits now says so, as **Queue: Started by
   you**. It runs on top of the limits rather than inside them — neither

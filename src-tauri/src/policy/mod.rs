@@ -52,7 +52,7 @@ use std::collections::HashSet;
 
 use crate::engine::{PauseReason, TelemetrySnapshot, TorrentState, TorrentSummary};
 
-pub use rules::{QueueLimits, Rules, TorrentRules};
+pub use rules::{QueueLimits, QueueLine, Rules, TorrentRules};
 pub use state::PolicyState;
 
 /// Something the telemetry loop should do.
@@ -266,30 +266,49 @@ pub fn queue_order<'a>(
     eligible
 }
 
-/// The queue as the user sees it and can reorder it.
+/// The queue as the user sees it, split into the lines it actually runs.
 ///
-/// Narrower than [`queue_order`], and the difference is the point.
+/// Narrower than [`queue_order`], and split, and both differences matter.
 /// `queue_order` is *admission* order over every eligible torrent, because
 /// admission has to count a seed against the total limit whether or not a
-/// seed limit exists. A displayed place and a move action mean something
-/// else: that this torrent is waiting its turn among these others, and that
-/// moving it changes which goes next.
+/// seed limit exists. A displayed place and a move action claim something
+/// else: that this torrent is waiting its turn among *these* others, and that
+/// moving it changes which of them goes next.
 ///
-/// With only `max_active_downloads` set, seed admission is unconstrained, so
-/// a seed is not waiting for anything and a download moving past one changes
-/// nothing about its priority against any other download. Those torrents are
-/// therefore not in the line at all -- see [`QueueLimits::governs`].
+/// So the torrents are grouped by the limit deciding between them --
+/// see [`QueueLimits::line_for`]. Two kinds counted against separate limits
+/// are two lines, ranked independently, because a download overtaking a seed
+/// changes neither one's priority against anything it is competing with. A
+/// kind no limit governs is in no line at all. No limits at all is the
+/// degenerate case of that and needs no check of its own: every line comes
+/// back empty, so nothing is stamped and nothing can be moved.
 ///
-/// Filtered after the sort, so whatever survives keeps its admission order.
+/// Grouped after the sort, so each line keeps its admission order. At most
+/// one shape is ever non-empty -- a total limit puts everything in
+/// [`QueueLine::Shared`] -- but that falls out of `line_for` rather than
+/// being relied on here.
 #[must_use]
-pub fn queue_line<'a>(
+pub fn queue_lines<'a>(
     snapshot: &'a TelemetrySnapshot,
     state: &PolicyState,
     limits: &QueueLimits,
-) -> Vec<&'a TorrentSummary> {
-    queue_order(snapshot, state)
+) -> Vec<Vec<&'a TorrentSummary>> {
+    let mut shared = Vec::new();
+    let mut downloads = Vec::new();
+    let mut seeds = Vec::new();
+
+    for torrent in queue_order(snapshot, state) {
+        match limits.line_for(torrent.finished) {
+            Some(QueueLine::Shared) => shared.push(torrent),
+            Some(QueueLine::Downloads) => downloads.push(torrent),
+            Some(QueueLine::Seeds) => seeds.push(torrent),
+            None => {}
+        }
+    }
+
+    [shared, downloads, seeds]
         .into_iter()
-        .filter(|torrent| limits.governs(torrent.finished))
+        .filter(|line| !line.is_empty())
         .collect()
 }
 

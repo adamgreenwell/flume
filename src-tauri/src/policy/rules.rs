@@ -31,6 +31,22 @@ impl TorrentRules {
     }
 }
 
+/// One line of torrents waiting on the same limit.
+///
+/// Which line a torrent is in decides what a place and a move action mean:
+/// both are claims about the torrents it is actually competing with. Two
+/// kinds counted against separate limits are not competing, so ranking them
+/// together would report a move that changed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueLine {
+    /// Downloads and seeds together, under `max_active_total`.
+    Shared,
+    /// Downloads alone, under `max_active_downloads`.
+    Downloads,
+    /// Seeds alone, under `max_active_seeds`.
+    Seeds,
+}
+
 /// How many torrents may run at once.
 ///
 /// Session-wide rather than per-torrent: a slot limit is a statement about
@@ -68,22 +84,34 @@ impl QueueLimits {
             && self.max_active_total.is_none()
     }
 
-    /// Whether any limit is deciding between torrents of this kind.
+    /// Which queue line a torrent of this kind waits in, if any.
     ///
-    /// A limit on downloads says nothing about which seed runs next, so with
-    /// only `max_active_downloads` set there is no line of seeds to be in --
-    /// and ranking them anyway would have the UI offer to reorder one that
-    /// does not exist. The total limit governs both kinds, because under it
-    /// a download starting does keep a seed waiting.
+    /// Not a yes-or-no question, which is the mistake this replaces. A limit
+    /// on downloads says nothing about which seed runs next, so with only
+    /// `max_active_downloads` set there is no line of seeds to be in. But
+    /// with *both* per-kind limits set and no total, `apply_queue` counts the
+    /// two kinds against separate counters -- so they are two lines, not one,
+    /// and moving a download past a seed would change both their displayed
+    /// places without changing which download or seed runs next.
+    ///
+    /// The total limit is the only thing that makes them compete, because
+    /// under it a download starting does keep a seed waiting. Then, and only
+    /// then, they share one line.
     #[must_use]
-    pub const fn governs(&self, is_seed: bool) -> bool {
+    pub const fn line_for(&self, is_seed: bool) -> Option<QueueLine> {
         if self.max_active_total.is_some() {
-            return true;
+            return Some(QueueLine::Shared);
         }
         if is_seed {
-            self.max_active_seeds.is_some()
+            if self.max_active_seeds.is_some() {
+                Some(QueueLine::Seeds)
+            } else {
+                None
+            }
+        } else if self.max_active_downloads.is_some() {
+            Some(QueueLine::Downloads)
         } else {
-            self.max_active_downloads.is_some()
+            None
         }
     }
 }

@@ -740,19 +740,27 @@ impl AppState {
         // Collected before the mutation so the immutable borrow of the
         // snapshot ends first.
         //
-        // `queue_line` rather than `queue_order`: a place is only meaningful
-        // where a limit is deciding between torrents of that kind. No limits
-        // at all is the degenerate case of that and needs no separate check
-        // -- it yields an empty line, so nothing is stamped.
-        let order: Vec<String> = {
+        // `queue_lines` rather than `queue_order`: a place is only meaningful
+        // among the torrents a limit is actually deciding between, and two
+        // kinds counted against separate limits are two lines. Each is
+        // ranked from one within itself, so a download and a seed can both
+        // be first -- which is the truth when nothing makes them compete.
+        //
+        // No limits at all is the degenerate case and needs no check of its
+        // own: there are no lines, so nothing is stamped.
+        let lines: Vec<Vec<String>> = {
             let policy = self.policy_state.read().await;
-            crate::policy::queue_line(&snapshot, &policy, &limits)
+            crate::policy::queue_lines(&snapshot, &policy, &limits)
                 .into_iter()
-                .map(|t| t.info_hash.clone())
+                .map(|line| line.into_iter().map(|t| t.info_hash.clone()).collect())
                 .collect()
         };
 
-        crate::policy::stamp_queue_places(&mut snapshot, &order);
+        // Per line, which composes because `stamp_queue_places` writes only
+        // the hashes it is given and leaves the rest alone.
+        for line in &lines {
+            crate::policy::stamp_queue_places(&mut snapshot, line);
+        }
         snapshot
     }
 
@@ -849,11 +857,22 @@ impl AppState {
 
         let next = {
             let policy = self.policy_state.read().await;
-            // The same line the UI shows. Reordering has to be over exactly
-            // the set the user was looking at, and a torrent whose kind no
-            // limit governs is not in it -- so moving one is refused below
-            // rather than silently writing a place nothing consults.
-            let order: Vec<String> = crate::policy::queue_line(snapshot, &policy, &limits)
+            // The torrent's own line, which is the set the user was looking
+            // at. A move is a claim about what goes next, so it has to be
+            // within the group competing for the same slots: across two
+            // independently limited kinds it would report success and change
+            // nothing. A torrent in no line at all is simply not found here,
+            // which is already a refusal.
+            let Some(line) = crate::policy::queue_lines(snapshot, &policy, &limits)
+                .into_iter()
+                .find(|line| {
+                    line.iter()
+                        .any(|torrent| torrent.info_hash.eq_ignore_ascii_case(&hash))
+                })
+            else {
+                return false;
+            };
+            let order: Vec<String> = line
                 .into_iter()
                 .map(|torrent| torrent.info_hash.clone())
                 .collect();

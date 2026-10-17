@@ -87,6 +87,26 @@ fn snapshot(torrents: Vec<TorrentSummary>) -> TelemetrySnapshot {
     }
 }
 
+/// The queue lines as info hashes, which is what the assertions compare.
+fn lines_of(
+    snap: &TelemetrySnapshot,
+    state: &PolicyState,
+    limits: &QueueLimits,
+) -> Vec<Vec<String>> {
+    flume_lib::policy::queue_lines(snap, state, limits)
+        .into_iter()
+        .map(|line| line.into_iter().map(|t| t.info_hash.clone()).collect())
+        .collect()
+}
+
+/// A torrent's stamped place, or `None` for the dash.
+fn place(snap: &TelemetrySnapshot, hash: &str) -> Option<u32> {
+    snap.torrents
+        .iter()
+        .find(|t| t.info_hash == hash)
+        .and_then(|t| t.queue_position)
+}
+
 fn ratio_limit(limit: f64) -> Rules {
     Rules {
         global: TorrentRules {
@@ -1507,7 +1527,7 @@ fn a_torrent_outside_the_queue_has_no_place() {
     );
 }
 
-/// A kind no limit governs is not in the line at all.
+/// A kind no limit governs is not in any line.
 ///
 /// With only `max_active_downloads` set, seed admission is unconstrained: a
 /// seed is not waiting for anything, and a download moving past one changes
@@ -1515,18 +1535,18 @@ fn a_torrent_outside_the_queue_has_no_place() {
 /// places had the UI offer a move action that could not affect what ran next.
 #[test]
 fn a_kind_with_no_limit_has_no_line_to_be_in() {
-    let downloading = |hash: &str, id: usize, at: u64| TorrentSummary {
-        added_at: Some(at),
-        ..queued(hash, id)
+    let early_download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
     };
-    let seeding_now = |hash: &str, id: usize, at: u64| TorrentSummary {
-        added_at: Some(at),
-        ..seeding(hash, id, 0, 1_000)
+    let late_download = TorrentSummary {
+        added_at: Some(400),
+        ..queued(&"b".repeat(40), 2)
     };
-
-    let early_download = downloading(&"a".repeat(40), 1, 100);
-    let late_download = downloading(&"b".repeat(40), 2, 400);
-    let seed = seeding_now(&"c".repeat(40), 3, 200);
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
     let mut snap = snapshot(vec![
         early_download.clone(),
         seed.clone(),
@@ -1541,7 +1561,7 @@ fn a_kind_with_no_limit_has_no_line_to_be_in() {
     };
 
     // Admission still counts every eligible torrent, seeds included: that is
-    // what the total limit would need, and it is not this function's call.
+    // what a total limit would need, and it is not this function's call.
     let admission: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
         .into_iter()
         .map(|t| t.info_hash.clone())
@@ -1551,37 +1571,91 @@ fn a_kind_with_no_limit_has_no_line_to_be_in() {
         "admission order is over every eligible torrent"
     );
 
-    // The line the user sees is not.
-    let line: Vec<String> = flume_lib::policy::queue_line(&snap, &state, &limits)
-        .into_iter()
-        .map(|t| t.info_hash.clone())
-        .collect();
+    // The lines the user sees are not.
+    let lines = lines_of(&snap, &state, &limits);
     assert_eq!(
-        line,
-        vec![
+        lines,
+        vec![vec![
             early_download.info_hash.clone(),
-            late_download.info_hash.clone()
-        ],
-        "only the downloads, and in admission order"
+            late_download.info_hash.clone(),
+        ]],
+        "one line, the downloads, in admission order"
     );
 
-    flume_lib::policy::stamp_queue_places(&mut snap, &line);
-    let place = |hash: &str| {
-        snap.torrents
-            .iter()
-            .find(|t| t.info_hash == hash)
-            .and_then(|t| t.queue_position)
-    };
-    assert_eq!(place(&early_download.info_hash), Some(1));
-    assert_eq!(place(&late_download.info_hash), Some(2));
+    for line in &lines {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+    assert_eq!(place(&snap, &early_download.info_hash), Some(1));
+    assert_eq!(place(&snap, &late_download.info_hash), Some(2));
     assert_eq!(
-        place(&seed.info_hash),
+        place(&snap, &seed.info_hash),
         None,
         "a dash, so the UI offers no move action for a seed nothing is queuing"
     );
 }
 
-/// A total limit puts both kinds back in one line.
+/// Two per-kind limits are two lines, not one.
+///
+/// `apply_queue` counts downloads and seeds against separate counters, so
+/// with both limits set and no total they are not competing. Ranking them
+/// together let a download move past a seed, which reported success and
+/// changed both their displayed places without changing which download or
+/// seed ran next.
+#[test]
+fn independent_per_kind_limits_keep_their_own_lines() {
+    let download = TorrentSummary {
+        added_at: Some(100),
+        ..queued(&"a".repeat(40), 1)
+    };
+    let other_download = TorrentSummary {
+        added_at: Some(400),
+        ..queued(&"d".repeat(40), 4)
+    };
+    let seed = TorrentSummary {
+        added_at: Some(200),
+        ..seeding(&"b".repeat(40), 2, 0, 1_000)
+    };
+    let other_seed = TorrentSummary {
+        added_at: Some(300),
+        ..seeding(&"c".repeat(40), 3, 0, 1_000)
+    };
+    let mut snap = snapshot(vec![
+        download.clone(),
+        seed.clone(),
+        other_seed.clone(),
+        other_download.clone(),
+    ]);
+
+    let state = PolicyState::default();
+    let limits = QueueLimits {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        max_active_total: None,
+    };
+
+    assert_eq!(
+        lines_of(&snap, &state, &limits),
+        vec![
+            vec![download.info_hash.clone(), other_download.info_hash.clone()],
+            vec![seed.info_hash.clone(), other_seed.info_hash.clone()],
+        ],
+        "downloads and seeds are separate lines when nothing makes them compete"
+    );
+
+    for line in &lines_of(&snap, &state, &limits) {
+        flume_lib::policy::stamp_queue_places(&mut snap, line);
+    }
+
+    // Each line is ranked from one within itself. A download and a seed both
+    // reading "1" is the honest answer: each is first of what it is actually
+    // waiting behind.
+    assert_eq!(place(&snap, &download.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_download.info_hash), Some(2));
+    assert_eq!(place(&snap, &seed.info_hash), Some(1));
+    assert_eq!(place(&snap, &other_seed.info_hash), Some(2));
+}
+
+/// A total limit puts both kinds into one line.
 ///
 /// Under it a download starting does keep a seed waiting, so they are
 /// competing for the same slots and ordering one against the other means
@@ -1605,21 +1679,83 @@ fn a_total_limit_governs_both_kinds() {
         max_active_total: Some(1),
     };
 
-    let line: Vec<String> = flume_lib::policy::queue_line(&snap, &state, &limits)
-        .into_iter()
-        .map(|t| t.info_hash.clone())
-        .collect();
     assert_eq!(
-        line,
-        vec![download.info_hash.clone(), seed.info_hash.clone()],
-        "both kinds, because the total limit decides between them"
+        lines_of(&snap, &state, &limits),
+        vec![vec![download.info_hash.clone(), seed.info_hash.clone()]],
+        "one line, because the total limit decides between them"
     );
 
-    // And no limits at all is no line, which needs no separate check for it.
-    let none = flume_lib::policy::queue_line(&snap, &state, &QueueLimits::default());
+    // And no limits at all is no lines, which needs no check of its own.
     assert!(
-        none.is_empty(),
+        lines_of(&snap, &state, &QueueLimits::default()).is_empty(),
         "with nothing limited there is no queue to be in"
+    );
+}
+
+/// A move is within the torrent's own line, and refused across lines.
+///
+/// `move_in_queue` had no test at all, which is worth recording given it is
+/// the whole of the reorder feature: it derives the order, swaps inside it,
+/// and writes both the policy state and the library under one lock. With two
+/// independently limited kinds, a download at the bottom of its line is
+/// followed in *admission* order by a seed — so a move that walked admission
+/// order would report success and change nothing about what runs next.
+#[tokio::test]
+async fn a_move_stays_inside_its_own_line() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        max_active_seeds: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let first_download = "a".repeat(40);
+    let second_download = "d".repeat(40);
+    let seed = "b".repeat(40);
+
+    let snap = snapshot(vec![
+        TorrentSummary {
+            added_at: Some(100),
+            ..queued(&first_download, 1)
+        },
+        TorrentSummary {
+            added_at: Some(200),
+            ..seeding(&seed, 2, 0, 1_000)
+        },
+        TorrentSummary {
+            added_at: Some(400),
+            ..queued(&second_download, 4)
+        },
+    ]);
+
+    // Promoting the later download over the earlier one is a real move.
+    assert!(
+        state.move_in_queue(&snap, &second_download, true).await,
+        "a download can be moved within the line of downloads"
+    );
+    let policy = state.policy_state().await;
+    assert!(
+        policy.queue_position(&second_download) < policy.queue_position(&first_download),
+        "and the stored places reflect it"
+    );
+
+    // The only seed cannot move: there is nothing in its line to move past,
+    // even though downloads sit either side of it in admission order.
+    assert!(
+        !state.move_in_queue(&snap, &seed, true).await,
+        "a lone seed has nobody to overtake"
+    );
+    assert!(
+        !state.move_in_queue(&snap, &seed, false).await,
+        "in either direction"
+    );
+
+    // And the earlier download, now last of two, cannot move down past the
+    // seed that follows it in admission order.
+    assert!(
+        !state.move_in_queue(&snap, &first_download, false).await,
+        "the end of a line is the end, whatever admission order says next"
     );
 }
 
