@@ -880,11 +880,14 @@ impl AppState {
         // taken, which is the ordering `set_forced` established and the
         // reason this method does not simply hold the policy write across
         // everything.
-        self.policy_state.write().await.set_queue_order(&next);
+        // The policy state decides the numbering and the library is written
+        // with the same pairs. Deriving it twice is what the two stores
+        // disagreeing looks like from the inside.
+        let assigned = self.policy_state.write().await.set_queue_order(&next);
 
         let json = {
             let mut library = self.library.write().await;
-            library.set_queue_order(&next);
+            library.set_queue_positions(&assigned);
             library.to_json()
         };
         self.persist_library(json);

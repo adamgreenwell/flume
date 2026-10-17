@@ -1580,6 +1580,86 @@ fn a_paused_torrent_keeps_its_place_while_the_rest_are_reordered() {
     );
 }
 
+/// A reorder does not hand out a slot an absent torrent is already holding.
+///
+/// Keeping the absent torrent's old number is not enough on its own. A newer
+/// torrent promoted to the front and then paused would share slot 0 with
+/// whichever torrent the reorder put first, and `queue_order` breaks equal
+/// places by arrival time — which never favours the newer one. So the user's
+/// explicit "this one first" would lose to arrival order, silently, and stay
+/// lost.
+#[test]
+fn a_promoted_torrent_that_is_paused_does_not_lose_its_slot_to_an_older_one() {
+    // Promoted to the front by the user, then paused by them, and the newest
+    // of the three — so every tie goes against it.
+    let promoted = "c".repeat(40);
+    let older = "b".repeat(40);
+    let middling = "a".repeat(40);
+
+    let mut state = PolicyState::default().with_queue_positions(
+        [
+            (promoted.clone(), 0),
+            (middling.clone(), 1),
+            (older.clone(), 2),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
+    let arrived = |hash: &str, id: usize, at: u64| TorrentSummary {
+        added_at: Some(at),
+        ..seeding(hash, id, 0, 1_000)
+    };
+
+    let paused = TorrentSummary {
+        state: TorrentState::Paused,
+        ..arrived(&promoted, 1, 200)
+    };
+    let snap = snapshot(vec![
+        paused,
+        arrived(&middling, 2, 100),
+        arrived(&older, 3, 50),
+    ]);
+
+    let eligible: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(eligible, vec![middling.clone(), older.clone()]);
+
+    // The user promotes `older` over `middling`, which says nothing about the
+    // paused one.
+    let assigned = state.set_queue_order(&[older.clone(), middling.clone()]);
+    assert_eq!(
+        assigned,
+        vec![(older.clone(), 1), (middling.clone(), 2)],
+        "slot 0 is taken, so the reorder starts at 1 rather than over the top"
+    );
+    assert_eq!(
+        state.queue_position(&promoted),
+        Some(0),
+        "and the promoted torrent keeps the slot it was given"
+    );
+
+    // Resumed, it is still first. Numbering from zero would have put `older`
+    // at 0 beside it, and the arrival-time tie-break would have gone to
+    // `older`.
+    let snap = snapshot(vec![
+        arrived(&promoted, 1, 200),
+        arrived(&middling, 2, 100),
+        arrived(&older, 3, 50),
+    ]);
+    let resumed: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        resumed,
+        vec![promoted.clone(), older.clone(), middling.clone()],
+        "an explicit place must not lose to arrival order"
+    );
+}
+
 /// A removed torrent's queue place is pruned with the rest of its state.
 ///
 /// `retain` drops the bookkeeping for torrents that are gone. Queue places

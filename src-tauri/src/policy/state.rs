@@ -1,6 +1,6 @@
 //! Bookkeeping that policy rules need to carry between evaluations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -67,30 +67,61 @@ impl PolicyState {
         self
     }
 
-    /// Renumbers the torrents the order names, and leaves the rest alone.
+    /// Places the torrents the order names, without taking a slot that a
+    /// torrent outside it already holds.
     ///
-    /// Not wholesale, and the distinction is the whole of it: the order handed
-    /// in is `queue_order`'s result, which holds only the torrents *eligible*
-    /// to run. One that is manually paused, stopped by a limit, or forced is
-    /// absent from it while still holding a place the user gave it -- so
-    /// replacing the map would drop that place the moment anything else was
-    /// reordered, and the torrent would sort last when it came back.
+    /// Returns exactly what it assigned, so the library can be written with
+    /// the same numbers. That return value is the point: these places live in
+    /// two stores -- here, for the next tick, and in `library.json`, to
+    /// survive a restart -- and two independent numberings drift the moment
+    /// either one changes. One numbering, computed here, applied to both.
     ///
-    /// `Library::set_queue_order` leaves unnamed records alone for the same
-    /// reason, and the two have to agree. The library is read into this map
-    /// only in `AppState::new`, so a divergence does not stay visible: it
-    /// lasts until the next launch and then corrects itself, which is worse
-    /// than either answer on its own.
+    /// # Why not simply renumber from zero
     ///
-    /// An omitted torrent keeps its old number, which may now tie with a
-    /// renumbered one. `queue_order` breaks ties on arrival time and then on
-    /// info hash, so the result is still a total order, and the tie leaves
-    /// the absent torrent next to where it was rather than at either end.
-    pub fn set_queue_order(&mut self, order: &[String]) {
-        for (at, hash) in order.iter().enumerate() {
-            self.queue_positions
-                .insert(hash.clone(), u32::try_from(at).unwrap_or(u32::MAX));
+    /// The order handed in is `queue_order`'s result, which holds only the
+    /// torrents *eligible* to run. One that is manually paused, stopped by a
+    /// limit, or forced is absent from it while still holding a place the user
+    /// gave it, so renumbering the eligible ones from zero writes over that
+    /// place.
+    ///
+    /// Keeping the absent torrent's old number is not enough either, and this
+    /// is the subtle part: a newer torrent promoted to the front and then
+    /// paused would share slot 0 with whichever torrent the reorder put
+    /// first, and `queue_order` breaks equal places by arrival time -- which
+    /// never favours the newer one. The user's explicit "this first" would
+    /// lose to arrival order, permanently and silently.
+    ///
+    /// So the absent torrents keep their slots and the eligible ones are
+    /// distributed around them. No two positioned torrents end up equal, and
+    /// a torrent nobody mentioned comes back exactly where it was.
+    pub fn set_queue_order(&mut self, order: &[String]) -> Vec<(String, u32)> {
+        // Slots held by torrents this order says nothing about.
+        let held: BTreeSet<u32> = self
+            .queue_positions
+            .iter()
+            .filter(|(hash, _)| !order.iter().any(|named| named == *hash))
+            .map(|(_, at)| *at)
+            .collect();
+
+        let mut assigned = Vec::with_capacity(order.len());
+        let mut slot: u32 = 0;
+        for hash in order {
+            // Bounded by `slot < u32::MAX` rather than left to run: without
+            // it, a held `u32::MAX` would spin here for ever. Reaching it
+            // needs four billion torrents, and the degenerate answer -- the
+            // remainder all land on `u32::MAX` -- is one `queue_order`
+            // already breaks by arrival time.
+            while slot < u32::MAX && held.contains(&slot) {
+                slot += 1;
+            }
+            assigned.push((hash.clone(), slot));
+            slot = slot.saturating_add(1);
         }
+
+        for (hash, at) in &assigned {
+            self.queue_positions.insert(hash.clone(), *at);
+        }
+        assigned
     }
 
     /// Where the user put this torrent, if they have.
