@@ -98,6 +98,15 @@ export function AddTorrentDialog({
   const [folder, setFolder] = useState<string | null>(null);
   const [checked, setChecked] = useState<DestinationPreflight | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
+  // Whether a check is in flight, and which folder the latest one is for.
+  //
+  // Both are needed and they answer different questions. The flag gates
+  // confirmation, because adding against the previous folder's free space is
+  // exactly the mistake this sheet exists to prevent. The ref discards a
+  // reply that is no longer about the chosen folder, because two picks in
+  // quick succession can land out of order and the slower one would win.
+  const [checking, setChecking] = useState(false);
+  const checkingFor = useRef<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   // Kept in a ref so the unmount cleanup does not need `preview` as a dep,
@@ -107,25 +116,66 @@ export function AddTorrentDialog({
   const describe = (caught: unknown, fallback: string) =>
     isCommandError(caught) ? caught.message : fallback;
 
-  /** Applies a successfully resolved preview. */
-  const applyPreview = useCallback((resolved: TorrentPreview) => {
-    setPreview(resolved);
-    pendingHashRef.current = resolved.infoHash;
-    // Everything selected by default except what is already on disk. The
-    // common case is wanting the whole torrent, and starting from nothing
-    // selected makes the primary action dead on arrival — but re-fetching a
-    // file the user already has is the one thing an add sheet exists to
-    // prevent, so those start off and the footer says why.
-    setSelected(
-      new Set(
-        resolved.files
-          .filter((f) => !resolved.alreadyOnDisk[f.index])
-          .map((f) => f.index),
-      ),
-    );
-    setError(null);
-    setIsResolving(false);
+  const checkFolder = useCallback(async (hash: string, dir: string) => {
+    checkingFor.current = dir;
+    setChecking(true);
+    setFolderError(null);
+    try {
+      const result = await destinationPreflight(hash, dir);
+      // Superseded while this was in flight; the newer check owns the state.
+      if (checkingFor.current !== dir) return;
+      setChecked(result);
+    } catch (caught: unknown) {
+      if (checkingFor.current !== dir) return;
+      // The figures are dropped rather than left describing the old folder.
+      // An honest "unknown" is what `PreflightTiles` renders for null, and
+      // it beats a number about somewhere else.
+      setChecked({ freeBytes: null, alreadyOnDisk: [] });
+      setFolderError(describe(caught, "Could not check that folder."));
+    } finally {
+      if (checkingFor.current === dir) setChecking(false);
+    }
   }, []);
+
+  /** Applies a successfully resolved preview. */
+  const applyPreview = useCallback(
+    (resolved: TorrentPreview) => {
+      setPreview(resolved);
+      pendingHashRef.current = resolved.infoHash;
+
+      // The remembered folder becomes the real destination, not just the one
+      // on display. Leaving `folder` null while showing it meant the sheet
+      // named one folder and the add wrote to another -- and the preflight
+      // described the one it was not using. Only when it actually differs
+      // from where the session would put it: equal values should stay `null`
+      // so the engine's own default remains the single source of that path.
+      if (defaultFolder && defaultFolder !== resolved.savePath) {
+        setFolder(defaultFolder);
+        void checkFolder(resolved.infoHash, defaultFolder);
+      }
+
+      // Everything selected by default except what is already on disk. The
+      // common case is wanting the whole torrent, and starting from nothing
+      // selected makes the primary action dead on arrival — but re-fetching
+      // a file the user already has is the one thing an add sheet exists to
+      // prevent, so those start off and the footer says why.
+      //
+      // Against the *preview's* answer, which is about the session folder. A
+      // remembered folder is checked just above and its reply arrives later;
+      // it updates the marks, not this selection, for the reason the picker
+      // does not either -- see `chooseFolder`.
+      setSelected(
+        new Set(
+          resolved.files
+            .filter((f) => !resolved.alreadyOnDisk[f.index])
+            .map((f) => f.index),
+        ),
+      );
+      setError(null);
+      setIsResolving(false);
+    },
+    [defaultFolder, checkFolder],
+  );
 
   /** Records a failed resolution. */
   const failPreview = useCallback((caught: unknown) => {
@@ -222,16 +272,7 @@ export function AddTorrentDialog({
     if (typeof picked !== "string" || !preview) return;
 
     setFolder(picked);
-    setFolderError(null);
-    try {
-      setChecked(await destinationPreflight(preview.infoHash, picked));
-    } catch (caught: unknown) {
-      // The figures are dropped rather than left describing the old folder.
-      // An honest "unknown" is what `PreflightTiles` renders for null, and
-      // it beats a number about somewhere else.
-      setChecked({ freeBytes: null, alreadyOnDisk: [] });
-      setFolderError(describe(caught, "Could not check that folder."));
-    }
+    await checkFolder(preview.infoHash, picked);
   };
 
   const confirm = async () => {
@@ -559,13 +600,20 @@ export function AddTorrentDialog({
             variant="primary"
             size="dialog"
             onClick={() => void confirm()}
-            disabled={selected.size === 0 || isAdding}
+            // Also while a folder check is in flight. Confirming then would
+            // start the torrent against the *previous* folder's free space
+            // and on-disk marks, which is the decision this sheet exists to
+            // inform -- and the figures beside the button would be describing
+            // somewhere else at the moment it was pressed.
+            disabled={selected.size === 0 || isAdding || checking}
           >
             {isAdding
               ? "Starting…"
-              : selected.size === 0
-                ? "Nothing selected"
-                : `Add ${selected.size} ${selected.size === 1 ? "file" : "files"} · ${formatBytes(chosenBytes)}`}
+              : checking
+                ? "Checking that folder…"
+                : selected.size === 0
+                  ? "Nothing selected"
+                  : `Add ${selected.size} ${selected.size === 1 ? "file" : "files"} · ${formatBytes(chosenBytes)}`}
           </Button>
         </div>
       </div>
