@@ -139,6 +139,22 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const writes = useRef<Promise<unknown>>(Promise.resolve());
 
   /**
+   * How many edits have been made, so a reply can tell if it is the latest.
+   *
+   * The queue fixes the order writes are *sent* in and not what is installed
+   * when they come back. Each reply is the whole settings object as the
+   * backend had it at that moment, so an earlier reply does not contain a
+   * later edit -- that edit has not been sent yet, it is behind this one in
+   * the queue. Installing it anyway snaps the later control back to its old
+   * value until its own write finishes, which for a filter URL means the
+   * length of an engine restart.
+   *
+   * So a reply is installed only while it is still the newest word. A later
+   * edit installs its own reply, which does contain both.
+   */
+  const edits = useRef(0);
+
+  /**
    * Writes one field and records it as an undoable change.
    *
    * The optimistic update is deliberate: a control that waits for a round trip
@@ -150,6 +166,10 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       const previous = settings[def.id];
       if (previous === next) return;
+
+      const mine = ++edits.current;
+      /** Whether this edit is still the most recent one made. */
+      const newest = () => edits.current === mine;
 
       const updated = { ...settings, [def.id]: next } as Settings;
       setSettings(updated);
@@ -188,17 +208,28 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             updateSettings({ ...current, [def.id]: next } as Settings),
           );
         writes.current = write.catch(() => {});
-        setSettings(await write);
+        const authoritative = await write;
+        // Discarded rather than installed if something has been typed since.
+        // The newer edit is holding optimistic state this reply predates,
+        // and its own reply will carry both.
+        if (newest()) setSettings(authoritative);
       } catch (caught: unknown) {
         // Put the control back -- but to what the backend holds, not to the
         // snapshot this render closed over. A failed session change is
         // rolled back on the Rust side, and that rollback is the truth; the
         // local snapshot still carries the value that was rejected.
-        const authoritative = await getSettings().catch(() => settings);
-        setSettings(authoritative);
-        if (def.id === "theme") applyTheme(authoritative.theme);
-        if (def.id === "density") applyDensity(authoritative.density);
-        if (def.id === "rail") applyRail(authoritative.rail);
+        // Same restraint on the failure path, and for the same reason: the
+        // backend state after this write was rolled back does not contain a
+        // later edit either. The error is reported regardless -- the user
+        // needs to know this change did not stick, whatever they have typed
+        // since.
+        if (newest()) {
+          const rolled = await getSettings().catch(() => settings);
+          setSettings(rolled);
+          if (def.id === "theme") applyTheme(rolled.theme);
+          if (def.id === "density") applyDensity(rolled.density);
+          if (def.id === "rail") applyRail(rolled.rail);
+        }
         setChanges((current) => current.slice(0, -1));
         setError(
           isCommandError(caught)

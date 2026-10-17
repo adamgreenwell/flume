@@ -66,7 +66,8 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   mix each retry carried an HTTP request to a third party. It now backs off
   from two seconds to a minute, and still never gives up. ([#62][i62])
 - Settings changes made while a slow one was still saving could overwrite
-  each other. The settings screen installs whatever the backend returns, and
+  each other, and a control could visibly snap back to its old value until
+  its own save finished. The settings screen installs whatever the backend returns, and
   a filter URL makes a save take seconds, so a theme toggle started later
   could finish first and then be replaced by the older reply — and lost on
   disk at the next edit. The screen's writes are serialised now, as the main
