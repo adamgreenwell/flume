@@ -357,18 +357,33 @@ jobs:
 
       - name: Bundle the .rpm
         working-directory: src-tauri
-        # `--disable-strategies compile` is the point of the change, not a
-        # detail of it: binstall's default fallback when it cannot find a
-        # prebuilt binary is to compile from source, which would quietly
-        # restore the ten minutes this removes and nothing would report it. A
-        # target tauri stops publishing should fail this leg loudly instead.
+        # `--strategies crate-meta-data` is the point of the change, not a
+        # detail of it, and it is an allowlist rather than a denylist on
+        # purpose. binstall has three strategies and tries all three in turn:
+        # the publisher's own artifacts, then QuickInstall, then compiling
+        # from source.
+        #
+        # Compiling is what this change exists to stop -- left enabled it
+        # would quietly restore the ten minutes and report nothing. But
+        # QuickInstall is the one that matters more here: binstall's own
+        # SUPPORT.md calls it "an unofficial repository of prebuilt
+        # binaries", and this job signs and ships what it builds. A release
+        # pipeline should not reach for a third party's build of its build
+        # tool because the publisher's was briefly unreachable; it should
+        # fail, and be re-run.
+        #
+        # Naming the one permitted strategy rather than disabling the two
+        # unwanted ones also means a fourth strategy added upstream is
+        # excluded by default instead of silently joining the chain. It takes
+        # precedence over any `disabled-strategies` the crate sets, so the
+        # crate cannot widen it either.
         #
         # `--version "^2"` is carried over unchanged, so the CLI still tracks
         # the same major as everywhere else. `--locked` is not: it tells
         # `cargo install` to build from the crate's own lockfile, and there is
         # no build here to lock.
         run: |
-          cargo binstall --no-confirm --disable-strategies compile \
+          cargo binstall --no-confirm --strategies crate-meta-data \
             tauri-cli --version "^2"
           cargo tauri build --bundles rpm
 
