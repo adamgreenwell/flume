@@ -121,6 +121,55 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   }, [onClose]);
 
   /**
+   * Serialises the writes, so a slow one cannot land on top of a newer one.
+   *
+   * `update_settings` takes the whole object and returns the whole object,
+   * and `change` installs whatever comes back. Two of those in flight at
+   * once is a lost update in both directions: a restart-triggering change
+   * can take seconds -- a filter URL is fetched while the session is built
+   * -- and the dialog stays interactive throughout, so a theme toggle
+   * started later can finish first. The slow reply then overwrites the
+   * theme in the UI, and the next edit posts that stale snapshot back and
+   * loses it on disk too.
+   *
+   * The same queue `page.tsx` grew for the same reason when the rail and
+   * density chips began racing each other. Here it matters more, because
+   * the slow case is now seconds rather than milliseconds.
+   */
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+
+  /**
+   * How many edits have been made, so a reply can tell if it is the latest.
+   *
+   * The queue fixes the order writes are *sent* in and not what is installed
+   * when they come back. Each reply is the whole settings object as the
+   * backend had it at that moment, so an earlier reply does not contain a
+   * later edit -- that edit has not been sent yet, it is behind this one in
+   * the queue. Installing it anyway snaps the later control back to its old
+   * value until its own write finishes, which for a filter URL means the
+   * length of an engine restart.
+   *
+   * So a reply is installed only while it is still the newest word. A later
+   * edit installs its own reply, which does contain both.
+   */
+  const edits = useRef(0);
+
+  /**
+   * The latest edit ordinal per field, for the effects that are not state.
+   *
+   * Theme, density and the rail are applied to the DOM as well as stored,
+   * and installing a settings object does not re-apply them. So the global
+   * ordinal is the wrong test for *undoing* one: with a later edit to some
+   * unrelated field, a failed theme write would skip its own rollback and
+   * leave the window dark while the control and the backend both read light.
+   *
+   * Per field, the question is the one that matters -- has anyone touched
+   * *this* since -- and the answer governs the effect while the global
+   * ordinal still governs the whole-object install.
+   */
+  const fieldEdits = useRef(new Map<string, number>());
+
+  /**
    * Writes one field and records it as an undoable change.
    *
    * The optimistic update is deliberate: a control that waits for a round trip
@@ -132,6 +181,13 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
       const previous = settings[def.id];
       if (previous === next) return;
+
+      const mine = ++edits.current;
+      fieldEdits.current.set(def.id, mine);
+      /** Whether this edit is still the most recent one made anywhere. */
+      const newest = () => edits.current === mine;
+      /** Whether this edit is still the most recent one to *this* field. */
+      const newestForField = () => fieldEdits.current.get(def.id) === mine;
 
       const updated = { ...settings, [def.id]: next } as Settings;
       setSettings(updated);
@@ -154,14 +210,48 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
       }
 
       try {
-        setSettings(await updateSettings(updated));
+        // Queued, and the payload is built when the turn comes rather than
+        // now. Queueing `updated` would send a snapshot of the whole object
+        // taken before the writes ahead of it ran -- so if one of those
+        // fails and the backend rolls its field back, this write posts the
+        // rolled-back value straight over the top and fails in its turn.
+        //
+        // One field, applied to whatever the backend actually holds. The
+        // same read-then-merge `page.tsx` uses, which is the half of that
+        // pattern this screen was missing.
+        const write = writes.current
+          .catch(() => {})
+          .then(() => getSettings())
+          .then((current) =>
+            updateSettings({ ...current, [def.id]: next } as Settings),
+          );
+        writes.current = write.catch(() => {});
+        const authoritative = await write;
+        // Discarded rather than installed if something has been typed since.
+        // The newer edit is holding optimistic state this reply predates,
+        // and its own reply will carry both.
+        if (newest()) setSettings(authoritative);
       } catch (caught: unknown) {
-        // Put the control back where it was: leaving it showing a value the
-        // engine rejected is the one outcome worse than the failure itself.
-        setSettings(settings);
-        if (def.id === "theme") applyTheme(settings.theme);
-        if (def.id === "density") applyDensity(settings.density);
-        if (def.id === "rail") applyRail(settings.rail);
+        // Put the control back -- but to what the backend holds, not to the
+        // snapshot this render closed over. A failed session change is
+        // rolled back on the Rust side, and that rollback is the truth; the
+        // local snapshot still carries the value that was rejected.
+        // Same restraint on the failure path, and for the same reason: the
+        // backend state after this write was rolled back does not contain a
+        // later edit either. The error is reported regardless -- the user
+        // needs to know this change did not stick, whatever they have typed
+        // since.
+        const rolled = await getSettings().catch(() => settings);
+        if (newest()) setSettings(rolled);
+        // The DOM effects answer to this field alone. A later edit to some
+        // *other* field must not strand the window dark after a failed
+        // theme write, and installing a settings object does not re-apply
+        // them -- only these calls do.
+        if (newestForField()) {
+          if (def.id === "theme") applyTheme(rolled.theme);
+          if (def.id === "density") applyDensity(rolled.density);
+          if (def.id === "rail") applyRail(rolled.rail);
+        }
         setChanges((current) => current.slice(0, -1));
         setError(
           isCommandError(caught)

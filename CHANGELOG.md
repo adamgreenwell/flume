@@ -85,6 +85,29 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   Harmless while a start could only fail locally; with a blocklist URL in the
   mix each retry carried an HTTP request to a third party. It now backs off
   from two seconds to a minute, and still never gives up. ([#62][i62])
+- Settings changes made while a slow one was still saving could overwrite
+  each other, and a control could visibly snap back to its old value until
+  its own save finished. The settings screen installs whatever the backend returns, and
+  a filter URL makes a save take seconds, so a theme toggle started later
+  could finish first and then be replaced by the older reply — and lost on
+  disk at the next edit. The screen's writes are serialised now, as the main
+  window's already were. ([#62][i62])
+- An engine that finished starting after the tunnel guard began holding was
+  published anyway, and transferred until the next tick noticed it. The guard
+  could not stop it: its held branch looks for an engine to shut down, and
+  the restart had already taken the old one out, so there was nothing there.
+  A session built under a held guard is now discarded. ([#201][i201])
+- The tunnel guard could tear down an engine a settings change had just
+  built and rebuild the same thing, because the engine is briefly absent
+  during a restart and the guard read that as "nobody has started one". With
+  a filter list to fetch, that gap spans several of its one-second checks.
+  ([#201][i201])
+- Two settings changes close together could start two librqbit sessions at
+  once, fighting over the same port and session directory, with the slower
+  one publishing itself last — so the newer settings could be saved and not
+  in force. Restarts are serialised now. The window was microseconds wide
+  until a blocklist URL made starting the engine fetch over the network.
+  ([#201][i201])
 - Escape in a settings text field abandoned the edit and closed the whole
   dialog, because the dialog listens for it on `window` and `preventDefault`
   does not stop an event getting there. ([#62][i62])
@@ -95,6 +118,7 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   a blocklist URL. ([#62][i62])
 
 [i62]: https://github.com/adamgreenwell/flume/issues/62
+[i201]: https://github.com/adamgreenwell/flume/issues/201
 [i63]: https://github.com/adamgreenwell/flume/issues/63
 
 ## [1.3.0] — 2026-09-10

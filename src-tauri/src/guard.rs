@@ -98,7 +98,12 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
         // list that 404s fails in milliseconds -- so the "self-limiting"
         // retry became one HTTP request per second to somebody else's server,
         // for as long as the app is open.
-        if let Err(err) = state.restart_engine(&settings).await {
+        // `ensure_engine`, not `restart_engine`: the engine being absent
+        // here can mean "nobody has started one" or "someone is part-way
+        // through replacing one", and only the first is this loop's business.
+        // The check is repeated under the restart lock, where the answer has
+        // settled.
+        if let Err(err) = state.ensure_engine(&settings).await {
             log::error!("torrent engine failed to start: {err}");
             state.note_start_failed(Instant::now()).await;
         } else {
