@@ -35,6 +35,8 @@
         "net.peerLimit",
         "net.upnp",
         "net.proxy",
+        "net.blocklist",
+        "net.allowlist",
         "net.egressGuard",
         "net.egressInterface",
         "ui.theme",

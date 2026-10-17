@@ -284,6 +284,18 @@ compile.
   and a few others are feature-gated.
 - `DhtPersistenceConfig.config_filename: None` means a **global OS path**, not
   your session directory. Always set it explicitly — see issue #19.
+- `SessionOptions.blocklist_url` / `allowlist_url` are fetched **during
+  `Session::new_with_opts`**, and a failure propagates — an unreachable list
+  means no session at all. More dangerous is the success path: a body that
+  fetches cleanly and parses to nothing returns an empty `IpRanges` with no
+  error, because `create_from_decoded_stream` logs each unparseable line at
+  `debug` and carries on. So a list is only known to be working by its
+  length. `Session.blocklist` and `Session.allowlist` are public fields and
+  `IpRanges::len()` is public, so the count is readable even though
+  `IpRanges` itself lives in a private module and cannot be named. Flume
+  reports those counts on `CoreStatus.ip_filter`, keyed off whether a URL is
+  configured, since an unset list and a list that loaded nothing are
+  indistinguishable from the session alone.
 - Useful accessors: `get_dht()`, `listen_addr()`, `announce_port()`,
   `stats_snapshot()`, `client_name_and_version()`, `stop()`.
 - `Speed` is `{ mbps: f64 }` with `.as_bytes() -> u64`. Flume converts to raw

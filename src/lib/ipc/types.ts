@@ -29,6 +29,27 @@ export interface DhtStatus {
 export type EngineHealth = "starting" | "connecting" | "ready" | "degraded";
 
 /** A point-in-time snapshot of engine state. */
+export interface IpFilterStatus {
+  /**
+   * Ranges loaded from the configured blocklist; `null` when none is set.
+   *
+   * `0` is the case this exists to make visible. A list can fetch with a
+   * clean 200 and still yield nothing — an HTML error page, a login
+   * redirect, a format librqbit does not read — and from everywhere except
+   * this number that looks exactly like success. Believing you are filtered
+   * when you are not is the failure this feature has to avoid.
+   */
+  blocklist: number | null;
+  /**
+   * Ranges loaded from the configured allowlist; `null` when none is set.
+   *
+   * `0` is worse here: an allowlist is exclusive, so loading nothing refuses
+   * every peer rather than none.
+   */
+  allowlist: number | null;
+}
+
+/** Session-wide engine state. Mirrors Rust `CoreStatus`. */
 export interface CoreStatus {
   /** The librqbit client string, e.g. `"Flume 0.1.0"`. */
   clientVersion: string;
@@ -50,6 +71,8 @@ export interface CoreStatus {
   livePeers: number;
   /** Derived readiness indicator. */
   health: EngineHealth;
+  /** How many ranges each configured IP filter actually loaded. */
+  ipFilter: IpFilterStatus;
 }
 
 /**
@@ -724,6 +747,24 @@ export interface Settings {
   downloadLimitBps: number | null;
   /** Global upload limit in bytes/sec; `null` is unlimited. Applies live. */
   uploadLimitBps: number | null;
+  /**
+   * IP ranges to refuse peers from; `null` is no blocklist. Restarts the
+   * session.
+   *
+   * `http://`, `https://` or `file://`. Unlike the other restart-triggering
+   * settings, a bad value here can make the restart *fail*: librqbit fetches
+   * the list while building the session, so an unreachable host means no
+   * engine. The previous settings are restored when that happens.
+   */
+  blocklistUrl: string | null;
+  /**
+   * IP ranges to accept peers from exclusively; `null` accepts any address
+   * that is not blocked. Restarts the session.
+   *
+   * Blunter than the blocklist: every address outside the list is refused,
+   * so a list that loads nothing refuses every peer.
+   */
+  allowlistUrl: string | null;
   /**
    * SOCKS5 proxy for outgoing peer connections; `null` connects directly.
    *

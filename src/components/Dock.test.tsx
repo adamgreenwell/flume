@@ -16,6 +16,7 @@ const CORE: CoreStatus = {
   uploadBps: 250_000,
   livePeers: 24,
   health: "ready",
+  ipFilter: { blocklist: null, allowlist: null },
 };
 
 const TORRENT = {

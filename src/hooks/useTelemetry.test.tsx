@@ -18,6 +18,7 @@ const CORE: CoreStatus = {
   uploadBps: 512,
   livePeers: 3,
   health: "ready",
+  ipFilter: { blocklist: null, allowlist: null },
 };
 
 const snapshot = (uptimeSeconds: number): TelemetrySnapshot => ({

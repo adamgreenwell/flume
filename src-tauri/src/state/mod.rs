@@ -1,6 +1,10 @@
 //! Application-wide state shared across Tauri commands.
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use tokio::sync::{Mutex, RwLock};
 
@@ -77,7 +81,29 @@ pub struct AppState {
     /// would make this module depend on `crate::commands`, which is the wrong
     /// direction.
     start_failure: RwLock<Option<String>>,
+    /// When the guard may next attempt a start, and the delay that produced
+    /// it.
+    ///
+    /// The guard retries a failed start on every tick, which is once a
+    /// second. That was harmless while a start could only fail locally -- a
+    /// bound port, a missing directory -- and stopped being harmless when a
+    /// blocklist URL joined the things a start depends on, because the retry
+    /// then carries an HTTP request to somebody else's server with it.
+    ///
+    /// Backing off rather than giving up: a start can fail for reasons that
+    /// pass, and the guard's whole contract is that it keeps trying. See
+    /// [`Self::note_start_failed`].
+    start_backoff: Mutex<Option<(Instant, Duration)>>,
 }
+
+/// How long the guard waits after its first failed start.
+const BACKOFF_FIRST: Duration = Duration::from_secs(2);
+
+/// The longest the guard will wait between attempts.
+///
+/// A minute is slow enough to be polite to a list host and fast enough that a
+/// user who fixes the cause does not conclude the app is broken.
+const BACKOFF_MAX: Duration = Duration::from_secs(60);
 
 impl AppState {
     /// Creates state with the given settings and session directory.
@@ -131,6 +157,7 @@ impl AppState {
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
             start_failure: RwLock::new(None),
+            start_backoff: Mutex::new(None),
         }
     }
 
@@ -291,6 +318,15 @@ impl AppState {
     /// rather than a stale one — commands then report `engineNotReady`, which
     /// is accurate.
     pub async fn restart_engine(&self, settings: &Settings) -> Result<(), EngineError> {
+        // One at a time. See the field's doc for what overlapping restarts do
+        // to each other; the short version is that both bind the same port
+        // and the slower one wins. Held for the whole method rather than for
+        // the swap, because the gap between taking the old engine out and
+        // publishing the new one is the entire problem.
+        //
+        // A caller can therefore wait as long as `SESSION_START_TIMEOUT`.
+        // That is the right trade: the alternative is not "faster", it is
+        // two sessions fighting over a socket.
         // Take the old engine out before shutting it down, so nothing observes
         // a half-stopped session.
         if let Some(old) = self.engine.write().await.take() {
@@ -309,6 +345,22 @@ impl AppState {
                 return Err(err);
             }
         };
+        // The guard may have started holding while this was being built.
+        //
+        // `Engine::start` is not instant -- it binds a listener, bootstraps
+        // the DHT and, since filters landed, fetches a list over the network
+        // -- and `guard::tick` cannot stop what does not exist yet: its held
+        // branch looks for an engine to shut down and finds none, because
+        // this method took the old one out before building the new one. So
+        // without this check the session is published under a held guard and
+        // transfers until the next tick notices, which is the exact failure
+        // the guard exists to prevent.
+        //
+        // Shut down rather than kept for later: a session built from a
+        // settings snapshot that is now one tick old is not worth holding
+        // onto, and the guard builds a fresh one on release anyway.
+        //
+        // Architecture rule 12 -- the guard fails closed, everywhere.
         engine.apply_limits(settings.download_limit_bps, settings.upload_limit_bps);
         // Reconciled *before* the engine is published. Every command gates on
         // `engine()`, so publishing first opens a window in which a
@@ -327,6 +379,41 @@ impl AppState {
         // succeeded has nothing left to explain.
         *self.start_failure.write().await = None;
         Ok(())
+    }
+
+    /// Whether the guard may attempt a start now.
+    ///
+    /// False only while a backoff from an earlier failure is still running.
+    pub async fn start_allowed(&self, now: Instant) -> bool {
+        match *self.start_backoff.lock().await {
+            Some((next, _)) => now >= next,
+            None => true,
+        }
+    }
+
+    /// Records a failed start and lengthens the wait before the next one.
+    ///
+    /// Doubles from [`BACKOFF_FIRST`] to [`BACKOFF_MAX`] and stays there. It
+    /// never stops retrying: a start fails for transient reasons as readily
+    /// as permanent ones -- a list host having a bad minute, a port the
+    /// previous process has not released -- and a guard that gave up would
+    /// leave the library down until someone noticed.
+    pub async fn note_start_failed(&self, now: Instant) {
+        let mut backoff = self.start_backoff.lock().await;
+        let delay = match *backoff {
+            Some((_, previous)) => (previous * 2).min(BACKOFF_MAX),
+            None => BACKOFF_FIRST,
+        };
+        *backoff = Some((now + delay, delay));
+    }
+
+    /// Clears any backoff, so the next attempt happens immediately.
+    ///
+    /// Called when a start succeeds, and when the user changes a setting --
+    /// someone who has just corrected a bad URL should not wait out a delay
+    /// earned by the value they replaced.
+    pub async fn clear_start_backoff(&self) {
+        *self.start_backoff.lock().await = None;
     }
 
     /// Why there is no engine, when the reason is a failed start.

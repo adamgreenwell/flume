@@ -17,6 +17,7 @@ const STATUS: CoreStatus = {
   uploadBps: 0,
   livePeers: 2,
   health: "ready",
+  ipFilter: { blocklist: null, allowlist: null },
 };
 
 const HELD: GuardStatus = {
@@ -204,5 +205,61 @@ describe("Rail, expanded", () => {
   it("hides the toggle when no handler is given", () => {
     renderRail({ collapsed: false, onToggleCollapsed: undefined });
     expect(screen.queryByRole("button", { name: /sidebar/ })).toBeNull();
+  });
+});
+
+describe("the IP filter rows", () => {
+  function withFilter(ipFilter: CoreStatus["ipFilter"]) {
+    return renderRail({ status: { ...STATUS, ipFilter }, collapsed: false });
+  }
+
+  it("says nothing when neither list is configured", () => {
+    // Two lines about a feature you are not using, in a 56px-to-248px rail,
+    // is the kind of chrome that makes the real rows easy to skip past.
+    withFilter({ blocklist: null, allowlist: null });
+
+    expect(screen.queryByText(/Blocklist/)).toBeNull();
+    expect(screen.queryByText(/Allowlist/)).toBeNull();
+  });
+
+  it("reports how many ranges loaded", () => {
+    withFilter({ blocklist: 12431, allowlist: null });
+
+    expect(screen.getByText(/12,431/)).toBeDefined();
+  });
+
+  it("calls out a blocklist that loaded nothing", () => {
+    // The whole point. librqbit reports a list that fetched cleanly and
+    // parsed to nothing exactly as it reports one that worked, so without
+    // this row the user believes they are filtered and is not.
+    withFilter({ blocklist: 0, allowlist: null });
+
+    expect(screen.getByText("Blocklist loaded nothing")).toBeDefined();
+  });
+
+  it("says what an empty allowlist actually does", () => {
+    // The mistake runs the other way here: an allowlist is exclusive, so
+    // loading nothing refuses every peer rather than none, and that looks
+    // from the outside like a torrent nobody is sharing.
+    withFilter({ blocklist: null, allowlist: 0 });
+
+    expect(
+      screen.getByText("Allowlist loaded nothing — no peers can connect"),
+    ).toBeDefined();
+  });
+
+  it("carries the filter state into the collapsed rail's accessible name", () => {
+    // The rail collapses to 56px rather than to zero precisely so it never
+    // reports less than it did. A filter that silently stopped filtering is
+    // exactly the fact that must survive the collapse.
+    renderRail({
+      status: { ...STATUS, ipFilter: { blocklist: 0, allowlist: null } },
+      collapsed: true,
+    });
+
+    const summary = screen.getByRole("img");
+    expect(summary.getAttribute("aria-label")).toContain(
+      "Blocklist loaded nothing",
+    );
   });
 });

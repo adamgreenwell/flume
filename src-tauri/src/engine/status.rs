@@ -61,6 +61,28 @@ pub enum EngineHealth {
     Degraded,
 }
 
+/// How many ranges each configured IP filter loaded, if one is configured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpFilterStatus {
+    /// Ranges loaded from the configured blocklist; `None` when none is set.
+    ///
+    /// `Some(0)` is the case this type exists for. A list can fetch with a
+    /// clean 200 and still yield nothing -- librqbit logs each unparseable
+    /// line at `debug` and returns an empty set -- so pointing at an HTML
+    /// error page, a login redirect or a format it does not read looks
+    /// exactly like success from everywhere except this number. A user who
+    /// believes they are filtered and is not is the failure this feature has
+    /// to avoid, so the count is reported rather than the configuration.
+    pub blocklist: Option<usize>,
+
+    /// Ranges loaded from the configured allowlist; `None` when none is set.
+    ///
+    /// `Some(0)` is worse here than it is above: an allowlist is exclusive,
+    /// so loading nothing refuses every peer rather than none.
+    pub allowlist: Option<usize>,
+}
+
 /// A point-in-time snapshot of engine state, safe to send over IPC.
 ///
 /// Contains only scalars and small strings; no torrent piece data ever crosses
@@ -99,6 +121,9 @@ pub struct CoreStatus {
 
     /// Derived readiness indicator; see [`EngineHealth`].
     pub health: EngineHealth,
+
+    /// How many ranges each configured IP filter actually loaded.
+    pub ip_filter: IpFilterStatus,
 }
 
 /// Everything the UI needs for one render tick.

@@ -199,6 +199,12 @@ pub enum SettingKey {
     /// Proxy configured or cleared.
     #[serde(rename = "net.proxy")]
     NetProxy,
+    /// Peer blocklist configured or cleared.
+    #[serde(rename = "net.blocklist")]
+    NetBlocklist,
+    /// Peer allowlist configured or cleared.
+    #[serde(rename = "net.allowlist")]
+    NetAllowlist,
     /// The tunnel guard's mode.
     #[serde(rename = "net.egressGuard")]
     NetEgressGuard,
@@ -273,6 +279,17 @@ impl SettingKey {
         note(previous.peer_limit != next.peer_limit, Self::NetPeerLimit);
         note(previous.enable_upnp != next.enable_upnp, Self::NetUpnp);
         note(previous.proxy_url != next.proxy_url, Self::NetProxy);
+        // The key only, as everywhere here. Which list someone uses would say
+        // a great deal about what they are doing with the client, and is
+        // exactly the kind of thing architecture rule 11 keeps off the wire.
+        note(
+            previous.blocklist_url != next.blocklist_url,
+            Self::NetBlocklist,
+        );
+        note(
+            previous.allowlist_url != next.allowlist_url,
+            Self::NetAllowlist,
+        );
         // Only that the limit moved, never to what. A ratio is a number about
         // one person's library, and the useful signal is whether anyone
         // reaches for the setting at all.

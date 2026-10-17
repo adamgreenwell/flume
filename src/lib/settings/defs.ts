@@ -360,6 +360,53 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
         : `Outgoing peer connections go through ${url}. The DHT and tracker announces do not — a proxy here is not the same as a VPN.`,
   },
   {
+    id: "blocklistUrl",
+    section: "network",
+    label: "Refuse peers in this list",
+    key: "net.blocklist",
+    control: {
+      kind: "text",
+      placeholder: "https://… or file://…",
+    },
+    keywords: [
+      "blocklist",
+      "blocklist url",
+      "ip filter",
+      "ipfilter",
+      "p2p",
+      "ban",
+      "block",
+    ],
+    restartsSession: true,
+    consequence: (url) =>
+      url === null || url === ""
+        ? "No addresses are blocked. Worth knowing that this is also what a list that fails to load leaves you with — the rail's network footer reports how many ranges actually loaded, so check it rather than assuming."
+        : `Peers whose address is in the list at ${url} are refused. Be clear-eyed about what that buys: blocklists are large, stale and of debated effectiveness, and they do not make you anonymous. Flume fetches this while the session starts, so a list it cannot reach stops the engine rather than starting it unfiltered.`,
+  },
+  {
+    id: "allowlistUrl",
+    section: "network",
+    label: "Accept peers only from this list",
+    key: "net.allowlist",
+    control: {
+      kind: "text",
+      placeholder: "https://… or file://…",
+    },
+    keywords: [
+      "allowlist",
+      "whitelist",
+      "ip filter",
+      "ipfilter",
+      "p2p",
+      "restrict",
+    ],
+    restartsSession: true,
+    consequence: (url) =>
+      url === null || url === ""
+        ? "Any address that is not blocked can connect."
+        : `Only peers inside the list at ${url} can connect — every other address is refused, which is a far blunter instrument than the blocklist above. A list that loads but parses to nothing therefore refuses every peer, and looks from the outside like a torrent nobody is sharing.`,
+  },
+  {
     id: "egressGuard",
     section: "network",
     label: "Only transfer while traffic leaves through a tunnel",
