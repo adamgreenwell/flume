@@ -25,9 +25,11 @@ cryptocurrency, no chat, no RSS automation, no bundled search, and no paid
 tier.
 
 > [!NOTE]
-> Flume is approaching 1.0. The core torrent lifecycle, the polish pass, and
-> the release pipeline are all built; what is left is signing Phase 1 off
-> against real torrents on each platform. See the [Roadmap](#roadmap).
+> Flume is at 1.3.0. The core torrent lifecycle, the polish pass and the
+> release pipeline are all built and shipped, along with seed and queue
+> limits, an opt-in tunnel guard, per-torrent peer limits and IP filtering.
+> What is not established is a line-by-line pass of the smoke-test checklist
+> on every platform. See the [Roadmap](#roadmap).
 
 ## Why another torrent client?
 
@@ -133,17 +135,24 @@ Full detail, including the IPC contract, lives in the [documentation][docs].
 
 ## Roadmap
 
-| Phase | Focus                                                          | Status                      |
-| ----- | -------------------------------------------------------------- | --------------------------- |
-| 0     | Scaffold, engine integration, CI, docs                         | ✅ Complete                 |
-| 1     | Core torrent lifecycle (add, control, persist, file selection) | ✅ Built, awaiting sign-off |
-| 2     | Polish: themes, detail views, deep links, tray, notifications  | ✅ Complete                 |
-| 3     | Hardening: release pipeline, signing, performance              | 🚧 Mostly complete          |
+| Phase | Focus                                                          | Status             |
+| ----- | -------------------------------------------------------------- | ------------------ |
+| 0     | Scaffold, engine integration, CI, docs                         | ✅ Complete        |
+| 1     | Core torrent lifecycle (add, control, persist, file selection) | ✅ Complete        |
+| 2     | Polish: themes, detail views, deep links, tray, notifications  | ✅ Complete        |
+| 3     | Hardening: release pipeline, signing, performance              | 🚧 Mostly complete |
 
-Phase 1 is implemented but not signed off: adding a real ISO by magnet and by
-`.torrent`, resuming mid-download across a relaunch, and Windows seeding
-([#48](https://github.com/adamgreenwell/flume/issues/48)) all want a run on a
-real torrent rather than a green CI badge.
+Phase 1 is signed off, the last of its definition-of-done boxes by use rather
+than by code: both add routes exercised, controls and settings used, and a
+mid-download kill resuming without a re-hash.
+
+What remains is narrower than it was. The 1.2.0 release was installed and
+exercised on Windows and Linux and worked, which is evidence the app runs
+there — not a line-by-line pass of
+[the smoke-test checklist](https://github.com/adamgreenwell/flume/wiki/Smoke-Test-Checklist)
+on each. Seeding to an SMB client while Flume holds the file is still open
+([#48](https://github.com/adamgreenwell/flume/issues/48)), and is a property
+of macOS's SMB server rather than of the engine.
 
 Tracked on the [project board][board] and in [issues][issues].
 

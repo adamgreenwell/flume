@@ -72,8 +72,10 @@ somebody turned on.
 
 ## Out of scope
 
-These are listed as anti-goals on [[Home]] and in the README,
-and are recorded here with the reasoning rather than only as a list.
+Cryptocurrency, chat, RSS and a paid tier are named as anti-goals on [[Home]]
+and in the README; this page is where the reasoning lives. The plugin system
+is not listed in either, and is written down here for the first time — the
+absence of a line about it was exactly the gap this page exists to close.
 
 ### RSS feeds
 
