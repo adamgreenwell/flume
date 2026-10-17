@@ -495,30 +495,36 @@ impl Library {
     /// position at a time would leave the set briefly inconsistent, and an
     /// inconsistent queue admits the wrong torrent.
     ///
-    /// Positions for torrents absent from `order` are cleared, so a torrent
-    /// that leaves the queue does not keep a stale place in it.
+    /// Records absent from `order` keep whatever place they had.
+    ///
+    /// They are not in the queue *right now*, and that is not the same as
+    /// having left it. A persisted torrent whose drive is unmounted fails to
+    /// restore and is missing from the live session while staying in this
+    /// record on purpose -- so clearing on absence would throw away its
+    /// place, and it would come back at the end of the queue after a
+    /// successful restore. [`Self::forget`] is how a real removal is said,
+    /// and it drops the whole record, position included.
+    ///
+    /// A stale place left on a torrent that is merely not eligible costs
+    /// nothing: the order is only consulted among eligible torrents, and the
+    /// place a user sees is a rank computed over that set rather than this
+    /// number.
     ///
     /// Suppressed when the record did not load cleanly, like every other
     /// write here: see [`Self::set_forced`].
+    ///
     /// Returns whether anything changed.
     pub fn set_queue_order(&mut self, order: &[String]) -> bool {
         if !self.healthy {
             return false;
         }
-        let places: HashMap<String, u32> = order
-            .iter()
-            .enumerate()
-            .map(|(at, hash)| {
-                (
-                    hash.to_ascii_lowercase(),
-                    u32::try_from(at).unwrap_or(u32::MAX),
-                )
-            })
-            .collect();
 
         let mut changed = false;
-        for (hash, record) in &mut self.records {
-            let next = places.get(hash).copied();
+        for (at, hash) in order.iter().enumerate() {
+            let Some(record) = self.records.get_mut(&hash.to_ascii_lowercase()) else {
+                continue;
+            };
+            let next = Some(u32::try_from(at).unwrap_or(u32::MAX));
             if record.queue_position != next {
                 record.queue_position = next;
                 changed = true;
@@ -666,6 +672,54 @@ mod tests {
 
     fn loaded(dir: &Path) -> Library {
         Library::load(dir).0
+    }
+
+    /// A torrent missing from the live session keeps its place.
+    ///
+    /// A persisted torrent whose drive is unmounted fails to restore and is
+    /// absent from the snapshot a reorder derives its order from, while
+    /// staying in this record on purpose. Clearing on absence threw its
+    /// place away and persisted the loss, so it came back at the end of the
+    /// queue after a successful restore. `forget` is how a real removal is
+    /// said, and it drops the whole record.
+    #[test]
+    fn a_reorder_does_not_disturb_a_torrent_it_does_not_mention() {
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1));
+        let _ = library.note_added(B, Some(2));
+        assert!(library.set_queue_order(&[A.to_owned(), B.to_owned()]));
+
+        // B alone, as a reorder would derive it while A cannot be restored.
+        assert!(
+            library.set_queue_order(&[B.to_owned()]),
+            "B moves from second to first, so something did change"
+        );
+
+        assert_eq!(
+            library.get(A).and_then(|r| r.queue_position),
+            Some(0),
+            "A's place was thrown away because it was not in the live session"
+        );
+        assert_eq!(library.get(B).and_then(|r| r.queue_position), Some(0));
+
+        // Both at zero is deliberate rather than a tie nobody resolved: the
+        // order is only consulted among eligible torrents, and `queue_order`
+        // breaks equal places by arrival time and then info hash. So when A
+        // does restore it sits ahead of B, which is the place it had.
+    }
+
+    #[test]
+    fn forgetting_a_torrent_takes_its_queue_place_with_it() {
+        let mut library = Library::default();
+        let _ = library.note_added(A, Some(1));
+        assert!(library.set_queue_order(&[A.to_owned()]));
+
+        assert!(library.forget(A));
+
+        assert!(
+            library.get(A).is_none(),
+            "removal drops the record, so there is no place left to inherit"
+        );
     }
 
     #[test]
