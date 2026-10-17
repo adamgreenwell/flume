@@ -1507,6 +1507,79 @@ fn a_torrent_outside_the_queue_has_no_place() {
     );
 }
 
+/// A reorder leaves the place of a torrent it does not mention.
+///
+/// `queue_order` returns only the torrents eligible to run, so one that is
+/// manually paused, stopped by a limit or forced is absent from it while
+/// still holding a place the user gave it. `PolicyState::set_queue_order`
+/// replaced its whole map from that order, so reordering anything else
+/// silently dropped the absent torrent's place and it sorted last on resume
+/// — while `Library::set_queue_order` had kept the record, so a restart
+/// restored it and the queue appeared to change on its own.
+#[test]
+fn a_paused_torrent_keeps_its_place_while_the_rest_are_reordered() {
+    let first = "b".repeat(40);
+    let second = "c".repeat(40);
+    let third = "a".repeat(40);
+
+    // The user put `first` at the top and then paused it themselves, which
+    // policy does not record -- so it is not "queued by us" and drops out of
+    // the eligible set.
+    let mut state = PolicyState::default().with_queue_positions(
+        [(first.clone(), 0), (second.clone(), 2), (third.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
+
+    let paused = TorrentSummary {
+        state: TorrentState::Paused,
+        ..seeding(&first, 1, 0, 1_000)
+    };
+    let snap = snapshot(vec![
+        paused.clone(),
+        seeding(&second, 2, 0, 1_000),
+        seeding(&third, 3, 0, 1_000),
+    ]);
+
+    let eligible: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        eligible,
+        vec![third.clone(), second.clone()],
+        "the paused torrent is not eligible, so a reorder cannot name it"
+    );
+
+    // Promote `second` over `third`, which is a statement about those two.
+    state.set_queue_order(&[second.clone(), third.clone()]);
+
+    assert_eq!(
+        state.queue_position(&first),
+        Some(0),
+        "the reorder said nothing about this torrent and must not move it"
+    );
+
+    // Resumed, it is back in the running and still ahead of the one it was
+    // ahead of. Its 0 now ties with `second`'s, which `queue_order` breaks on
+    // arrival time and then info hash -- a total order either way, and the tie
+    // leaves it beside where it was rather than at the end.
+    let snap = snapshot(vec![
+        seeding(&first, 1, 0, 1_000),
+        seeding(&second, 2, 0, 1_000),
+        seeding(&third, 3, 0, 1_000),
+    ]);
+    let resumed: Vec<String> = flume_lib::policy::queue_order(&snap, &state)
+        .into_iter()
+        .map(|t| t.info_hash.clone())
+        .collect();
+    assert_eq!(
+        resumed,
+        vec![first.clone(), second.clone(), third.clone()],
+        "a place the user gave survived a reorder it was not part of"
+    );
+}
+
 /// A removed torrent's queue place is pruned with the rest of its state.
 ///
 /// `retain` drops the bookkeeping for torrents that are gone. Queue places

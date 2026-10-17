@@ -67,16 +67,30 @@ impl PolicyState {
         self
     }
 
-    /// Replaces the explicit queue order wholesale.
+    /// Renumbers the torrents the order names, and leaves the rest alone.
     ///
-    /// Wholesale because an order is a statement about a set, not about one
-    /// member of it -- see `Library::set_queue_order`, which this mirrors.
+    /// Not wholesale, and the distinction is the whole of it: the order handed
+    /// in is `queue_order`'s result, which holds only the torrents *eligible*
+    /// to run. One that is manually paused, stopped by a limit, or forced is
+    /// absent from it while still holding a place the user gave it -- so
+    /// replacing the map would drop that place the moment anything else was
+    /// reordered, and the torrent would sort last when it came back.
+    ///
+    /// `Library::set_queue_order` leaves unnamed records alone for the same
+    /// reason, and the two have to agree. The library is read into this map
+    /// only in `AppState::new`, so a divergence does not stay visible: it
+    /// lasts until the next launch and then corrects itself, which is worse
+    /// than either answer on its own.
+    ///
+    /// An omitted torrent keeps its old number, which may now tie with a
+    /// renumbered one. `queue_order` breaks ties on arrival time and then on
+    /// info hash, so the result is still a total order, and the tie leaves
+    /// the absent torrent next to where it was rather than at either end.
     pub fn set_queue_order(&mut self, order: &[String]) {
-        self.queue_positions = order
-            .iter()
-            .enumerate()
-            .map(|(at, hash)| (hash.clone(), u32::try_from(at).unwrap_or(u32::MAX)))
-            .collect();
+        for (at, hash) in order.iter().enumerate() {
+            self.queue_positions
+                .insert(hash.clone(), u32::try_from(at).unwrap_or(u32::MAX));
+        }
     }
 
     /// Where the user put this torrent, if they have.
