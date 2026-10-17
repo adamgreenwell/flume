@@ -286,6 +286,11 @@ export default function Home() {
    */
   const reorder = useCallback(
     async (torrent: TorrentSummary, up: boolean) => {
+      // Cleared first, like every other action here. Without it a banner
+      // from an earlier failure -- including a failed move -- outlived the
+      // successful one that followed, so the queue moved while the alert
+      // still said it had not.
+      setActionError(null);
       try {
         // `false` is the benign answer: already at that end of the queue, or
         // it left the queue between the right-click and the click. The row
