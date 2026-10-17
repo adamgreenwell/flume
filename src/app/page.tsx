@@ -284,13 +284,23 @@ export default function Home() {
    * reimplementing admission in the UI, which is the one thing a queue must
    * have exactly one definition of.
    */
-  const reorder = useCallback(async (torrent: TorrentSummary, up: boolean) => {
-    await moveInQueue(torrent.infoHash, up).catch(() => {
-      // Already at that end, or it left the queue between the right-click and
-      // the click. Neither is worth a banner -- the row stays where it is and
-      // says so.
-    });
-  }, []);
+  const reorder = useCallback(
+    async (torrent: TorrentSummary, up: boolean) => {
+      try {
+        // `false` is the benign answer: already at that end of the queue, or
+        // it left the queue between the right-click and the click. The row
+        // stays where it is, which says so without a banner.
+        //
+        // A rejection is something else entirely -- `engineNotReady` if the
+        // engine stopped or restarted since the menu opened -- and swallowing
+        // it left the user with an action that silently did nothing.
+        await moveInQueue(torrent.infoHash, up);
+      } catch (caught: unknown) {
+        report(caught, "Could not move that torrent in the queue.");
+      }
+    },
+    [report],
+  );
 
   const keepSeeding = useCallback(
     async (t: TorrentSummary) => {

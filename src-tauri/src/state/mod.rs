@@ -749,7 +749,17 @@ impl AppState {
         LibrarySnapshot {
             added: library.added_times(),
             pause_reasons: policy.pause_reasons().clone(),
-            forced: library.forced(),
+            // From the policy bookkeeping, not the library record, because
+            // that is what policy actually enforces.
+            //
+            // The two agree until `library.json` cannot be read. The library
+            // then refuses every write and keeps reporting an empty set,
+            // while `mark_forced` still lands in the policy state -- so the
+            // queue correctly leaves the torrent alone and the UI would have
+            // said `forced: false` forever, making an overridden limit look
+            // broken in exactly the degraded mode the library is built to
+            // survive.
+            forced: policy.forced().clone(),
         }
     }
 

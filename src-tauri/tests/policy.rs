@@ -1537,3 +1537,28 @@ fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
         "pruning one must not drop the others"
     );
 }
+
+/// A force survives a library that cannot be written, and is still reported.
+///
+/// `Library::set_forced` refuses every write when `library.json` could not
+/// be read, so the record stays empty — but `mark_forced` still lands in the
+/// policy state, which is what admission actually consults. Reporting from
+/// the record meant the queue correctly left the torrent alone while the UI
+/// said it was not forced, so an overridden limit read as a broken one in
+/// exactly the degraded mode the library is built to survive.
+#[test]
+fn a_force_is_known_to_policy_even_when_the_library_cannot_record_it() {
+    let hash = "a".repeat(40);
+    let mut state = PolicyState::default();
+
+    state.mark_forced(&hash);
+
+    assert!(
+        state.is_forced(&hash),
+        "admission reads this, so it has to hold the force"
+    );
+    assert!(
+        state.forced().contains(&hash),
+        "and the snapshot reads this, so the two cannot disagree"
+    );
+}
