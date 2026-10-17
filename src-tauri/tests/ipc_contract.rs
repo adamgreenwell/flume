@@ -124,10 +124,11 @@ fn sample_summary() -> TorrentSummary {
 fn the_destination_preflight_matches_the_typescript_mirror() {
     assert_keys(
         &DestinationPreflight {
+            exists: true,
             free_bytes: Some(1_000),
             already_on_disk: vec![true, false],
         },
-        &["freeBytes", "alreadyOnDisk"],
+        &["exists", "freeBytes", "alreadyOnDisk"],
         "DestinationPreflight",
     );
 }

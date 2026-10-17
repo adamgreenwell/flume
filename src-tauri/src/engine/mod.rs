@@ -809,6 +809,10 @@ impl Engine {
 
         let folder = std::path::Path::new(folder);
         Ok(DestinationPreflight {
+            // `is_dir` rather than `exists`: a file of that name is not a
+            // folder this can be written into, and reporting it as present
+            // would send the add at something that cannot work.
+            exists: folder.is_dir(),
             free_bytes: preflight::free_bytes(folder),
             already_on_disk: preflight::already_on_disk(folder, files),
         })

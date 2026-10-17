@@ -149,13 +149,31 @@ export function AddTorrentDialog({
       const result = await destinationPreflight(hash, dir);
       // Superseded while this was in flight; the newer check owns the state.
       if (checkingFor.current !== dir) return;
+
+      // A destination that is not there is not used. The remembered folder
+      // can be on a volume that has since been unmounted, and the engine
+      // would create the path again on the local disk and fill it -- while
+      // the free-space figure described that disk rather than the one the
+      // user meant. Falling back to the session folder is the only answer
+      // that cannot write somewhere surprising.
+      //
+      // Nothing legitimate is blocked by this: the picker only returns
+      // folders that exist, and there is nowhere here to type a new one.
+      if (!result.exists) {
+        setFolder(null);
+        setChecked(null);
+        setFolderError(
+          "That folder is not there any more, so this will go to the usual download folder.",
+        );
+        return;
+      }
       setChecked(result);
     } catch (caught: unknown) {
       if (checkingFor.current !== dir) return;
       // The figures are dropped rather than left describing the old folder.
       // An honest "unknown" is what `PreflightTiles` renders for null, and
       // it beats a number about somewhere else.
-      setChecked({ freeBytes: null, alreadyOnDisk: [] });
+      setChecked({ exists: true, freeBytes: null, alreadyOnDisk: [] });
       setFolderError(describe(caught, "Could not check that folder."));
     } finally {
       if (checkingFor.current === dir) setChecking(false);
@@ -365,7 +383,14 @@ export function AddTorrentDialog({
   // answers were about a different folder. Not merged -- there is nothing
   // to merge, they are answers to the same two questions about somewhere
   // else.
-  const destination = folder ?? defaultFolder ?? preview?.savePath ?? "";
+  // `defaultFolder` is deliberately absent from this chain. It is either
+  // adopted into `folder` when the preview resolves -- which is what makes
+  // it the real destination rather than only the displayed one -- or it is
+  // not used at all: equal to the session folder, gone, or irrelevant
+  // because the torrent is already added. Keeping it here as a fallback had
+  // the row claim a vanished folder while the add sent `null` and wrote to
+  // the session folder, which is the divergence this chain exists to avoid.
+  const destination = folder ?? preview?.savePath ?? "";
   const freeBytes = checked ? checked.freeBytes : (preview?.freeBytes ?? null);
   const alreadyOnDisk = checked
     ? checked.alreadyOnDisk

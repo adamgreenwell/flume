@@ -229,6 +229,18 @@ export interface TorrentFile {
  * when it is being relied on.
  */
 export interface DestinationPreflight {
+  /**
+   * Whether the folder is there right now.
+   *
+   * The question a remembered path has to answer before it is used again. A
+   * folder on a removable or network volume stops existing when the volume
+   * goes away, and nothing else notices: free space walks up to the nearest
+   * existing ancestor, so it reports the *local* disk, and the engine creates
+   * a missing output folder on confirmation. Together that means an add aimed
+   * at an unmounted volume quietly fills a same-named directory on the boot
+   * disk.
+   */
+  exists: boolean;
   /** Free space on the volume containing the chosen folder, or `null`. */
   freeBytes: number | null;
   /** Whether each file is already there at full length, in torrent order. */

@@ -54,6 +54,18 @@ pub struct TorrentFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DestinationPreflight {
+    /// Whether the folder is there right now.
+    ///
+    /// The question a remembered path has to answer before it is used again.
+    /// A folder on a removable or network volume stops existing when the
+    /// volume goes away, and nothing else here notices: [`free_bytes`] walks
+    /// up to the nearest existing ancestor, so it reports the *local* disk,
+    /// and librqbit creates a missing output folder on confirmation. The two
+    /// together mean an add aimed at an unmounted volume quietly populates a
+    /// same-named directory on the boot disk.
+    ///
+    /// [`free_bytes`]: super::preflight::free_bytes
+    pub exists: bool,
     /// Free space on the volume containing the chosen folder, or `None`.
     pub free_bytes: Option<u64>,
     /// Whether each file is already there at full length, in torrent order.

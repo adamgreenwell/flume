@@ -52,6 +52,7 @@ beforeEach(() => {
   confirmAdd.mockResolvedValue(1);
   discardPreview.mockResolvedValue(undefined);
   destinationPreflight.mockResolvedValue({
+    exists: true,
     freeBytes: 9_000_000,
     alreadyOnDisk: [false],
   });
@@ -89,6 +90,41 @@ describe("a remembered destination", () => {
         null,
         "/Volumes/Media",
       ),
+    );
+  });
+
+  it("will not send a remembered folder that is no longer there", async () => {
+    // The remembered folder can be on a volume that has since been
+    // unmounted. The engine would create the path again on the local disk
+    // and fill it, while the free-space figure described that disk rather
+    // than the one the user meant — so the add silently lands on the wrong
+    // volume. Falling back to the session folder is the only answer that
+    // cannot write somewhere surprising.
+    destinationPreflight.mockResolvedValue({
+      exists: false,
+      freeBytes: 500_000_000,
+      alreadyOnDisk: [false],
+    });
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Gone"
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(destinationPreflight).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByText(/not there any more/)).toBeDefined(),
+    );
+    // The session's own folder, which is what `null` asks the engine for.
+    expect(screen.getByText(PREVIEW.savePath)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
+
+    await waitFor(() =>
+      expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
     );
   });
 
@@ -202,7 +238,7 @@ describe("a remembered destination", () => {
     );
     expect(pending.hasAttribute("disabled")).toBe(true);
 
-    release({ freeBytes: 1, alreadyOnDisk: [false] });
+    release({ exists: true, freeBytes: 1, alreadyOnDisk: [false] });
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
