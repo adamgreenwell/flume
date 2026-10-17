@@ -378,6 +378,32 @@ impl AppState {
         self.policy_state.read().await.clone()
     }
 
+    /// Evaluates policy against `snapshot` and commits the new bookkeeping.
+    ///
+    /// Read, evaluate and write under one lock, which is the whole point of
+    /// the method existing rather than the caller doing those three things
+    /// itself. The loop used to clone the state, evaluate from the clone, and
+    /// write the result back a moment later -- so anything written in between
+    /// was overwritten by a value computed before it happened. A queue
+    /// reorder would be accepted, persisted, and then silently reverted until
+    /// the next one or a relaunch, and the same was already true of forcing a
+    /// torrent past the queue.
+    ///
+    /// `evaluate` is pure and synchronous, so nothing is awaited while the
+    /// lock is held. The actions come back for the caller to perform, which
+    /// keeps everything that touches the engine out of here.
+    pub async fn evaluate_policy(
+        &self,
+        snapshot: &crate::engine::TelemetrySnapshot,
+        rules: &Rules,
+        elapsed_secs: u64,
+    ) -> Vec<crate::policy::Action> {
+        let mut state = self.policy_state.write().await;
+        let outcome = crate::policy::evaluate(snapshot, rules, &state, elapsed_secs);
+        *state = outcome.state;
+        outcome.actions
+    }
+
     /// Replaces the policy bookkeeping.
     pub async fn set_policy_state(&self, state: PolicyState) {
         *self.policy_state.write().await = state;

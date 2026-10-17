@@ -12,10 +12,7 @@ use std::{collections::HashSet, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::{
-    policy::{self, Action},
-    state::AppState,
-};
+use crate::{policy::Action, state::AppState};
 
 /// Event name the frontend subscribes to.
 ///
@@ -88,11 +85,15 @@ pub fn spawn(app: AppHandle) {
             {
                 let state = app.state::<AppState>();
                 let rules = state.policy_rules().await;
-                let previous = state.policy_state().await;
-                let outcome =
-                    policy::evaluate(&snapshot, &rules, &previous, TELEMETRY_INTERVAL.as_secs());
+                // Evaluated and committed under one lock. Cloning the state,
+                // evaluating, and writing the result back later let a queue
+                // reorder -- or a force -- land in between and be overwritten
+                // by a value computed before it happened.
+                let actions = state
+                    .evaluate_policy(&snapshot, &rules, TELEMETRY_INTERVAL.as_secs())
+                    .await;
 
-                for action in &outcome.actions {
+                for action in &actions {
                     match action {
                         Action::Pause { id, reason } => {
                             log::info!("policy pausing torrent {id}: {reason:?}");
@@ -108,8 +109,6 @@ pub fn spawn(app: AppHandle) {
                         }
                     }
                 }
-
-                state.set_policy_state(outcome.state).await;
             }
 
             since_flush += 1;

@@ -173,5 +173,9 @@ impl PolicyState {
         self.paused.retain(|hash, _| keep(hash));
         self.seed_seconds.retain(|hash, _| keep(hash));
         self.forced.retain(|hash| keep(hash));
+        // Pruned with the rest, or a re-added torrent inherits the place its
+        // predecessor had -- `Library::forget` drops the persisted record,
+        // and this map would be the only thing still claiming one.
+        self.queue_positions.retain(|hash, _| keep(hash));
     }
 }

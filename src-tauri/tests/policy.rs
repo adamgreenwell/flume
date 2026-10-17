@@ -1506,3 +1506,34 @@ fn a_torrent_outside_the_queue_has_no_place() {
         "a dash, not a place: the queue has no opinion about this torrent"
     );
 }
+
+/// A removed torrent's queue place is pruned with the rest of its state.
+///
+/// `retain` drops the bookkeeping for torrents that are gone. Queue places
+/// were not in that list, so re-adding the same info hash inherited the
+/// place its predecessor had — ahead of torrents that had been waiting —
+/// even though `Library::forget` had dropped the persisted record.
+#[test]
+fn a_removed_torrent_does_not_keep_its_place_in_the_queue() {
+    let gone = "a".repeat(40);
+    let staying = "b".repeat(40);
+
+    let mut state = PolicyState::default().with_queue_positions(
+        [(gone.clone(), 0), (staying.clone(), 1)]
+            .into_iter()
+            .collect(),
+    );
+
+    state.retain(|hash| hash != gone);
+
+    assert_eq!(
+        state.queue_position(&gone),
+        None,
+        "the place outlived the torrent, so a re-add would inherit it"
+    );
+    assert_eq!(
+        state.queue_position(&staying),
+        Some(1),
+        "pruning one must not drop the others"
+    );
+}
