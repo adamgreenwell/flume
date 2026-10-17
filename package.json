@@ -27,12 +27,12 @@
     "check:node": "node scripts/check-node.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-clipboard-manager": "^2.3.3",
-    "@tauri-apps/plugin-deep-link": "^2.4.10",
-    "@tauri-apps/plugin-dialog": "^2.7.3",
-    "@tauri-apps/plugin-notification": "^2.4.0",
-    "@tauri-apps/plugin-opener": "^2.5.5",
+    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/plugin-clipboard-manager": "^2.4.2",
+    "@tauri-apps/plugin-deep-link": "^2.6.1",
+    "@tauri-apps/plugin-dialog": "^2.8.2",
+    "@tauri-apps/plugin-notification": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.7.1",
     "next": "16.4.2",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -42,7 +42,7 @@
     "@storybook/addon-docs": "^10.6.0",
     "@storybook/nextjs-vite": "^10.5.10",
     "@tailwindcss/postcss": "^4",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli": "^2.12.2",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "^26",
