@@ -2342,6 +2342,81 @@ async fn a_removal_prunes_the_bookkeeping_the_next_tick_reads() {
     );
 }
 
+/// A snapshot taken before a removal cannot put the bookkeeping back.
+///
+/// The telemetry loop captures a snapshot and then evaluates it, so a
+/// removal can land in the gap: `forget_torrent` prunes, and the evaluation
+/// that follows is still holding a snapshot in which the torrent exists, so
+/// it writes seeding time and a stop reason for a torrent that is gone.
+///
+/// Harmless while `evaluate` pruned on absence, because the next tick's
+/// snapshot dropped it again. With that gone the resurrected state is
+/// permanent, and the next seed-time flush writes a record for the removed
+/// torrent back into `library.json`, where reconciliation never deletes it.
+#[tokio::test]
+async fn a_snapshot_taken_before_a_removal_cannot_put_its_bookkeeping_back() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        seed_ratio_limit: Some(1.0),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    // Captured first, like the loop does. Ratio 50, so the evaluation below
+    // stops it and records why.
+    let stale = snapshot(vec![seeding("a", 1, 50_000, 1_000)]);
+
+    state.forget_torrent("a").await;
+
+    let rules = state.policy_rules().await;
+    state.evaluate_policy(&stale, &rules, 60).await;
+
+    let policy = state.policy_state().await;
+    assert_eq!(
+        policy.seed_seconds("a"),
+        0,
+        "seeding time came back for a removed torrent, and nothing prunes it now"
+    );
+    assert_eq!(
+        policy.paused_reason("a"),
+        None,
+        "a stop reason came back for a torrent that no longer exists"
+    );
+}
+
+/// Undoing that resurrection must not reach the user's own choices.
+///
+/// A removal and a re-add of the same info hash can both land in the gap,
+/// and the force is then a statement about the new torrent. `evaluate`
+/// writes seeding time and stop reasons only, so those are the only two
+/// fields the undo touches -- clearing all four would lose a force the user
+/// granted seconds earlier, with nothing to re-derive it from until the
+/// next launch reads the library record.
+#[tokio::test]
+async fn undoing_a_resurrection_leaves_what_the_user_said_alone() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
+
+    state.forget_torrent("a").await;
+
+    // Re-added under the same hash, and forced past the queue by hand.
+    state.note_torrent_added("a").await;
+    state.set_forced("a", true).await;
+
+    state
+        .evaluate_policy(
+            &snapshot(vec![seeding("a", 1, 0, 1_000)]),
+            &Rules::default(),
+            1,
+        )
+        .await;
+
+    assert!(
+        state.is_forced("a").await,
+        "the undo took a force the user granted to the torrent that replaced it"
+    );
+}
+
 /// A removal prunes even when the library has no record to drop.
 ///
 /// `AppState::forget_torrent` returns early when `Library::forget` reports

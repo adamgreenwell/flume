@@ -1,6 +1,7 @@
 //! Application-wide state shared across Tauri commands.
 
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -32,6 +33,21 @@ pub struct AppState {
     /// read it -- the UI needs to know *why* a torrent was stopped -- and
     /// clear it when a user overrides a limit.
     policy_state: RwLock<PolicyState>,
+    /// Torrents removed since the snapshot being evaluated was taken.
+    ///
+    /// The telemetry loop captures a snapshot and then evaluates it, and a
+    /// removal can land in that gap -- so the evaluation sees a torrent that
+    /// no longer exists and writes bookkeeping for it *after*
+    /// [`Self::forget_torrent`] has pruned it. While `evaluate` pruned on
+    /// absence that healed itself on the next tick, which is no longer true:
+    /// nothing else would ever drop the resurrected state, and the next
+    /// seed-time flush would put a record for the removed torrent back into
+    /// `library.json`, where reconciliation never deletes it.
+    ///
+    /// Written before the state is pruned, never after. An evaluation that
+    /// commits between the two must find the hash here, or it is the one
+    /// write nothing cleans up.
+    forgotten: Mutex<HashSet<String>>,
     /// Directory holding settings and session state. Not user-configurable.
     session_dir: PathBuf,
     /// Whether no settings file existed when the app started.
@@ -206,6 +222,7 @@ impl AppState {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
             policy_state: RwLock::new(policy_state),
+            forgotten: Mutex::new(HashSet::new()),
             session_dir,
             first_run,
             usage,
@@ -417,6 +434,24 @@ impl AppState {
         let mut state = self.policy_state.write().await;
         let outcome = crate::policy::evaluate(snapshot, rules, &state, elapsed_secs);
         *state = outcome.state;
+
+        // Undo anything this evaluation wrote for a torrent removed since
+        // the snapshot was taken. Both locks are held in this order only
+        // here, and `forget_torrent` takes them one at a time in the other
+        // order, so neither waits on the other.
+        //
+        // Two fields, not four: `evaluate` writes seeding time and the stop
+        // reason and nothing else, so they are the only two a stale snapshot
+        // can put back. Forcing and queue places come from the user, and
+        // clearing those here would throw away a choice they made about a
+        // torrent re-added under the same info hash -- while the cost of
+        // clearing these two for such a re-add is a tick of seeding time and
+        // a stop reason the next tick re-derives anyway.
+        for info_hash in self.forgotten.lock().await.drain() {
+            state.reset_seed_time(&info_hash);
+            state.clear_paused(&info_hash);
+        }
+
         outcome.actions
     }
 
@@ -729,7 +764,10 @@ impl AppState {
     /// `a_force_is_known_to_policy_even_when_the_library_cannot_record_it`
     /// pins.
     pub async fn forget_torrent(&self, info_hash: &str) {
-        // Taken and released before the library lock, like `set_forced`.
+        // Recorded before the state is pruned, and each lock taken and
+        // released on its own -- see the field's doc for the ordering, and
+        // `set_forced` for why the library lock is never held with another.
+        self.forgotten.lock().await.insert(info_hash.to_owned());
         self.policy_state.write().await.forget(info_hash);
         let json = {
             let mut library = self.library.write().await;
