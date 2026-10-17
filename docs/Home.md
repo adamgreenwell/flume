@@ -22,25 +22,37 @@ all the effort can go into the interface.
 
 ## Status
 
-Phase 0 is complete. The application starts, embeds a real librqbit session,
-bootstraps the DHT, and reports live status to the UI over Tauri IPC.
+Phases 0 and 1 are complete, and 1.3.0 has shipped. Torrents can be added by
+magnet or file with a select-files-first flow, paused, resumed and removed;
+state survives a restart without re-hashing. On top of that sits the design
+work Phase 1 did not ask for — swarm health, the limiting-factor panel, the
+availability histogram — plus seed and queue limits, an opt-in tunnel guard,
+and per-torrent peer limits and IP filtering.
 
-Torrent management arrives in Phase 1. See [[Roadmap]].
+What is not established is a line-by-line pass of the smoke-test checklist on
+every platform. The 1.2.0 release was installed and exercised on Windows and
+Linux and worked, which is a weaker claim than every item being checked — and
+it is 1.2.0 rather than the current release, so treat it as evidence that the
+app runs on those platforms rather than as validation of what shipped last.
+
+See [[Roadmap]] for what follows, and [[Deliberate-Omissions]] for what will
+not.
 
 ## Where to go next
 
-| Page                     | What it covers                                       |
-| ------------------------ | ---------------------------------------------------- |
-| [[Getting-Started]]      | Installing and first run                             |
-| [[User-Guide]]           | Adding torrents, file selection, settings            |
-| [[Architecture]]         | System design, IPC contract, data flow               |
-| [[Design-System]]        | Tokens, type, controls, accessibility floors         |
-| [[Privacy]]              | What is collected, what never is, and how to say no  |
-| [[Torrent-Engine-Notes]] | librqbit v9 integration surface and upgrade guidance |
-| [[Platform-Notes]]       | Per-OS packaging, signing, WebView quirks            |
-| [[Development-Setup]]    | Toolchain, dev loop, debugging, testing              |
-| [[CI-CD-and-Releases]]   | Pipeline and release process                         |
-| [[Roadmap]]              | Phases, backlog, known limitations                   |
+| Page                     | What it covers                                          |
+| ------------------------ | ------------------------------------------------------- |
+| [[Getting-Started]]      | Installing and first run                                |
+| [[User-Guide]]           | Adding torrents, file selection, settings               |
+| [[Architecture]]         | System design, IPC contract, data flow                  |
+| [[Design-System]]        | Tokens, type, controls, accessibility floors            |
+| [[Privacy]]              | What is collected, what never is, and how to say no     |
+| [[Torrent-Engine-Notes]] | librqbit v9 integration surface and upgrade guidance    |
+| [[Platform-Notes]]       | Per-OS packaging, signing, WebView quirks               |
+| [[Development-Setup]]    | Toolchain, dev loop, debugging, testing                 |
+| [[CI-CD-and-Releases]]   | Pipeline and release process                            |
+| [[Roadmap]]              | Phases, backlog, known limitations                      |
+| [[Deliberate-Omissions]] | What Flume will not build, and which kind of no each is |
 
 ## Name
 
