@@ -570,8 +570,12 @@ pub async fn move_in_queue(
     // whole reorder one step. Deriving it here left two overlapping moves
     // swapping from the same starting order, with the later write discarding
     // the earlier swap.
-    let snapshot = state.telemetry(&engine).await;
-    Ok(state.move_in_queue(&snapshot, &info_hash, up).await)
+    //
+    // Stamped as it is taken, too: a removal between the snapshot and the
+    // write would leave the removed torrent in the order being written, and
+    // `move_in_queue` refuses the move rather than give it a place again.
+    let (snapshot, mark) = state.marked_telemetry(&engine).await;
+    Ok(state.move_in_queue(&snapshot, &info_hash, up, mark).await)
 }
 
 /// Releases a preview the user cancelled.

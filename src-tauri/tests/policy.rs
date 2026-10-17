@@ -1806,7 +1806,9 @@ async fn a_move_stays_inside_its_own_line() {
 
     // Promoting the later download over the earlier one is a real move.
     assert!(
-        state.move_in_queue(&snap, &second_download, true).await,
+        state
+            .move_in_queue(&snap, &second_download, true, state.removal_mark())
+            .await,
         "a download can be moved within the line of downloads"
     );
     let policy = state.policy_state().await;
@@ -1818,18 +1820,24 @@ async fn a_move_stays_inside_its_own_line() {
     // The only seed cannot move: there is nothing in its line to move past,
     // even though downloads sit either side of it in admission order.
     assert!(
-        !state.move_in_queue(&snap, &seed, true).await,
+        !state
+            .move_in_queue(&snap, &seed, true, state.removal_mark())
+            .await,
         "a lone seed has nobody to overtake"
     );
     assert!(
-        !state.move_in_queue(&snap, &seed, false).await,
+        !state
+            .move_in_queue(&snap, &seed, false, state.removal_mark())
+            .await,
         "in either direction"
     );
 
     // And the earlier download, now last of two, cannot move down past the
     // seed that follows it in admission order.
     assert!(
-        !state.move_in_queue(&snap, &first_download, false).await,
+        !state
+            .move_in_queue(&snap, &first_download, false, state.removal_mark())
+            .await,
         "the end of a line is the end, whatever admission order says next"
     );
 }
@@ -1972,7 +1980,11 @@ async fn a_move_does_not_reorder_the_line_it_was_not_in() {
         },
     ]);
 
-    assert!(state.move_in_queue(&snap, &late_download, true).await);
+    assert!(
+        state
+            .move_in_queue(&snap, &late_download, true, state.removal_mark())
+            .await
+    );
 
     // Every eligible torrent now has a place, not just the downloads.
     let policy = state.policy_state().await;
@@ -2269,6 +2281,7 @@ async fn a_torrent_that_failed_to_restore_survives_an_engine_restart() {
             &snapshot(vec![seeding("b", 1, 0, 1_000)]),
             &Rules::default(),
             1,
+            state.removal_mark(),
         )
         .await;
 
@@ -2362,14 +2375,20 @@ async fn a_snapshot_taken_before_a_removal_cannot_put_its_bookkeeping_back() {
     };
     let state = AppState::new(settings, tmp.path().to_path_buf(), false);
 
-    // Captured first, like the loop does. Ratio 50, so the evaluation below
-    // stops it and records why.
+    // Stamped and captured first, like the loop does. Ratio 50, so the
+    // evaluation below would stop it and record why.
+    let mark = state.removal_mark();
     let stale = snapshot(vec![seeding("a", 1, 50_000, 1_000)]);
 
     state.forget_torrent("a").await;
 
     let rules = state.policy_rules().await;
-    state.evaluate_policy(&stale, &rules, 60).await;
+    let actions = state.evaluate_policy(&stale, &rules, 60, mark).await;
+
+    assert!(
+        actions.is_empty(),
+        "a snapshot a removal has overtaken decides nothing, got {actions:?}"
+    );
 
     let policy = state.policy_state().await;
     assert_eq!(
@@ -2384,16 +2403,15 @@ async fn a_snapshot_taken_before_a_removal_cannot_put_its_bookkeeping_back() {
     );
 }
 
-/// Undoing that resurrection must not reach the user's own choices.
+/// A removal invalidates the snapshots before it and nothing after them.
 ///
-/// A removal and a re-add of the same info hash can both land in the gap,
-/// and the force is then a statement about the new torrent. `evaluate`
-/// writes seeding time and stop reasons only, so those are the only two
-/// fields the undo touches -- clearing all four would lose a force the user
-/// granted seconds earlier, with nothing to re-derive it from until the
-/// next launch reads the library record.
+/// The refusal has to end, or one removal would stop policy for the rest of
+/// the run. It also has to end *cleanly* for a re-add of the same info hash:
+/// the next snapshot describes the new torrent, and what the user has
+/// already said about it -- a force, granted seconds after the re-add --
+/// is theirs rather than its predecessor's.
 #[tokio::test]
-async fn undoing_a_resurrection_leaves_what_the_user_said_alone() {
+async fn a_snapshot_taken_after_a_removal_is_evaluated_normally() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let state = AppState::new(Settings::default(), tmp.path().to_path_buf(), false);
 
@@ -2403,17 +2421,69 @@ async fn undoing_a_resurrection_leaves_what_the_user_said_alone() {
     state.note_torrent_added("a").await;
     state.set_forced("a", true).await;
 
+    // Stamped after the removal, so it describes the torrent that exists.
+    let mark = state.removal_mark();
     state
         .evaluate_policy(
             &snapshot(vec![seeding("a", 1, 0, 1_000)]),
             &Rules::default(),
-            1,
+            60,
+            mark,
         )
         .await;
 
     assert!(
         state.is_forced("a").await,
-        "the undo took a force the user granted to the torrent that replaced it"
+        "a force the user granted to the torrent that replaced it was dropped"
+    );
+    assert_eq!(
+        state.policy_state().await.seed_seconds("a"),
+        60,
+        "the refusal outlived the removal that caused it"
+    );
+}
+
+/// The same window, through the reorder path.
+///
+/// `move_in_queue` derives the order from a snapshot the caller took, so a
+/// torrent removed since is still in that order and `set_queue_order` would
+/// give it a place -- the one write that puts a queue position back after
+/// `forget_torrent` dropped it, and nothing sweeps it afterwards. Refused
+/// on the same stamp as an evaluation: the line the user was looking at is
+/// not the line any more.
+#[tokio::test]
+async fn a_reorder_from_a_snapshot_older_than_a_removal_is_refused() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let settings = Settings {
+        max_active_downloads: Some(1),
+        ..Settings::default()
+    };
+    let state = AppState::new(settings, tmp.path().to_path_buf(), false);
+
+    let gone = "a".repeat(40);
+    let staying = "d".repeat(40);
+    let mark = state.removal_mark();
+    let stale = snapshot(vec![
+        TorrentSummary {
+            added_at: Some(100),
+            ..queued(&gone, 1)
+        },
+        TorrentSummary {
+            added_at: Some(400),
+            ..queued(&staying, 2)
+        },
+    ]);
+
+    state.forget_torrent(&gone).await;
+
+    assert!(
+        !state.move_in_queue(&stale, &staying, true, mark).await,
+        "a move derived from a queue that has changed must not report success"
+    );
+    assert_eq!(
+        state.policy_state().await.queue_position(&gone),
+        None,
+        "the removed torrent was given a place again, and a re-add inherits it"
     );
 }
 

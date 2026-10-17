@@ -1,9 +1,11 @@
 //! Application-wide state shared across Tauri commands.
 
 use std::{
-    collections::HashSet,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -33,21 +35,28 @@ pub struct AppState {
     /// read it -- the UI needs to know *why* a torrent was stopped -- and
     /// clear it when a user overrides a limit.
     policy_state: RwLock<PolicyState>,
-    /// Torrents removed since the snapshot being evaluated was taken.
+    /// Counts removals, so a snapshot can be told to predate one.
     ///
-    /// The telemetry loop captures a snapshot and then evaluates it, and a
-    /// removal can land in that gap -- so the evaluation sees a torrent that
-    /// no longer exists and writes bookkeeping for it *after*
-    /// [`Self::forget_torrent`] has pruned it. While `evaluate` pruned on
-    /// absence that healed itself on the next tick, which is no longer true:
-    /// nothing else would ever drop the resurrected state, and the next
-    /// seed-time flush would put a record for the removed torrent back into
-    /// `library.json`, where reconciliation never deletes it.
+    /// Everything that writes policy bookkeeping derives it from a telemetry
+    /// snapshot taken earlier, and a removal can land in that gap -- the
+    /// evaluation or the reorder then sees a torrent that no longer exists
+    /// and writes state for it *after* [`Self::forget_torrent`] has pruned
+    /// it. While `evaluate` pruned on absence that healed on the next tick,
+    /// which is no longer true: nothing would ever drop the resurrected
+    /// state, and the next seed-time flush would put a record for the
+    /// removed torrent back into `library.json`, where reconciliation never
+    /// deletes it.
     ///
-    /// Written before the state is pruned, never after. An evaluation that
-    /// commits between the two must find the hash here, or it is the one
-    /// write nothing cleans up.
-    forgotten: Mutex<HashSet<String>>,
+    /// So a snapshot is stamped with this counter when it is taken, and a
+    /// commit derived from a stamp that no longer matches is dropped whole:
+    /// a removal invalidates every snapshot older than itself. One counter
+    /// rather than a set of removed hashes, because the question is about
+    /// the snapshot and not about any particular torrent -- which is also
+    /// what makes it cover a consumer nobody has written yet.
+    ///
+    /// Bumped before the state is pruned, never after. See
+    /// [`Self::forget_torrent`] for why that order is the whole mechanism.
+    removals: AtomicU64,
     /// Directory holding settings and session state. Not user-configurable.
     session_dir: PathBuf,
     /// Whether no settings file existed when the app started.
@@ -222,7 +231,7 @@ impl AppState {
             engine: RwLock::new(None),
             settings: RwLock::new(settings),
             policy_state: RwLock::new(policy_state),
-            forgotten: Mutex::new(HashSet::new()),
+            removals: AtomicU64::new(0),
             session_dir,
             first_run,
             usage,
@@ -425,32 +434,27 @@ impl AppState {
     /// `evaluate` is pure and synchronous, so nothing is awaited while the
     /// lock is held. The actions come back for the caller to perform, which
     /// keeps everything that touches the engine out of here.
+    ///
+    /// `mark` is the stamp [`Self::marked_telemetry`] returned with the
+    /// snapshot. A removal since then means this snapshot describes a
+    /// library that no longer exists, so nothing is committed and no action
+    /// is returned -- see the `removals` field. Dropping the whole
+    /// evaluation rather than the removed torrent's part of it costs a
+    /// second of accrued seeding time and defers a pause by one tick, both
+    /// of which the next tick settles from a snapshot that is true.
     pub async fn evaluate_policy(
         &self,
         snapshot: &crate::engine::TelemetrySnapshot,
         rules: &Rules,
         elapsed_secs: u64,
+        mark: u64,
     ) -> Vec<crate::policy::Action> {
         let mut state = self.policy_state.write().await;
+        if self.removal_mark() != mark {
+            return Vec::new();
+        }
         let outcome = crate::policy::evaluate(snapshot, rules, &state, elapsed_secs);
         *state = outcome.state;
-
-        // Undo anything this evaluation wrote for a torrent removed since
-        // the snapshot was taken. Both locks are held in this order only
-        // here, and `forget_torrent` takes them one at a time in the other
-        // order, so neither waits on the other.
-        //
-        // Two fields, not four: `evaluate` writes seeding time and the stop
-        // reason and nothing else, so they are the only two a stale snapshot
-        // can put back. Forcing and queue places come from the user, and
-        // clearing those here would throw away a choice they made about a
-        // torrent re-added under the same info hash -- while the cost of
-        // clearing these two for such a re-add is a tick of seeding time and
-        // a stop reason the next tick re-derives anyway.
-        for info_hash in self.forgotten.lock().await.drain() {
-            state.reset_seed_time(&info_hash);
-            state.clear_paused(&info_hash);
-        }
 
         outcome.actions
     }
@@ -764,10 +768,14 @@ impl AppState {
     /// `a_force_is_known_to_policy_even_when_the_library_cannot_record_it`
     /// pins.
     pub async fn forget_torrent(&self, info_hash: &str) {
-        // Recorded before the state is pruned, and each lock taken and
-        // released on its own -- see the field's doc for the ordering, and
-        // `set_forced` for why the library lock is never held with another.
-        self.forgotten.lock().await.insert(info_hash.to_owned());
+        // Bumped before the state is pruned, which is the whole mechanism.
+        // A commit that lands between the two is refused, because it checks
+        // the mark under the lock this prune is waiting for; one that landed
+        // before the bump is undone by the prune itself. There is no third
+        // ordering, so no write of a removed torrent's bookkeeping survives.
+        self.removals.fetch_add(1, Ordering::SeqCst);
+        // Taken and released on its own, like `set_forced` -- the library
+        // lock below is never held with another.
         self.policy_state.write().await.forget(info_hash);
         let json = {
             let mut library = self.library.write().await;
@@ -777,6 +785,32 @@ impl AppState {
             library.to_json()
         };
         self.persist_library(json);
+    }
+
+    /// A telemetry snapshot and the stamp saying what it is true of.
+    ///
+    /// What every caller that will write policy bookkeeping from a snapshot
+    /// uses, so the stamp and the snapshot cannot be taken in the wrong
+    /// order by accident. The stamp is read *first*, which is the safe
+    /// direction: a removal in between invalidates a snapshot that was
+    /// actually fresh, costing one tick, where the other order would hand
+    /// out a stamp vouching for a snapshot older than itself.
+    pub async fn marked_telemetry(
+        &self,
+        engine: &Engine,
+    ) -> (crate::engine::TelemetrySnapshot, u64) {
+        let mark = self.removal_mark();
+        (self.telemetry(engine).await, mark)
+    }
+
+    /// The stamp that changes whenever a torrent is removed.
+    ///
+    /// See the `removals` field for what it is for. Read it before taking a
+    /// snapshot, never after -- or use [`Self::marked_telemetry`], which
+    /// cannot be used in the wrong order.
+    #[must_use]
+    pub fn removal_mark(&self) -> u64 {
+        self.removals.load(Ordering::SeqCst)
     }
 
     /// The telemetry snapshot the UI gets, with queue places stamped on.
@@ -900,12 +934,23 @@ impl AppState {
     /// briefly admits the wrong torrent.
     ///
     /// Returns whether anything moved: `false` for a torrent already at the
-    /// end it was asked to move towards, or one not in the queue at all.
+    /// end it was asked to move towards, one not in the queue at all, or a
+    /// snapshot a removal has overtaken.
+    ///
+    /// `mark` is the stamp [`Self::marked_telemetry`] returned with the
+    /// snapshot, and a removal since then refuses the move. The order is
+    /// derived from the snapshot, so a torrent removed after it was taken is
+    /// still in that order and `set_queue_order` would give it a place --
+    /// the one write that puts a removed torrent's queue position back after
+    /// `forget_torrent` has dropped it. Refused rather than filtered: the
+    /// line the user was looking at no longer exists, so the move they asked
+    /// for is a statement about a queue that has changed underneath them.
     pub async fn move_in_queue(
         &self,
         snapshot: &crate::engine::TelemetrySnapshot,
         info_hash: &str,
         up: bool,
+        mark: u64,
     ) -> bool {
         // One reorder at a time, across the derivation as well as the write.
         // See the field's doc for what overlapping ones do to each other.
@@ -1006,7 +1051,16 @@ impl AppState {
         // The policy state decides the numbering and the library is written
         // with the same pairs. Deriving it twice is what the two stores
         // disagreeing looks like from the inside.
-        let assigned = self.policy_state.write().await.set_queue_order(&next);
+        let assigned = {
+            let mut policy = self.policy_state.write().await;
+            // Checked under the lock the prune in `forget_torrent` is
+            // waiting for, so a removal is either visible here or lands
+            // after this write and prunes what it wrote.
+            if self.removal_mark() != mark {
+                return false;
+            }
+            policy.set_queue_order(&next)
+        };
 
         let json = {
             let mut library = self.library.write().await;
