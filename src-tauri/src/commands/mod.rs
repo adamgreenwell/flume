@@ -535,19 +535,13 @@ pub async fn move_in_queue(
     up: bool,
 ) -> Result<bool, CommandError> {
     let engine = require_engine(&state).await?;
-    // The stamped snapshot, so the order here is the same one the UI is
-    // showing places from -- two computations of it are two that can
-    // disagree, and disagreeing means the user moves one torrent and a
-    // different one starts.
+    // The snapshot decides which torrents the queue holds; the order within
+    // it is derived inside `move_in_queue`, under the lock that makes the
+    // whole reorder one step. Deriving it here left two overlapping moves
+    // swapping from the same starting order, with the later write discarding
+    // the earlier swap.
     let snapshot = state.telemetry(&engine).await;
-    let order: Vec<String> = {
-        let policy = state.policy_state().await;
-        crate::policy::queue_order(&snapshot, &policy)
-            .into_iter()
-            .map(|t| t.info_hash.clone())
-            .collect()
-    };
-    Ok(state.move_in_queue(&order, &info_hash, up).await)
+    Ok(state.move_in_queue(&snapshot, &info_hash, up).await)
 }
 
 /// Releases a preview the user cancelled.

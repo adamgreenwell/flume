@@ -81,6 +81,21 @@ pub struct AppState {
     /// would make this module depend on `crate::commands`, which is the wrong
     /// direction.
     start_failure: RwLock<Option<String>>,
+    /// Held for the whole of [`Self::move_in_queue`], so two never overlap.
+    ///
+    /// The order a reorder swaps within is derived from the current one, so
+    /// deriving and writing have to be one step: two overlapping moves
+    /// otherwise derive the same starting order, both report success, and
+    /// the later write silently discards the earlier swap. The UI makes that
+    /// reachable -- it fires the move without awaiting it and closes the
+    /// menu, so repeated clicks overlap.
+    ///
+    /// A lock of its own rather than the policy state's, because the
+    /// operation writes the library too and `library_snapshot` takes the
+    /// library before the policy state. Holding policy across a library
+    /// write would invert that order and deadlock against it. Nothing else
+    /// takes this one, so it cannot be half of a cycle.
+    reorder: Mutex<()>,
     /// Held for the whole of [`Self::restart_engine`], so two never overlap.
     ///
     /// Without it the method takes the old engine out, releases the engine
@@ -200,6 +215,7 @@ impl AppState {
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
             start_failure: RwLock::new(None),
+            reorder: Mutex::new(()),
             restart: Mutex::new(()),
             start_backoff: Mutex::new(None),
         }
@@ -810,31 +826,60 @@ impl AppState {
     ///
     /// Returns whether anything moved: `false` for a torrent already at the
     /// end it was asked to move towards, or one not in the queue at all.
-    pub async fn move_in_queue(&self, order: &[String], info_hash: &str, up: bool) -> bool {
-        let hash = info_hash.to_ascii_lowercase();
-        let Some(at) = order.iter().position(|h| h.eq_ignore_ascii_case(&hash)) else {
-            return false;
-        };
-        let swap_with = if up {
-            match at.checked_sub(1) {
-                Some(above) => above,
-                // Already first. Reported rather than silently written, so a
-                // UI can grey the action instead of offering a no-op.
-                None => return false,
-            }
-        } else if at + 1 < order.len() {
-            at + 1
-        } else {
-            return false;
-        };
+    pub async fn move_in_queue(
+        &self,
+        snapshot: &crate::engine::TelemetrySnapshot,
+        info_hash: &str,
+        up: bool,
+    ) -> bool {
+        // One reorder at a time, across the derivation as well as the write.
+        // See the field's doc for what overlapping ones do to each other.
+        let _reordering = self.reorder.lock().await;
 
-        let mut next = order.to_vec();
-        next.swap(at, swap_with);
+        let hash = info_hash.to_ascii_lowercase();
+
+        // Derived here rather than by the caller, so the order swapped within
+        // is the one in force at this moment. The snapshot decides membership
+        // -- which torrents the queue holds -- and the policy state decides
+        // their order, which is what a previous reorder wrote.
+        let next = {
+            let policy = self.policy_state.read().await;
+            let order: Vec<String> = crate::policy::queue_order(snapshot, &policy)
+                .into_iter()
+                .map(|torrent| torrent.info_hash.clone())
+                .collect();
+
+            let Some(at) = order.iter().position(|h| h.eq_ignore_ascii_case(&hash)) else {
+                return false;
+            };
+            let swap_with = if up {
+                match at.checked_sub(1) {
+                    Some(above) => above,
+                    // Already first. Reported rather than silently written,
+                    // so a UI can grey the action instead of offering a
+                    // no-op.
+                    None => return false,
+                }
+            } else if at + 1 < order.len() {
+                at + 1
+            } else {
+                return false;
+            };
+
+            let mut next = order;
+            next.swap(at, swap_with);
+            next
+        };
 
         // Both halves, like `set_forced`: the policy state the next tick
         // reads, and the library record that survives a restart. Writing only
         // the record would leave the order unchanged until relaunch, which
         // reads as the action having done nothing.
+        //
+        // Scoped so the policy lock is released before the library lock is
+        // taken, which is the ordering `set_forced` established and the
+        // reason this method does not simply hold the policy write across
+        // everything.
         self.policy_state.write().await.set_queue_order(&next);
 
         let json = {
