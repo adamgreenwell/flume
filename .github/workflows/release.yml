@@ -343,8 +343,17 @@ jobs:
       #
       # The other legs do not need this: `tauri-action` brings its own CLI, and
       # this job cannot use that action because it runs in a container.
+      #
+      # `version` is pinned as well as the action ref, and both are load-
+      # bearing. The ref pins the install *script*; the script's default is
+      # whatever cargo-binstall released most recently, so pinning the ref
+      # alone would leave the binary this job actually runs floating. The two
+      # have to be bumped together -- Dependabot moves the ref and will not
+      # touch the input.
       - name: Install the Tauri CLI
         uses: cargo-bins/cargo-binstall@v1.25.3
+        with:
+          version: "1.25.3"
 
       - name: Bundle the .rpm
         working-directory: src-tauri
