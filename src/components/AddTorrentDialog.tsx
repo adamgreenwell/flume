@@ -123,15 +123,23 @@ export function AddTorrentDialog({
   const [folder, setFolder] = useState<string | null>(null);
   const [checked, setChecked] = useState<DestinationPreflight | null>(null);
   const [folderError, setFolderError] = useState<string | null>(null);
-  // Whether a check is in flight, and which folder the latest one is for.
+  // Whether a check is in flight, and a token identifying the latest one.
   //
   // Both are needed and they answer different questions. The flag gates
   // confirmation, because adding against the previous folder's free space is
-  // exactly the mistake this sheet exists to prevent. The ref discards a
-  // reply that is no longer about the chosen folder, because two picks in
-  // quick succession can land out of order and the slower one would win.
+  // exactly the mistake this sheet exists to prevent. The counter discards a
+  // reply that is no longer the current one, because picks in quick
+  // succession can land out of order and the slower one would win.
+  //
+  // A counter rather than the folder being checked, which is what this was
+  // first: two checks for the *same* folder are then indistinguishable, so
+  // the older reply passed the guard, installed its stale figures, and
+  // cleared `checking` while the newer check was still running -- enabling
+  // confirmation before the latest answer arrived. Every request gets its
+  // own number, and bumping it is also how a path that abandons checking
+  // marks whatever is pending obsolete.
   const [checking, setChecking] = useState(false);
-  const checkingFor = useRef<string | null>(null);
+  const checkSeq = useRef(0);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   // Kept in a ref so the unmount cleanup does not need `preview` as a dep,
@@ -142,13 +150,13 @@ export function AddTorrentDialog({
     isCommandError(caught) ? caught.message : fallback;
 
   const checkFolder = useCallback(async (hash: string, dir: string) => {
-    checkingFor.current = dir;
+    const token = (checkSeq.current += 1);
     setChecking(true);
     setFolderError(null);
     try {
       const result = await destinationPreflight(hash, dir);
       // Superseded while this was in flight; the newer check owns the state.
-      if (checkingFor.current !== dir) return;
+      if (checkSeq.current !== token) return;
 
       // A destination that is not there is not used. The remembered folder
       // can be on a volume that has since been unmounted, and the engine
@@ -169,14 +177,14 @@ export function AddTorrentDialog({
       }
       setChecked(result);
     } catch (caught: unknown) {
-      if (checkingFor.current !== dir) return;
+      if (checkSeq.current !== token) return;
       // The figures are dropped rather than left describing the old folder.
       // An honest "unknown" is what `PreflightTiles` renders for null, and
       // it beats a number about somewhere else.
       setChecked({ exists: true, freeBytes: null, alreadyOnDisk: [] });
       setFolderError(describe(caught, "Could not check that folder."));
     } finally {
-      if (checkingFor.current === dir) setChecking(false);
+      if (checkSeq.current === token) setChecking(false);
     }
   }, []);
 
@@ -329,11 +337,12 @@ export function AddTorrentDialog({
     // what was stored, so changing the global folder revived the old path.
     if (sameFolder(picked, preview.savePath)) {
       // Any check still in flight is now about somewhere else, so it is
-      // marked obsolete rather than left to land. Its guard compares against
-      // this ref, and without clearing it the older request still matched --
-      // installing the custom folder's free space and on-disk marks beside a
-      // destination that had gone back to the session default.
-      checkingFor.current = null;
+      // marked obsolete rather than left to land. Bumping the counter is
+      // what does that: without it the older request still matched its
+      // token, and installed the custom folder's free space and on-disk
+      // marks beside a destination that had gone back to the session
+      // default.
+      checkSeq.current += 1;
       setChecking(false);
       setFolder(null);
       setChecked(null);

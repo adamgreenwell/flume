@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DestinationPreflight, TorrentPreview } from "@/lib/ipc/types";
@@ -157,6 +163,99 @@ describe("a remembered destination", () => {
     expect(onFolderUsed).not.toHaveBeenCalled();
   });
 
+  it("ignores an older reply when the same folder is checked twice", async () => {
+    // Requests were identified by the folder they were for, so two checks of
+    // the *same* folder were indistinguishable: the older reply passed the
+    // guard, installed its stale figures, and cleared the checking flag
+    // while the newer check was still running — enabling confirmation before
+    // the latest answer arrived.
+    const releases: Array<(value: DestinationPreflight) => void> = [];
+    destinationPreflight.mockImplementation(
+      () =>
+        new Promise<DestinationPreflight>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    pickFolder.mockResolvedValue("/Volumes/Media");
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Media"
+        onClose={() => {}}
+      />,
+    );
+
+    // The adopted folder's check is pending.
+    await waitFor(() => expect(releases).toHaveLength(1));
+
+    // The same folder again, so both requests are for the same path.
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await waitFor(() => expect(releases).toHaveLength(2));
+
+    // The first reply lands, and it is the stale answer that a vanished
+    // volume gives. It must change nothing.
+    //
+    // The flush matters, and a `waitFor` here would not do: the button
+    // already reads "Checking that folder…" before this reply is handled, so
+    // polling for that passes whether or not the reply is ignored. Draining
+    // the continuation inside `act` and then asserting once is what separates
+    // the two — once it has run, anything the stale reply was going to do has
+    // happened.
+    await act(async () => {
+      releases[0]({ exists: false, freeBytes: null, alreadyOnDisk: [] });
+    });
+    // A stale answer that gets through drops the destination and says the
+    // folder is gone, about a folder the newer check is still asking about.
+    expect(screen.queryByText(/not there any more/)).toBeNull();
+    expect(screen.getByText("/Volumes/Media")).toBeDefined();
+    // And it must not release confirmation either.
+    expect(
+      screen.getByRole("button", { name: "Checking that folder…" }),
+    ).toBeDefined();
+
+    // Only the newest reply releases confirmation.
+    releases[1]({ exists: true, freeBytes: 2, alreadyOnDisk: [false] });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
+    );
+  });
+
+  it("ignores an older failure when the same folder is checked twice", async () => {
+    // The same race on the error path, which has its own guard. A superseded
+    // check that *fails* would otherwise replace the figures with "unknown"
+    // and show an error about a folder the newer check is still asking about.
+    const rejects: Array<(reason: unknown) => void> = [];
+    destinationPreflight.mockImplementation(
+      () =>
+        new Promise<DestinationPreflight>((_resolve, reject) => {
+          rejects.push(reject);
+        }),
+    );
+    pickFolder.mockResolvedValue("/Volumes/Media");
+
+    render(
+      <AddTorrentDialog
+        droppedPath="/tmp/x.torrent"
+        defaultFolder="/Volumes/Media"
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(rejects).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    await waitFor(() => expect(rejects).toHaveLength(2));
+
+    // The older check fails. Its failure belongs to nothing on screen.
+    await act(async () => {
+      rejects[0](new Error("the volume went away"));
+    });
+    expect(screen.queryByText(/Could not check that folder/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Checking that folder…" }),
+    ).toBeDefined();
+  });
+
   it("discards a check that was still running when the default came back", async () => {
     // Going back to the session folder leaves any in-flight check about
     // somewhere else. Without marking it obsolete the older reply still
@@ -193,11 +292,18 @@ describe("a remembered destination", () => {
     );
 
     // The stale reply lands. It must not be installed.
-    release({ exists: true, freeBytes: 42, alreadyOnDisk: [true] });
+    //
+    // Asserted against the figures rather than the flag: the Add button
+    // already reads "Add 1 file" before this reply arrives, so polling for
+    // that cannot tell an ignored reply from an installed one. 42 bytes of
+    // free space against a 1 kB torrent does not fit, and the volume tile
+    // says so when the figures land — which is the whole harm.
+    await act(async () => {
+      release({ exists: true, freeBytes: 42, alreadyOnDisk: [true] });
+    });
+    expect(screen.queryByText(/will not fit/)).toBeNull();
+    expect(screen.getByText("Leaves the volume tight.")).toBeDefined();
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /^Add 1 file/ })).toBeDefined(),
-    );
     fireEvent.click(screen.getByRole("button", { name: /^Add 1 file/ }));
     await waitFor(() =>
       expect(confirmAdd).toHaveBeenCalledWith(PREVIEW.infoHash, null, null),
