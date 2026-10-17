@@ -41,7 +41,7 @@ flume.dev (a React node editor). Both verified unrelated.
 | Bundle ID          | `io.github.adamgreenwell.flume`                        | `dev.flume.*` would claim an unrelated project's domain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | TLS                | `librqbit` with `default-features = false`, `rust-tls` | No OpenSSL in the lockfile → no `libssl` runtime dep on Linux                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Fonts              | Instrument Sans + IBM Plex Mono, vendored as woff2     | Still no build-time or runtime fetch; the type ramp is measured against these metrics, and the app must render offline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| MSRV               | Rust 1.88                                              | A lower MSRV silently blocks security updates — cargo won't select deps needing more                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| MSRV               | Rust 1.90                                              | A lower MSRV silently blocks updates — cargo won't select deps needing more. It has now cost something twice: 1.85 held back the patched `time` and `plist` that fix RUSTSEC-2026-0009/-0194/-0195, and 1.88 held back the Tauri 2.12 line while `@tauri-apps/*` moved on, which `tauri build` refuses outright — so every 1.4.0 release build failed at once, after the tag was pushed. Raise this to what the dependencies declare; the toolchain is 1.98 and the floor costs nothing                                                                                                                                                      |
 | Rust toolchain     | Pinned in `rust-toolchain.toml` (1.98.0)               | CI ran `@stable` in seven places while dev machines ran whatever `rustup update` last fetched; #134 passed clippy locally on 1.94 and failed CI on 1.98. Not the MSRV — that is `rust-version` in Cargo.toml and nothing verifies it                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Node (CI + dev)    | 26, pinned in `.nvmrc`                                 | Build tooling only, never shipped; matches `@types/node`. `.nvmrc` is the single source — `engines`, CI and `nvm use` all read it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | TypeScript         | Stay on 5.x                                            | TS 7 is outside `typescript-eslint`'s peer range (`>=4.8.4 <6.1.0`), so `npm run lint` cannot run. Ignored in `dependabot.yml`; revisit in #28                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -349,6 +349,29 @@ They are not uniform, and a failure there is not automatically a regression:
   `src/engine/availability.rs`) only mean anything under `--release`.
 
 Each test's `#[ignore]` reason names its own prerequisite.
+
+**`npm run check` also refuses on mismatched Tauri versions**, because
+nothing else can see them. `tauri build` will not run when a `tauri*` crate and
+its `@tauri-apps/*` package are off the same major/minor, and no other command
+looks — `cargo test`, `tsc`, the linters and CI all pass. So the drift surfaces
+only in a release build, where it fails on every platform at once and after the
+tag is already pushed, which is how 1.4.0's first build died.
+
+**A new gate has to be added in three places.** `npm run check` is not what
+CI runs: `.github/workflows/ci.yml` lists the steps individually, and
+`scripts/preflight.sh` lists them a third time. So a check added only to the
+aggregate script protects whoever types `npm run check` and nobody else —
+which is exactly what happened to this one on its first attempt, leaving a
+guard that looked present and would have let the next ecosystem-only
+Dependabot update merge green and break the release again. Add to all three,
+or the gate is decoration.
+
+It drifts because `dependabot.yml` has a `tauri` group for the crates and a
+separate one for `@tauri-apps/*`, and neither knows about the other: either
+merging alone breaks the next release. `scripts/check-tauri-parity.mjs` compares
+the two lockfiles — resolved versions, not manifest ranges, since a range of
+`2.11.5` can resolve to `2.12.4` and look fine while the build fails. When cargo
+refuses to move a crate, suspect the MSRV before anything else.
 
 **`npm run check` refuses to run on the wrong Node**, because below 22 it would
 not fail honestly: jsdom's copy of undici calls

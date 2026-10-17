@@ -65,7 +65,7 @@ into the part that is not solved: **the experience**.
 
 ## Development
 
-**Prerequisites:** [Rust][rust] (stable, 1.88+), Node.js 26 (see `.nvmrc`), and your
+**Prerequisites:** [Rust][rust] (stable, 1.90+), Node.js 26 (see `.nvmrc`), and your
 platform's [Tauri system dependencies][tauri-prereqs].
 
 ```bash

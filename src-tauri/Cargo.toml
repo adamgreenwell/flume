@@ -8,24 +8,31 @@ repository = "https://github.com/adamgreenwell/flume"
 edition = "2024"
 # Minimum supported Rust version.
 #
-# librqbit 9 needs 1.85+ (edition 2024), but 1.88 is required deliberately:
-# cargo's MSRV-aware resolver will not select a dependency version whose
-# rust-version exceeds ours, and pinning 1.85 silently held back the patched
-# `time` (>= 0.3.47) and `plist` (1.10) releases that fix RUSTSEC-2026-0009,
-# -0194, and -0195. An MSRV we do not actually need costs security updates.
-rust-version = "1.88"
+# librqbit 9 needs 1.85+ (edition 2024), but a higher floor is required
+# deliberately: cargo's MSRV-aware resolver will not select a dependency
+# version whose rust-version exceeds ours, so an MSRV we do not actually need
+# costs us updates. 1.85 silently held back the patched `time` (>= 0.3.47) and
+# `plist` (1.10) releases that fix RUSTSEC-2026-0009, -0194 and -0195, which
+# is why this is 1.88 and not lower.
+#
+# 1.90 because the Tauri 2.12 line declares it, and 1.88 held that line back
+# while the `@tauri-apps/*` packages moved on -- which `tauri build` refuses
+# outright, so every release build failed on a version mismatch that no local
+# check could see. The second time this floor has cost something real; see
+# `scripts/check-tauri-parity.mjs` for the guard.
+rust-version = "1.90"
 
 [lib]
 name = "flume_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
 # `tray-icon` gates `tauri::tray`; without it the tray module does not exist.
-tauri = { version = "2.11.5", features = ["tray-icon"] }
-tauri-plugin-log = "2.7.0"
+tauri = { version = "2.12.4", features = ["tray-icon"] }
+tauri-plugin-log = "2.10.1"
 
 # --- Torrent engine -------------------------------------------------------
 # `default-features = false` drops two defaults we do not want:
@@ -49,11 +56,11 @@ anyhow = "1.0"
 tracing = "0.1"
 log = "0.4"
 directories = "6.0"
-tauri-plugin-dialog = "2.7.2"
-tauri-plugin-opener = "2.5.4"
-tauri-plugin-clipboard-manager = "2.3.2"
-tauri-plugin-deep-link = "2.4.9"
-tauri-plugin-notification = "2.3.3"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-clipboard-manager = "2.5.0"
+tauri-plugin-deep-link = "2.6.2"
+tauri-plugin-notification = "2.7.0"
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 
 # --- Egress check ---------------------------------------------------------
@@ -102,7 +109,7 @@ tempfile = "3.27.0"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
-tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.5.4", features = ["deep-link"] }
 
 # librqbit does not expose per-peer piece availability, so a swarm cannot be
 # told "everyone stalled at 6%" from "these six hold every piece between them".
