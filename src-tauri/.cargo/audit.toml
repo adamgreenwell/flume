@@ -1,0 +1,41 @@
+# Configuration for `cargo audit`, read from the directory it runs in — so
+# this file governs the CI job and a local `cargo audit` identically. That
+# symmetry is the point of keeping it here rather than passing `--ignore` in
+# ci.yml: an ignore only CI knows about makes every local run disagree with
+# the gate, and the next person to look assumes the gate is broken.
+#
+# Nothing goes in this list without a reachability argument written down.
+# "cargo cannot reach the fix" is a reason to investigate, not a reason to
+# ignore.
+
+[advisories]
+# RUSTSEC-2026-0293 — ringbuf 0.4.8, double free / use-after-free in
+# `Consumer::skip` and `Consumer::clear`.
+#
+# Unreachable in Flume, established from the dependency's source rather than
+# assumed. The advisory's precondition is specific: `skip`/`clear` drop the
+# consumed elements in place and only afterwards advance the read index, so a
+# panic *inside an element's `Drop`* leaves the index pointing at slots that
+# have already been dropped, and the ring buffer's own destructor drops them
+# a second time.
+#
+# ringbuf reaches Flume by exactly one path — librqbit-utp 0.7.0, via the
+# patched librqbit — and librqbit-utp declares exactly one ring buffer:
+#
+#     src/stream_tx.rs:129   type RingBuf = SharedRb<Heap<u8>>;
+#
+# The element type is `u8`. It is `Copy`, its drop is a no-op the compiler
+# elides, and it cannot panic. The crate's single `skip` call site
+# (`UserTx::truncate_front`) operates on that buffer, and there is no other
+# `SharedRb` or `clear` call anywhere in the crate. The precondition cannot
+# be met, so the vulnerable path cannot be entered.
+#
+# Why this is ignored rather than fixed: the fix is ringbuf >=0.5.2, and
+# librqbit-utp 0.7.0 — the latest crates.io release — depends on "0.4.7".
+# 0.4 -> 0.5 is semver-major, so no `cargo update` can reach it; it needs a
+# release from librqbit-utp first.
+#
+# Revisit when librqbit-utp ships a release on ringbuf 0.5.x, and delete this
+# entry rather than re-verifying it — the argument above is pinned to the
+# element type of one buffer in one version, and is not a general claim.
+ignore = ["RUSTSEC-2026-0293"]
