@@ -57,6 +57,17 @@ updates:
             "typescript",
             "jsdom",
           ]
+      # Storybook publishes its packages from a single release and warns at
+      # runtime when they disagree, but nothing was batching them, so the
+      # lockfile drifted apart on main: core and addon-docs at 10.6.0 against
+      # nextjs-vite, react, react-vite, builder-vite and csf-plugin at
+      # 10.5.10, with react-dom-shim resolved twice, once at each version.
+      #
+      # Ungrouped it is also expensive to repair. #218, #219 and #220 each
+      # moved one package to 10.6.2 and all three edited adjacent
+      # devDependencies lines, so only the first of them could merge clean.
+      storybook:
+        patterns: ["storybook", "@storybook/*"]
     ignore:
       # CLAUDE.md records the decision to stay on TypeScript 5.x, but the
       # ignore that was supposed to enforce it was never written -- so #76
