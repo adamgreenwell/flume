@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@storybook/addon-a11y": "^10.6.2",
-    "@storybook/addon-docs": "^10.6.0",
+    "@storybook/addon-docs": "^10.6.2",
     "@storybook/nextjs-vite": "^10.6.2",
     "@tailwindcss/postcss": "^4",
     "@tauri-apps/cli": "^2.12.2",
