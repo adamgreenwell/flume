@@ -148,3 +148,24 @@ describe("a queued torrent", () => {
     expect(queued).not.toBe(pause);
   });
 });
+
+describe("the meta line under the name", () => {
+  /**
+   * The line is `overflow-hidden` at a fixed height, so anything that shrinks
+   * below its content wraps and loses its second half. A long `detail` put
+   * the size over budget and `49.0 GB` rendered as `49.0` with a sliced `GB`
+   * beneath it — the one figure in the line that cannot survive losing its
+   * unit. Structural for the same reason as the `ExpandedRow` guard: jsdom
+   * cannot measure the wrap.
+   */
+  it("never shrinks the size, however long the detail is", () => {
+    row({
+      totalBytes: 49_000_000_000,
+      detail:
+        "downloading from 28 of 1,544 peers — about 15 s left at 40.8 MB/s",
+    });
+
+    const size = screen.getByText("49.0 GB");
+    expect(size.className).toContain("shrink-0");
+  });
+});
