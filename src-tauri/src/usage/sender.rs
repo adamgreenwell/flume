@@ -46,18 +46,32 @@ const REQUIRED_SCHEME: &str = "https://";
 /// `str::starts_with` is not const, and [`should_warn`] is const through
 /// [`is_configured`].
 ///
-/// Requires a host after the scheme made only of characters a hostname can
-/// contain: letters, digits, `.`, `-`, and `:` for a port. Anything after the
-/// first `/`, `?` or `#` is the path and is not inspected.
+/// After the scheme, everything up to the first `/`, `?` or `#` must be a
+/// hostname with an optional port; the path after it is not inspected.
+///
+/// - The host is two or more non-empty labels of letters, digits and `-`,
+///   separated by `.`. One label is not enough: a collector is a public
+///   name, and `https://COLLECTOR/v1/usage` is a placeholder, not a host.
+/// - The last label starts with a letter. That rules out IP literals, which
+///   the `url` crate parses as IPv4 whenever the last label is numeric -- and
+///   then refuses outright when it is not a valid address, `999.1.1.1` or
+///   `1.2.3.4.5`. A TLS collector on a bare IP is not a real deployment.
+/// - A port, if present, is one to five digits from 1 to 65535.
 ///
 /// The host check is the part that matters, and it is new. This used to
 /// require only one byte past `https://`, which is why every release from
 /// 1.0.x to 1.4.0 shipped with
 /// `https://flume-usage.<your-subdomain>.workers.dev/v1/usage` -- the
 /// placeholder from the docs, pasted into the secret -- and reported itself
-/// configured while POSTing to a hostname that cannot resolve. `<`, `>`, `{`,
-/// `_`, a space and `@` all fail now, and between them they cover every
-/// placeholder convention worth expecting.
+/// configured while POSTing to a hostname that cannot resolve. A first fix
+/// checked only that each character *could* appear in a hostname, which let
+/// `https://:` and `https://host:notaport` through: shapes reqwest cannot
+/// even build a request from.
+///
+/// It errs strict. A trailing-dot FQDN or an empty port (`x.dev:/`) parses,
+/// and is refused here anyway: the cost of that is a release that fails
+/// loudly over a strange secret, where the cost of erring the other way is a
+/// build that reports nothing for months while saying it is configured.
 ///
 /// Trailing whitespace is trimmed before any of that, as it always was:
 /// reqwest's URL parser normalises it away, so rejecting it would refuse a
@@ -87,18 +101,74 @@ const fn is_usable(url: &str) -> bool {
         i += 1;
     }
 
-    let host = i;
-    while i < end {
-        let b = bytes[i];
+    // The authority runs to the first `/`, `?` or `#`; the host to the
+    // first `:` inside it.
+    let start = i;
+    let mut authority_end = start;
+    while authority_end < end {
+        let b = bytes[authority_end];
         if b == b'/' || b == b'?' || b == b'#' {
             break;
         }
-        if !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':') {
+        authority_end += 1;
+    }
+    let mut host_end = start;
+    while host_end < authority_end && bytes[host_end] != b':' {
+        host_end += 1;
+    }
+
+    let mut labels = 0;
+    let mut label_len = 0;
+    let mut label_first = 0u8;
+    i = start;
+    while i < host_end {
+        let b = bytes[i];
+        if b == b'.' {
+            if label_len == 0 {
+                return false;
+            }
+            labels += 1;
+            label_len = 0;
+        } else if b.is_ascii_alphanumeric() || b == b'-' {
+            if label_len == 0 {
+                label_first = b;
+            }
+            label_len += 1;
+        } else {
             return false;
         }
         i += 1;
     }
-    i > host
+    // An empty host, or one ending in `.`, leaves the last label empty.
+    if label_len == 0 {
+        return false;
+    }
+    labels += 1;
+    if labels < 2 || !label_first.is_ascii_alphabetic() {
+        return false;
+    }
+
+    if host_end == authority_end {
+        return true;
+    }
+    // Past the `:`. A second `:` is not a digit, so it fails here too. The
+    // length cap is what keeps `port` from overflowing below; the range check
+    // alone would not, since it runs after the digits are accumulated.
+    let digits = authority_end - host_end - 1;
+    if digits == 0 || digits > 5 {
+        return false;
+    }
+    let mut port: u32 = 0;
+    i = host_end + 1;
+    while i < authority_end {
+        let b = bytes[i];
+        if !b.is_ascii_digit() {
+            return false;
+        }
+        port = port * 10 + (b - b'0') as u32;
+        i += 1;
+    }
+    port >= 1 && port <= 65_535
 }
 
 /// The endpoint this build can POST to, or `None` if it has none it can use.
@@ -490,8 +560,20 @@ mod tests {
     /// the two predicates are checked against the same inputs.
     const USABLE: &[&str] = &[
         "https://flume-usage.example.workers.dev/v1/usage",
-        "https://x",
-        "https://host:8443/v1/usage",
+        "https://x.dev",
+        "https://collector.example.com:8443/v1/usage",
+        // Both ends of the port range.
+        "https://x.dev:1",
+        "https://x.dev:65535/v1/usage",
+        // A leading zero: `url` reads this as 8443, and bash would read it as
+        // invalid octal without the script's `10#`.
+        "https://x.dev:08443",
+        // A query or fragment ends the authority just as a path does.
+        "https://x.dev?q=1",
+        "https://x.dev#f",
+        // Digits and hyphens are fine inside labels, and punycode is ASCII.
+        "https://a-1.b2.example/v1/usage",
+        "https://xn--bcher-kva.example/v1/usage",
         // Trailing whitespace is left alone deliberately: the `url` crate
         // reqwest parses with normalises it away, and rejecting it here when
         // the release gate accepts it would create the reverse drift -- a
@@ -525,7 +607,31 @@ mod tests {
         "https://{{subdomain}}.workers.dev/v1/usage",
         // A space where the host should start, and credentials in the URL.
         "https:// host/v1/usage",
-        "https://user:pw@host/v1/usage",
+        "https://user:pw@host.example/v1/usage",
+        // One label: a placeholder spelled with legal characters.
+        "https://x",
+        "https://YOUR-COLLECTOR/v1/usage",
+        // Every character legal, the shape not. Codex's two came first, from
+        // review of the character-class version of this check.
+        "https://:",
+        "https://host.example:notaport/v1/usage",
+        "https://x.dev:",
+        "https://x.dev:0",
+        "https://x.dev:65536",
+        "https://x.dev:123456",
+        "https://x.dev:80:90",
+        // Letters short enough to land inside the range if read as digits:
+        // `abc` is 5451 by byte arithmetic, so only the digit check stops it.
+        "https://x.dev:abc",
+        // Long enough to overflow a u32 accumulator, which the length cap
+        // exists to prevent -- without it this panics in a debug build.
+        "https://x.dev:99999999999",
+        "https://a..b.dev",
+        "https://.x.dev",
+        "https://x.dev.",
+        // IP literals, valid or not, by the last-label rule.
+        "https://192.0.2.1/v1/usage",
+        "https://999.1.1.1/v1/usage",
     ];
 
     #[test]
@@ -540,6 +646,29 @@ mod tests {
         }
         for bad in UNUSABLE {
             assert!(!is_usable(bad), "{bad:?} should not be usable");
+        }
+    }
+
+    /// Everything `is_usable` accepts is something reqwest can build a
+    /// request from.
+    ///
+    /// One direction only, on purpose: the rule errs strict, so several
+    /// refused values (`x.dev.`, `x.dev:`) parse fine. What must never happen
+    /// is the converse -- a value that passes and then fails inside `post` on
+    /// every flush, the silent failure the gate exists to catch. The
+    /// character-class version of this check had exactly that hole, with
+    /// `https://:` and `https://host:notaport`, which is why this runs over
+    /// the refused table too: it is asking the predicate, not the table.
+    #[test]
+    fn everything_usable_is_a_url_reqwest_accepts() {
+        for url in USABLE.iter().chain(UNUSABLE) {
+            if !is_usable(url) {
+                continue;
+            }
+            let parsed = reqwest::Url::parse(url)
+                .unwrap_or_else(|e| panic!("{url:?} passes is_usable but does not parse: {e}"));
+            assert_eq!(parsed.scheme(), "https", "{url:?}");
+            assert!(parsed.host_str().is_some_and(|h| !h.is_empty()), "{url:?}");
         }
     }
 

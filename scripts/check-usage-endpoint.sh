@@ -20,12 +20,17 @@
 # the two answers ever differ. Change one, change the other, and that test
 # will say so.
 #
-# The rule: `https://`, then a host of letters, digits, `.`, `-` and `:` (a
-# port), then optionally a path, query or fragment. Characters a hostname
-# cannot contain -- `<`, `>`, `{`, `_`, a space, `@` for userinfo -- fail,
-# which is what catches a placeholder. Trailing whitespace is trimmed first,
-# as before: reqwest's URL parser normalises it away, so rejecting it here
-# would fail a release over a secret that works.
+# The rule: `https://`, then a host of two or more non-empty labels of
+# letters, digits and `-`, the last starting with a letter; then optionally
+# `:` and a port from 1 to 65535; then optionally a path, query or fragment.
+# The Rust doc comment on `is_usable` says why each part is there. Trailing
+# whitespace is trimmed first: reqwest's URL parser normalises it away, so
+# rejecting it here would fail a release over a secret that works.
+#
+# The first version of this checked only that every character *could*
+# appear in a hostname, which let `https://:` and `https://host:notaport`
+# through. The regex now checks the shape, and the port range is arithmetic
+# because a regex cannot say "at most 65535" legibly.
 #
 # Reads the URL from $ENDPOINT rather than an argument, so the secret never
 # appears in a process listing.
@@ -35,6 +40,15 @@ LC_ALL=C
 
 url="${ENDPOINT-}"
 trimmed="${url%"${url##*[![:space:]]}"}"
-re='^https://[A-Za-z0-9.:-]+([/?#].*)?$'
+# Groups: 1 a non-final label and its dot, 2 the final label, 3 `:port`,
+# 4 the port's digits, 5 the path.
+re='^https://([A-Za-z0-9-]+\.)+([A-Za-z][A-Za-z0-9-]*)(:([0-9]{1,5}))?([/?#].*)?$'
 
-[[ $trimmed =~ $re ]]
+[[ $trimmed =~ $re ]] || exit 1
+
+port="${BASH_REMATCH[4]}"
+# 10# so a leading zero is not read as octal.
+if [[ -n $port ]] && ! (( 10#$port >= 1 && 10#$port <= 65535 )); then
+  exit 1
+fi
+exit 0
