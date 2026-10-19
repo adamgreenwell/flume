@@ -46,14 +46,36 @@ const REQUIRED_SCHEME: &str = "https://";
 /// `str::starts_with` is not const, and [`should_warn`] is const through
 /// [`is_configured`].
 ///
-/// Requires at least one byte past the scheme, because a bare `https://` has
-/// no host and fails every request exactly as `""` does — the failure this
-/// whole predicate exists to stop.
+/// Requires a host after the scheme made only of characters a hostname can
+/// contain: letters, digits, `.`, `-`, and `:` for a port. Anything after the
+/// first `/`, `?` or `#` is the path and is not inspected.
+///
+/// The host check is the part that matters, and it is new. This used to
+/// require only one byte past `https://`, which is why every release from
+/// 1.0.x to 1.4.0 shipped with
+/// `https://flume-usage.<your-subdomain>.workers.dev/v1/usage` -- the
+/// placeholder from the docs, pasted into the secret -- and reported itself
+/// configured while POSTing to a hostname that cannot resolve. `<`, `>`, `{`,
+/// `_`, a space and `@` all fail now, and between them they cover every
+/// placeholder convention worth expecting.
+///
+/// Trailing whitespace is trimmed before any of that, as it always was:
+/// reqwest's URL parser normalises it away, so rejecting it would refuse a
+/// value that works.
+///
+/// `scripts/check-usage-endpoint.sh` is the release gate's copy of this rule,
+/// and `the_release_gate_agrees_with_is_usable` runs it over the same table as
+/// the tests here. Two predicates kept identical by a comment is how the
+/// placeholder got through; two kept identical by a test is the fix.
 const fn is_usable(url: &str) -> bool {
     let bytes = url.as_bytes();
     let scheme = REQUIRED_SCHEME.as_bytes();
 
-    if bytes.len() <= scheme.len() {
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if end <= scheme.len() {
         return false;
     }
 
@@ -64,7 +86,19 @@ const fn is_usable(url: &str) -> bool {
         }
         i += 1;
     }
-    true
+
+    let host = i;
+    while i < end {
+        let b = bytes[i];
+        if b == b'/' || b == b'?' || b == b'#' {
+            break;
+        }
+        if !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b':') {
+            return false;
+        }
+        i += 1;
+    }
+    i > host
 }
 
 /// The endpoint this build can POST to, or `None` if it has none it can use.
@@ -452,6 +486,48 @@ mod tests {
         }
     }
 
+    /// Endpoints a build must accept. Shared with the release-gate test, so
+    /// the two predicates are checked against the same inputs.
+    const USABLE: &[&str] = &[
+        "https://flume-usage.example.workers.dev/v1/usage",
+        "https://x",
+        "https://host:8443/v1/usage",
+        // Trailing whitespace is left alone deliberately: the `url` crate
+        // reqwest parses with normalises it away, and rejecting it here when
+        // the release gate accepts it would create the reverse drift -- a
+        // secret with a stray newline passing CI and shipping a build that
+        // compiles inert. With and without a path, since the host check now
+        // runs to the end of the string when there is none.
+        "https://x.dev/v1/usage\n",
+        "https://x.dev\n",
+    ];
+
+    /// Endpoints a build must refuse.
+    const UNUSABLE: &[&str] = &[
+        "",
+        "   ",
+        "not-a-url",
+        "ftp://x",
+        "http://collector.example.com/v1/usage",
+        // Plaintext to loopback is still plaintext, and no documented
+        // workflow needs it: collector/README.md drives `wrangler dev` with
+        // curl, never a client build.
+        "http://localhost:8787/v1/usage",
+        // Scheme but no host: fails every POST exactly as "" does.
+        "https://",
+        // Case matters, because the release gate's regex is case-sensitive.
+        "HTTPS://x.dev",
+        // The one that shipped. Every release from 1.0.x to 1.4.0 carried it,
+        // reported reporting as configured, and resolved nothing.
+        "https://flume-usage.<your-subdomain>.workers.dev/v1/usage",
+        // The other placeholder conventions worth expecting.
+        "https://YOUR_COLLECTOR/v1/usage",
+        "https://{{subdomain}}.workers.dev/v1/usage",
+        // A space where the host should start, and credentials in the URL.
+        "https:// host/v1/usage",
+        "https://user:pw@host/v1/usage",
+    ];
+
     #[test]
     fn only_a_real_https_url_counts_as_usable() {
         // Table-driven and over literals, so it holds whatever this build was
@@ -459,35 +535,43 @@ mod tests {
         // `is_configured() == ENDPOINT.is_some()`, which is the exact
         // equivalence that was wrong, and it passed under `Some("")` by
         // agreeing with the bug.
-        for good in [
-            "https://flume-usage.example.workers.dev/v1/usage",
-            "https://x",
-            // Trailing whitespace is left alone deliberately: the `url` crate
-            // reqwest parses with normalises it away, and rejecting it here
-            // when `release.yml`'s glob accepts it would create the reverse
-            // drift -- a secret with a stray newline passing CI and shipping
-            // a build that compiles inert.
-            "https://x.dev/v1/usage\n",
-        ] {
+        for good in USABLE {
             assert!(is_usable(good), "{good:?} should be usable");
         }
-
-        for bad in [
-            "",
-            "   ",
-            "not-a-url",
-            "ftp://x",
-            "http://collector.example.com/v1/usage",
-            // Plaintext to loopback is still plaintext, and no documented
-            // workflow needs it: collector/README.md drives `wrangler dev`
-            // with curl, never a client build.
-            "http://localhost:8787/v1/usage",
-            // Scheme but no host: fails every POST exactly as "" does.
-            "https://",
-            // Case matters, because `release.yml`'s glob is case-sensitive.
-            "HTTPS://x.dev",
-        ] {
+        for bad in UNUSABLE {
             assert!(!is_usable(bad), "{bad:?} should not be usable");
+        }
+    }
+
+    /// The release gate and this predicate give the same answer for every
+    /// case in the table.
+    ///
+    /// The point of the whole change. Three copies of this rule -- two in
+    /// `release.yml`, one here -- were kept in step by comments saying they
+    /// must agree, and all three accepted the documentation placeholder. The
+    /// shell copy is now one script, and this runs it.
+    ///
+    /// Unix only, because it shells out to bash; the Linux CI job runs it,
+    /// which is where the gate itself runs.
+    #[cfg(unix)]
+    #[test]
+    fn the_release_gate_agrees_with_is_usable() {
+        let gate = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../scripts/check-usage-endpoint.sh"
+        );
+        for url in USABLE.iter().chain(UNUSABLE) {
+            let accepted = std::process::Command::new("bash")
+                .arg(gate)
+                .env("ENDPOINT", url)
+                .status()
+                .expect("the release gate script runs")
+                .success();
+            assert_eq!(
+                accepted,
+                is_usable(url),
+                "{url:?}: the release gate and is_usable disagree"
+            );
         }
     }
 
