@@ -90,3 +90,27 @@ describe("Dock while the egress guard holds", () => {
     expect(screen.getByText("312")).toBeTruthy();
   });
 });
+
+describe("a dock stat value", () => {
+  /**
+   * `StatCard` carries a comment saying both of its lines refuse to wrap,
+   * because a wrapped stat grows the row and a fixed-height dock then pushes
+   * its bottom row out of the container. Only the label actually did — the
+   * value had neither `truncate` nor `whitespace-nowrap`, so the comment
+   * described an intent the markup did not carry.
+   */
+  it("refuses to wrap, as the comment above it promises", () => {
+    render(
+      <Dock
+        status={CORE}
+        torrents={[TORRENT]}
+        history={[]}
+        limitBps={null}
+        held={false}
+      />,
+    );
+
+    const value = screen.getByText("1 of 1");
+    expect(value.className).toContain("truncate");
+  });
+});

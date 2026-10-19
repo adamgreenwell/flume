@@ -57,7 +57,7 @@ export function StatCard({ label, value, hint, size = "dock" }: StatCardProps) {
         {label}
       </span>
       <span
-        className={`flume-num text-fg-0 font-medium ${VALUE_CLASSES[size]}`}
+        className={`flume-num text-fg-0 truncate font-medium ${VALUE_CLASSES[size]}`}
       >
         {value}
       </span>

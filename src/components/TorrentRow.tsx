@@ -191,8 +191,18 @@ export function TorrentRow({
           {torrent.name}
         </span>
         <span className="text-fg-2 flex h-[var(--flume-meta-h)] items-center gap-[7px] overflow-hidden text-[11px] opacity-[var(--flume-meta-op)]">
-          <span className="flume-num">{formatBytes(torrent.totalBytes)}</span>
-          <span className="text-fg-3">·</span>
+          {/*
+            Both `shrink-0`: this line is `overflow-hidden` at a fixed height,
+            so anything that shrinks below its content wraps and has its second
+            line sliced off. A long `detail` put the size over budget and
+            `49.0 GB` became `49.0` with a clipped `GB` beneath it. The detail
+            is the prose here and already truncates, so it is the thing that
+            should absorb the pressure -- figures and the separator do not.
+          */}
+          <span className="flume-num shrink-0">
+            {formatBytes(torrent.totalBytes)}
+          </span>
+          <span className="text-fg-3 shrink-0">·</span>
           <span className="truncate">{torrent.detail}</span>
         </span>
       </span>
