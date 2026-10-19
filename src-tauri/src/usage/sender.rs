@@ -49,9 +49,11 @@ const REQUIRED_SCHEME: &str = "https://";
 /// After the scheme, everything up to the first `/`, `?` or `#` must be a
 /// hostname with an optional port; the path after it is not inspected.
 ///
-/// - The host is two or more non-empty labels of letters, digits and `-`,
-///   separated by `.`. One label is not enough: a collector is a public
-///   name, and `https://COLLECTOR/v1/usage` is a placeholder, not a host.
+/// - The host is two or more labels separated by `.`, each 1 to 63 letters,
+///   digits and `-` that neither starts nor ends with `-`, and at most 253
+///   bytes in all -- RFC 1123's hostname rule. One label is not enough: a
+///   collector is a public name, and `https://COLLECTOR/v1/usage` is a
+///   placeholder, not a host.
 /// - The last label starts with a letter. That rules out IP literals, which
 ///   the `url` crate parses as IPv4 whenever the last label is numeric -- and
 ///   then refuses outright when it is not a valid address, `999.1.1.1` or
@@ -66,7 +68,9 @@ const REQUIRED_SCHEME: &str = "https://";
 /// configured while POSTing to a hostname that cannot resolve. A first fix
 /// checked only that each character *could* appear in a hostname, which let
 /// `https://:` and `https://host:notaport` through: shapes reqwest cannot
-/// even build a request from.
+/// even build a request from. A second checked the shape but not hyphen
+/// placement, so `-bad.example` passed -- a URL that parses, and that no
+/// resolver or certificate authority will ever accept.
 ///
 /// It errs strict. A trailing-dot FQDN or an empty port (`x.dev:/`) parses,
 /// and is refused here anyway: the cost of that is a release that fails
@@ -117,33 +121,37 @@ const fn is_usable(url: &str) -> bool {
         host_end += 1;
     }
 
+    // RFC 1123's hostname rules. `url` checks none of them -- it parses
+    // `-bad.example` happily -- but no certificate or resolver will.
+    if host_end - start > 253 {
+        return false;
+    }
     let mut labels = 0;
     let mut label_len = 0;
     let mut label_first = 0u8;
+    let mut label_last = 0u8;
     i = start;
-    while i < host_end {
-        let b = bytes[i];
-        if b == b'.' {
-            if label_len == 0 {
+    while i <= host_end {
+        // `host_end` closes the last label the way a `.` closes the others.
+        if i == host_end || bytes[i] == b'.' {
+            // Empty covers an empty host, `a..b` and a trailing `.`.
+            if label_len == 0 || label_len > 63 || label_first == b'-' || label_last == b'-' {
                 return false;
             }
             labels += 1;
             label_len = 0;
-        } else if b.is_ascii_alphanumeric() || b == b'-' {
+        } else if bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' {
             if label_len == 0 {
-                label_first = b;
+                label_first = bytes[i];
             }
+            label_last = bytes[i];
             label_len += 1;
         } else {
             return false;
         }
         i += 1;
     }
-    // An empty host, or one ending in `.`, leaves the last label empty.
-    if label_len == 0 {
-        return false;
-    }
-    labels += 1;
+    // `label_first` is the last label's by now.
     if labels < 2 || !label_first.is_ascii_alphabetic() {
         return false;
     }
@@ -629,10 +637,38 @@ mod tests {
         "https://a..b.dev",
         "https://.x.dev",
         "https://x.dev.",
+        // A label may not start or end with `-`; inside one it is fine.
+        "https://-collector.example/v1/usage",
+        "https://collector-.example/v1/usage",
+        "https://collector.-example",
+        "https://collector.example-",
         // IP literals, valid or not, by the last-label rule.
         "https://192.0.2.1/v1/usage",
         "https://999.1.1.1/v1/usage",
     ];
+
+    /// Both tables, plus the length limits, which are built rather than
+    /// written out: a 253-byte literal is unreadable, and miscounting one by
+    /// hand would test a different boundary from the one claimed.
+    fn cases() -> Vec<(String, bool)> {
+        let label = |n: usize| "a".repeat(n);
+        // 3 x 63 + 3 dots + 61 = 253, the longest host allowed.
+        let longest = format!("{0}.{0}.{0}.{1}", label(63), label(61));
+        assert_eq!(longest.len(), 253);
+        let lengths = [
+            (format!("https://{}.dev", label(63)), true),
+            (format!("https://{}.dev", label(64)), false),
+            (format!("https://{longest}/v1/usage"), true),
+            // One byte over, and every label still within 63.
+            (format!("https://{longest}a/v1/usage"), false),
+        ];
+        USABLE
+            .iter()
+            .map(|u| (u.to_string(), true))
+            .chain(UNUSABLE.iter().map(|u| (u.to_string(), false)))
+            .chain(lengths)
+            .collect()
+    }
 
     #[test]
     fn only_a_real_https_url_counts_as_usable() {
@@ -641,11 +677,8 @@ mod tests {
         // `is_configured() == ENDPOINT.is_some()`, which is the exact
         // equivalence that was wrong, and it passed under `Some("")` by
         // agreeing with the bug.
-        for good in USABLE {
-            assert!(is_usable(good), "{good:?} should be usable");
-        }
-        for bad in UNUSABLE {
-            assert!(!is_usable(bad), "{bad:?} should not be usable");
+        for (url, usable) in cases() {
+            assert_eq!(is_usable(&url), usable, "{url:?}");
         }
     }
 
@@ -661,11 +694,11 @@ mod tests {
     /// the refused table too: it is asking the predicate, not the table.
     #[test]
     fn everything_usable_is_a_url_reqwest_accepts() {
-        for url in USABLE.iter().chain(UNUSABLE) {
-            if !is_usable(url) {
+        for (url, _) in cases() {
+            if !is_usable(&url) {
                 continue;
             }
-            let parsed = reqwest::Url::parse(url)
+            let parsed = reqwest::Url::parse(&url)
                 .unwrap_or_else(|e| panic!("{url:?} passes is_usable but does not parse: {e}"));
             assert_eq!(parsed.scheme(), "https", "{url:?}");
             assert!(parsed.host_str().is_some_and(|h| !h.is_empty()), "{url:?}");
@@ -689,16 +722,16 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../scripts/check-usage-endpoint.sh"
         );
-        for url in USABLE.iter().chain(UNUSABLE) {
+        for (url, _) in cases() {
             let accepted = std::process::Command::new("bash")
                 .arg(gate)
-                .env("ENDPOINT", url)
+                .env("ENDPOINT", &url)
                 .status()
                 .expect("the release gate script runs")
                 .success();
             assert_eq!(
                 accepted,
-                is_usable(url),
+                is_usable(&url),
                 "{url:?}: the release gate and is_usable disagree"
             );
         }
