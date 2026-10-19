@@ -115,6 +115,63 @@ describe("ExpandedRow contributors", () => {
   });
 });
 
+describe("a long save path", () => {
+  const LONG =
+    "\\\\Mac\\Home\\Downloads\\Buddy (2026) [2160p] [4K] [WEB] [5.1] [YTS.GG - YTS.BZ]";
+
+  /**
+   * Every flex ancestor of the path has to allow the shrink.
+   *
+   * Structural rather than behavioural, deliberately: jsdom has no layout
+   * engine, so `scrollWidth` and `clientWidth` are both 0 and the overflow
+   * this guards cannot be measured here. What *can* be pinned is the rule
+   * that was broken — `min-width` defaults to `auto` on a flex item, which
+   * refuses to shrink below min-content, and `truncate` makes the path's
+   * min-content the entire string. One ancestor without `min-w-0` and the
+   * truncation never engages, however correct the `Stat` itself is.
+   *
+   * Walked rather than asserted against two known lines, so inserting a new
+   * wrapper into the chain fails this too.
+   */
+  it("can shrink the whole way down, so the path truncates", () => {
+    render(
+      <ExpandedRow
+        torrent={torrent({ outputFolder: LONG })}
+        detail={null}
+        error={null}
+        onToggle={() => {}}
+        onKeepSeeding={() => {}}
+        onReveal={() => {}}
+        onOpen={() => {}}
+      />,
+    );
+
+    const value = screen.getByText(LONG);
+    expect(value.className).toContain("truncate");
+    expect(value.getAttribute("title")).toBe(LONG);
+
+    const offenders: string[] = [];
+    for (
+      let node = value.parentElement;
+      node && !node.className.includes("pl-[52px]");
+      node = node.parentElement
+    ) {
+      const classes = node.className;
+      const isFlexRow =
+        classes.includes("flex") && !classes.includes("flex-col");
+      if (
+        isFlexRow &&
+        !classes.includes("min-w-0") &&
+        !classes.includes("shrink-0")
+      ) {
+        offenders.push(classes);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("keeping a torrent seeding", () => {
   it("offers Keep seeding instead of Resume when a limit stopped it", () => {
     // Instead of, not beside. Resume alone leaves the limit in force, so the

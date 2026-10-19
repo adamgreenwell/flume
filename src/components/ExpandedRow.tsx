@@ -170,8 +170,16 @@ export function ExpandedRow({
 
   return (
     <div className="border-line bg-bg-1 flex flex-col gap-3.5 border-b py-4 pr-[18px] pl-[52px]">
-      <div className="flex items-start gap-7">
-        <div className="flex gap-7">
+      {/*
+        `min-w-0` on both: a flex item defaults to `min-width: auto`, which
+        refuses to shrink below its min-content -- and `truncate` sets
+        `white-space: nowrap`, so the save path's min-content is the whole
+        string. Without these, the `min-w-0` on the `Stat` below can never be
+        reached, the path renders in full, and the library gets a horizontal
+        scrollbar. The shrink has to be allowed the whole way down.
+      */}
+      <div className="flex min-w-0 items-start gap-7">
+        <div className="flex min-w-0 gap-7">
           <Stat label="Downloaded" value={formatBytes(torrent.progressBytes)} />
           <Stat
             label="Remaining"
