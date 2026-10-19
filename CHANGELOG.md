@@ -8,6 +8,14 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Fixed
+
+- **File → About shows something on Windows and Linux.** It opened an empty
+  box titled just "About". Flume gave the dialog no name, version or anything
+  else, and only macOS fills the gaps from the app bundle — which is where
+  Flume is developed. It now shows the name, version, description, licence,
+  website and copyright on every platform. macOS is unchanged. (#230)
+
 ## [1.4.1] — 2026-10-19
 
 ### Fixed
