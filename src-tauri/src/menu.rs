@@ -41,6 +41,13 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     )?;
     let add = MenuItem::with_id(app, ADD_TORRENT, "Add Torrent…", true, Some("CmdOrCtrl+N"))?;
 
+    let package = app.package_info();
+    let about = about_metadata(
+        package.name.clone(),
+        package.version.to_string(),
+        app.config().bundle.copyright.clone(),
+    );
+
     // On macOS the first submenu is the app menu and takes the app's name
     // whatever it is titled here; elsewhere it reads as a normal File menu.
     let app_menu = Submenu::with_items(
@@ -48,7 +55,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         "Flume",
         true,
         &[
-            &PredefinedMenuItem::about(app, None, Some(AboutMetadata::default()))?,
+            &PredefinedMenuItem::about(app, None, Some(about))?,
             &PredefinedMenuItem::separator(app)?,
             &settings,
             &PredefinedMenuItem::separator(app)?,
@@ -127,4 +134,92 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     });
 
     Ok(())
+}
+
+/// What the About dialog says.
+///
+/// Every field has to be supplied, because on Windows and Linux nothing else
+/// fills them. muda builds the Windows dialog as a message box whose text is
+/// these fields and nothing more, and its title as `About {name}`; Linux's is
+/// a GTK `AboutDialog` fed the same way. This used to pass
+/// `AboutMetadata::default()`, and both platforms showed an empty box titled
+/// `About`. macOS hid it: the standard About panel falls back to the
+/// bundle's Info.plist for anything missing, and development is on macOS.
+///
+/// macOS reads only `name`, `version` and `copyright` of what is set here,
+/// and they are the values its Info.plist already carries. `short_version`
+/// is left unset so the build number in parentheses still comes from there.
+///
+/// Name and version come from the package info, so they are what
+/// `tauri.conf.json` says, as the rest of the app reports them. The rest is
+/// `Cargo.toml`'s, which is where the licence and repository are declared.
+fn about_metadata(
+    name: String,
+    version: String,
+    copyright: Option<String>,
+) -> AboutMetadata<'static> {
+    AboutMetadata {
+        name: Some(name),
+        version: Some(version),
+        // Cargo joins multiple authors with `:`.
+        authors: Some(
+            env!("CARGO_PKG_AUTHORS")
+                .split(':')
+                .map(str::to_owned)
+                .collect(),
+        ),
+        comments: Some(env!("CARGO_PKG_DESCRIPTION").to_owned()),
+        copyright,
+        license: Some(env!("CARGO_PKG_LICENSE").to_owned()),
+        website: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
+        ..AboutMetadata::default()
+    }
+}
+
+#[cfg(test)]
+// `expect` is right in tests: a failed expectation is the diagnostic.
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::about_metadata;
+
+    /// The regression this guards: an About dialog with nothing in it on
+    /// Windows and Linux. A field that is `None`, or is `Some("")` because
+    /// `Cargo.toml` lost the key `env!` reads, renders as nothing.
+    #[test]
+    fn every_field_the_windows_and_linux_dialogs_render_is_filled() {
+        let about = about_metadata(
+            "Flume".to_owned(),
+            "1.4.1".to_owned(),
+            Some("Copyright © 2026 Adam Greenwell".to_owned()),
+        );
+        for (field, value) in [
+            ("name", &about.name),
+            ("version", &about.version),
+            ("comments", &about.comments),
+            ("copyright", &about.copyright),
+            ("license", &about.license),
+            ("website", &about.website),
+        ] {
+            assert!(
+                value.as_deref().is_some_and(|v| !v.trim().is_empty()),
+                "About's {field} is empty: {value:?}"
+            );
+        }
+        let authors = about.authors.expect("About names its authors");
+        assert!(!authors.is_empty() && authors.iter().all(|a| !a.trim().is_empty()));
+    }
+
+    /// The copyright line is the one field read from `tauri.conf.json`
+    /// rather than compiled in, so the test above, which passes it in,
+    /// cannot see it go missing. This reads the file the build reads.
+    #[test]
+    fn the_bundle_declares_a_copyright_line() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json parses");
+        let copyright = conf["bundle"]["copyright"].as_str().unwrap_or_default();
+        assert!(
+            !copyright.trim().is_empty(),
+            "bundle.copyright is empty, so About has no copyright line"
+        );
+    }
 }
