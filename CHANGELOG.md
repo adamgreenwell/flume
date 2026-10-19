@@ -8,6 +8,29 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-10-19
+
+### Fixed
+
+- **A long save path no longer pushes the library sideways.** Expanding a
+  torrent saved somewhere with a long path gave the list a horizontal
+  scrollbar and scrolled the whole pane, clipping the name column's figures
+  off the left edge. The path was already meant to shorten with an ellipsis
+  and keep the full value in its tooltip, and the markup for that was right —
+  what was wrong sat above it. A flex item will not shrink below its content
+  unless it is told it may, and that permission has to be granted at every
+  level between the text and the edge of the window. Two levels did not grant
+  it, so the shortening could never happen and the path pushed everything
+  along instead. Which is why it overflowed even when the path was narrower
+  than the name column beside it.
+- **The size on a row, and the figures in the dock, no longer wrap into a
+  clipped second line.** A long status line squeezed the size beside it until
+  it broke in two — `49.0 GB` showing as `49.0` with a sliced `GB` beneath —
+  and the dock's figures could do the same, against a note in the code saying
+  they must not. Both now hold their width and let the prose beside them
+  shorten instead, which is the right way round: a shortened sentence is still
+  readable, and half a number is not.
+
 ## [1.4.0] — 2026-10-17
 
 ### Added
@@ -330,6 +353,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.4.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.1
 [1.4.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.0
 [1.3.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.3.0
 [1.2.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.2.0

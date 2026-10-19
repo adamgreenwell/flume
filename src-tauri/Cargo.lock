@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "flume-app"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "directories",
