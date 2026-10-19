@@ -398,7 +398,22 @@ jobs:
 
   attach-rpms:
     name: Attach .rpm files to the release
-    needs: rpm
+    # `build` as well as `rpm`, because the release this uploads to does not
+    # exist until a `build` job has made it -- `tauri-action` creates the draft.
+    # With `needs: rpm` alone the two were a race, and 1.4.1 lost it: both .rpm
+    # jobs finished at 19:55:46 and 19:56:22, this ran at 19:56:25 and failed in
+    # seven seconds, and the first build job finished at 19:57:50. 1.4.0 passed
+    # on timing rather than on anything guaranteeing the order.
+    #
+    # Losing it is expensive out of proportion to the upload: `checksums` needs
+    # this job, so a skipped upload takes SHA256SUMS.txt with it, and the draft
+    # is then missing both the Fedora packages and the only way to verify any
+    # of the others.
+    #
+    # Waiting on all of `build` costs nothing -- the upload itself takes about
+    # seven seconds -- and means a failed build skips this rather than
+    # attaching .rpm files to a release nobody should be publishing.
+    needs: [build, rpm]
     runs-on: ubuntu-latest
     steps:
       # The .rpm jobs run inside a Fedora container, which has no GitHub CLI --
