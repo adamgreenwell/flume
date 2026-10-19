@@ -96,13 +96,18 @@ is not worth risking to save a few minutes of compile time.
 
 1. Every issue in the milestone is closed or explicitly deferred.
 2. CI green on `main`.
-3. `cargo test -- --ignored` passes locally (live DHT path).
-4. Per-platform smoke checklist in [[Platform-Notes]] completed.
-5. Version bumped in `package.json`, `src-tauri/Cargo.toml`, and
+3. If `collector/schema.json` or `collector/schema.sql` changed since the last
+   release, deploy the collector first: `cd collector && npm run migrate && npm
+run deploy`. A client that sends events the deployed Worker does not know
+   has every one of them discarded — counted in `rejections`, but lost. Nothing
+   in CI checks this.
+4. `cargo test -- --ignored` passes locally (live DHT path).
+5. Per-platform smoke checklist in [[Platform-Notes]] completed.
+6. Version bumped in `package.json`, `src-tauri/Cargo.toml`, and
    `src-tauri/tauri.conf.json` — all three must match.
-6. Changelog updated.
-7. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
-8. Verify artifacts install cleanly on each platform before announcing.
+7. Changelog updated.
+8. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
+9. Verify artifacts install cleanly on each platform before announcing.
 
 ## Secrets
 

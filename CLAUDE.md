@@ -140,6 +140,18 @@ explicit `Some(false)` on exit, so the value is never `None` after first run.
 
 The install id is written lazily, on the first batch actually sent — consent
 followed by a session that records nothing leaves no trace on disk.
+
+**The collector judges events one at a time, and the client retries every 400.** Both halves are deliberate. Making 400 final on the client was
+proposed and rejected, and so was splitting schema mismatches out to a 422
+for the client to give up on: the likeliest real mismatch is release drift —
+a client sending an event the deployed Worker predates — which heals the
+moment the Worker is deployed, so giving up would discard exactly the newest
+release's events. The actual defect was the collector failing a whole batch
+on its first bad event, which, with a client that retries, let one bad event
+silence an install. Now the valid events are stored, each discarded one is
+counted in `rejections` (reason and allowlisted name only), and the envelope
+is the only all-or-nothing part. Deploy the collector before tagging a
+release that changes `schema.json`; nothing in CI checks it.
 `docs/Privacy.md` is the user-facing contract and is the thing this feature is
 judged on; change it in the same commit as the schema.
 
