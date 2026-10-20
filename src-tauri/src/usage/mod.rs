@@ -770,6 +770,48 @@ impl Recorder {
         }
     }
 
+    /// Drops queued events too old to send, without taking the batch.
+    ///
+    /// [`Self::take_batch`] prunes on the way out, which used to be enough
+    /// because every flush took the batch. A held egress guard skips the take,
+    /// so without this a guard that held for a week would keep a week of
+    /// events on disk -- and `docs/Privacy.md` says three days. The file is
+    /// only rewritten when something actually expired, so an hourly skip
+    /// does not churn it.
+    pub fn discard_expired(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let Ok(_guard) = self.lock.lock() else {
+            return;
+        };
+        let path = self.dir.join(QUEUE_FILE);
+        let events = match read_queue(&path) {
+            Ok(events) => events,
+            Err(err) => {
+                log::debug!("could not read the usage queue to prune it: {err}");
+                return;
+            }
+        };
+        let before = events.len();
+        let events = prune_expired(events);
+        if events.len() == before {
+            return;
+        }
+        let written = if events.is_empty() {
+            remove_if_present(&path)
+        } else {
+            write_queue(&path, &events)
+        };
+        match written {
+            Ok(()) => self.queued.store(events.len(), Ordering::Relaxed),
+            Err(err) => {
+                log::warn!("could not prune the usage queue: {err}");
+                self.queued.store(UNKNOWN_LENGTH, Ordering::Relaxed);
+            }
+        }
+    }
+
     /// Reads the install id, creating one if this is the first time.
     ///
     /// # Errors
@@ -1018,6 +1060,46 @@ mod tests {
             .expect("append");
 
         assert!(recorder.take_batch().is_none());
+        assert!(
+            !tmp.path().join(QUEUE_FILE).exists(),
+            "queue should be gone"
+        );
+    }
+
+    #[test]
+    fn expired_events_are_discarded_without_taking_the_batch() {
+        // The held-guard case: no flush takes the batch, so pruning has to
+        // happen without one or the three-day promise lapses.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = recorder(tmp.path(), Some(true));
+        recorder
+            .append(Event {
+                at: unix_now() - (MAX_EVENT_AGE.as_secs() + HOUR),
+                kind: EventKind::Launched,
+            })
+            .expect("append");
+        recorder.record(EventKind::TorrentCompleted);
+
+        recorder.discard_expired();
+
+        let on_disk = read_queue(&tmp.path().join(QUEUE_FILE)).expect("read");
+        assert_eq!(on_disk.len(), 1, "the stale event should be gone from disk");
+        assert_eq!(on_disk[0].kind, EventKind::TorrentCompleted);
+    }
+
+    #[test]
+    fn a_queue_that_expires_entirely_while_held_is_removed() {
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = recorder(tmp.path(), Some(true));
+        recorder
+            .append(Event {
+                at: unix_now() - (MAX_EVENT_AGE.as_secs() + HOUR),
+                kind: EventKind::Launched,
+            })
+            .expect("append");
+
+        recorder.discard_expired();
+
         assert!(
             !tmp.path().join(QUEUE_FILE).exists(),
             "queue should be gone"

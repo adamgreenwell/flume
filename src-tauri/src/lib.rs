@@ -217,7 +217,14 @@ pub fn run() {
                     bucket: usage::CountBucket::of(torrents),
                 });
 
-                usage::sender::spawn(Arc::clone(state.usage()));
+                // Asked before every flush, so usage counts never leave from
+                // the address the guard is protecting. A closure because
+                // `usage/` imports no Tauri types and cannot ask for itself.
+                let guard_handle = handle.clone();
+                usage::sender::spawn(Arc::clone(state.usage()), move || {
+                    let handle = guard_handle.clone();
+                    async move { handle.state::<AppState>().egress_refused_now().await }
+                });
 
                 // After the guard's first tick, like everything else that
                 // talks to the network: before it, the published status is the
@@ -250,8 +257,14 @@ pub fn run() {
                     // because `take_batch` had already deleted the queue file
                     // and neither arm of the match ran; `Restore` now puts it
                     // back on drop, so the next launch sends it.
+                    //
+                    // Skipped while the guard holds, like every other flush:
+                    // quitting is not a reason to connect from the address
+                    // the guard protects. The batch stays queued for the next
+                    // launch, which sends it once the tunnel is back.
                     if let Some(sender) = usage::sender::Sender::new() {
-                        let flush = sender.flush(state.usage());
+                        let held = state.egress_refused_now().await;
+                        let flush = sender.flush(state.usage(), held);
                         let _ = tokio::time::timeout(SHUTDOWN_FLUSH_TIMEOUT, flush).await;
                     }
                     state.shutdown().await;
