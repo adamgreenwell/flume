@@ -10,6 +10,8 @@
 //! JavaScript commands, but the capability file grants none of them: the
 //! webview cannot reach the network through the updater, only ask Rust to.
 
+use std::{future::Future, time::Duration};
+
 use rand::RngExt;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
@@ -120,6 +122,52 @@ fn classify(err: &UpdaterError) -> FailureKind {
     }
 }
 
+/// How often an in-flight request re-reads the guard. Its own tick rate: no
+/// point looking more often than the status can change.
+const GUARD_POLL: Duration = Duration::from_secs(1);
+
+/// How often a check that was skipped for a held guard looks for its release.
+const HELD_RETRY_POLL: Duration = Duration::from_secs(15);
+
+/// Resolves once the egress guard is holding.
+async fn guard_holds<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<AppState>();
+    while !state.egress_status().await.held {
+        tokio::time::sleep(GUARD_POLL).await;
+    }
+}
+
+/// Runs a network operation, abandoning it the moment the guard holds.
+///
+/// Checking the guard once before starting was not enough: a tunnel that
+/// drops mid-download would leave the transfer running over the address the
+/// guard protects, for as long as the download takes. Dropping the plugin's
+/// future drops its request, which ends the transfer. `None` means the guard
+/// cut it off.
+async fn unless_held<R: Runtime, T>(
+    app: &AppHandle<R>,
+    operation: impl Future<Output = T>,
+) -> Option<T> {
+    super::abandon_when(operation, guard_holds(app)).await
+}
+
+/// Resolves once the guard has stopped holding -- never sooner than one poll.
+///
+/// The sleep comes first on purpose. The retry loop calls this whenever a
+/// check comes back `Held`, and a `Held` can be stale: a check skipped because
+/// another one is running returns the stored status. Checking before sleeping
+/// would return at once, re-check, get the same answer and spin. Sleeping
+/// first bounds the loop to one attempt per poll whatever the status says.
+async fn guard_released<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<AppState>();
+    loop {
+        tokio::time::sleep(HELD_RETRY_POLL).await;
+        if !state.egress_status().await.held {
+            return;
+        }
+    }
+}
+
 /// Stores a status and tells the frontend.
 async fn publish<R: Runtime>(app: &AppHandle<R>, updates: &Updates, status: UpdateStatus) {
     status.clone_into(&mut *updates.status.write().await);
@@ -153,7 +201,17 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
             publish(app, &updates, UpdateStatus::Held).await;
             return UpdateStatus::Held;
         }
-        Err(Skip::Off | Skip::Unconfigured) => return updates.status().await,
+        Err(Skip::Off | Skip::Unconfigured) => {
+            // A `Held` left over from before the switch went off is no longer
+            // owed a retry; leaving it would keep the scheduled loop waiting
+            // on a check it is not allowed to make.
+            let status = updates.status().await;
+            if status == UpdateStatus::Held {
+                publish(app, &updates, UpdateStatus::Idle).await;
+                return UpdateStatus::Idle;
+            }
+            return status;
+        }
     }
 
     let Ok(_busy) = updates.busy.try_lock() else {
@@ -161,9 +219,16 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     };
 
     publish(app, &updates, UpdateStatus::Checking).await;
-    let found = match app.updater_builder().timeout(CHECK_TIMEOUT).build() {
-        Ok(updater) => updater.check().await,
-        Err(err) => Err(err),
+    let found = unless_held(app, async {
+        match app.updater_builder().timeout(CHECK_TIMEOUT).build() {
+            Ok(updater) => updater.check().await,
+            Err(err) => Err(err),
+        }
+    })
+    .await;
+    let Some(found) = found else {
+        publish(app, &updates, UpdateStatus::Held).await;
+        return UpdateStatus::Held;
     };
 
     let status = match found {
@@ -201,6 +266,11 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
 /// only thing that can call a command. Refused while the guard holds, for
 /// the same reason a check is: it is a connection from the protected address.
 ///
+/// The download is raced against the guard and the install is not. The
+/// download is the only network traffic, and cutting it off loses nothing;
+/// the install writes the app bundle, and stopping that halfway would leave
+/// a broken one. `install` verifies the signature before it writes anything.
+///
 /// Restarts with `request_restart` rather than `restart`, so the normal exit
 /// path runs -- seeding time is persisted and queued usage counts are flushed
 /// exactly as on a quit.
@@ -221,7 +291,12 @@ pub async fn install<R: Runtime>(app: &AppHandle<R>) -> UpdateStatus {
     };
 
     publish(app, &updates, UpdateStatus::Installing).await;
-    match update.download_and_install(|_, _| {}, || {}).await {
+    let Some(downloaded) = unless_held(app, update.download(|_, _| {}, || {})).await else {
+        log::info!("update download abandoned: the egress guard started holding");
+        publish(app, &updates, UpdateStatus::Held).await;
+        return UpdateStatus::Held;
+    };
+    match downloaded.and_then(|bytes| update.install(bytes)) {
         Ok(()) => {
             log::info!("installed Flume {}; restarting", update.version);
             app.request_restart();
@@ -257,7 +332,13 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
-            check(&app, Trigger::Scheduled).await;
+            // A check the guard skipped is owed, not cancelled: the banner
+            // promises one once traffic is protected again, and a tunnel that
+            // was down at launch or at the daily tick would otherwise cost the
+            // whole day -- often the whole session.
+            while super::retry_when_released(&check(&app, Trigger::Scheduled).await) {
+                guard_released(&app).await;
+            }
         }
     });
 }

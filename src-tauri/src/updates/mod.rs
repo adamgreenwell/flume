@@ -25,7 +25,7 @@
 
 pub mod checker;
 
-use std::{ops::RangeInclusive, time::Duration};
+use std::{future::Future, ops::RangeInclusive, time::Duration};
 
 use serde::Serialize;
 
@@ -170,6 +170,34 @@ pub const fn may_check(
         return Err(Skip::Off);
     }
     Ok(())
+}
+
+/// Runs `operation` until it finishes or `stop` resolves, whichever is first.
+///
+/// `None` means `stop` won, and `operation` has been dropped -- which for an
+/// HTTP request is what ends the transfer. The checker passes "the egress
+/// guard is holding" as `stop`, so a download cannot outlive the tunnel it
+/// started under. Generic, and here rather than in `checker`, so it can be
+/// tested without Tauri.
+pub async fn abandon_when<T>(
+    operation: impl Future<Output = T>,
+    stop: impl Future<Output = ()>,
+) -> Option<T> {
+    tokio::select! {
+        out = operation => Some(out),
+        () = stop => None,
+    }
+}
+
+/// Whether a scheduled check should be tried again as soon as the guard
+/// releases, rather than at the next daily tick.
+///
+/// Only a check the guard prevented. A network failure waits for the next
+/// tick like anything else: retrying it in a loop would hammer GitHub from a
+/// machine that is simply offline.
+#[must_use]
+pub const fn retry_when_released(status: &UpdateStatus) -> bool {
+    matches!(status, UpdateStatus::Held)
 }
 
 /// Whether a build carries an updater public key.
@@ -326,6 +354,61 @@ mod tests {
         );
         assert_eq!(may_check(Trigger::Manual, true, false, false), Ok(()));
         assert_eq!(may_check(Trigger::Scheduled, true, true, false), Ok(()));
+    }
+
+    /// Records when it is dropped, standing in for an in-flight request.
+    struct Transfer(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Transfer {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hold_abandons_a_transfer_in_flight() {
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let transfer = Transfer(std::sync::Arc::clone(&dropped));
+        let download = async move {
+            let _held_open = transfer;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            "finished"
+        };
+        let guard_holds = tokio::time::sleep(Duration::from_millis(10));
+
+        let outcome =
+            tokio::time::timeout(Duration::from_secs(5), abandon_when(download, guard_holds))
+                .await
+                .expect("the hold ends it promptly, not when the download would have");
+
+        assert_eq!(outcome, None);
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "the transfer must be dropped, which is what closes the connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_finished_transfer_is_kept() {
+        let outcome = abandon_when(async { "finished" }, std::future::pending()).await;
+        assert_eq!(outcome, Some("finished"));
+    }
+
+    #[test]
+    fn only_a_guard_skip_is_retried_on_release() {
+        assert!(retry_when_released(&UpdateStatus::Held));
+        for status in [
+            UpdateStatus::Idle,
+            UpdateStatus::UpToDate { checked_at: 1 },
+            UpdateStatus::Failed {
+                reason: FailureKind::Network,
+            },
+            UpdateStatus::Available {
+                version: "1.5.1".to_owned(),
+                delivery: Delivery::InPlace,
+            },
+        ] {
+            assert!(!retry_when_released(&status), "{status:?}");
+        }
     }
 
     #[test]
