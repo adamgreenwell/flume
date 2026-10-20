@@ -18,9 +18,9 @@ use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use tokio::sync::{Mutex, RwLock};
 
 use super::{
-    Bundle, CHECK_INTERVAL, CHECK_TIMEOUT, Delivery, FailureKind, FailureStage, STARTUP_DELAY,
-    Skip, Trigger, UpdateStatus, delivery_for, is_configured, may_check, official_build,
-    unless_announced,
+    Bundle, CHECK_INTERVAL, CHECK_TIMEOUT, CheckOutcome, Delivery, FailureKind, FailureStage,
+    STARTUP_DELAY, Skip, Trigger, UpdateStatus, delivery_for, is_configured, may_check,
+    official_build, unless_announced,
 };
 use crate::state::AppState;
 
@@ -185,13 +185,23 @@ fn now_secs() -> u64 {
 }
 
 /// Checks for a newer version, if the rules allow it now, and publishes the
-/// result.
-///
-/// Returns the status after the attempt. A check that is not allowed to run
-/// returns the status unchanged, except under a held guard, which is
-/// published as [`UpdateStatus::Held`] so a manual check says why nothing
-/// happened.
+/// result. Returns the status after the attempt; see [`check_outcome`].
 pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateStatus {
+    check_outcome(app, trigger).await.status
+}
+
+/// [`check`], also saying whether the guard held it back -- which the
+/// scheduler needs and the status cannot carry, since a hold over an
+/// announced update still shows the announcement.
+///
+/// A check that is not allowed to run leaves the status unchanged, except
+/// under a held guard with nothing announced, which shows
+/// [`UpdateStatus::Held`] so a manual check says why nothing happened.
+async fn check_outcome<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> CheckOutcome {
+    let shown = |status| CheckOutcome {
+        status,
+        held_back: false,
+    };
     let updates = app.state::<Updates>();
     let state = app.state::<AppState>();
     let enabled = state.settings().await.check_for_updates;
@@ -203,23 +213,16 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
         Err(Skip::Held) => {
             let status = unless_announced(&before, UpdateStatus::Held);
             publish(app, &updates, status.clone()).await;
-            return status;
+            return CheckOutcome {
+                status,
+                held_back: true,
+            };
         }
-        Err(Skip::Off | Skip::Unconfigured) => {
-            // A `Held` left over from before the switch went off is no longer
-            // owed a retry; leaving it would keep the scheduled loop waiting
-            // on a check it is not allowed to make.
-            let status = updates.status().await;
-            if status == UpdateStatus::Held {
-                publish(app, &updates, UpdateStatus::Idle).await;
-                return UpdateStatus::Idle;
-            }
-            return status;
-        }
+        Err(Skip::Off | Skip::Unconfigured) => return shown(before),
     }
 
     let Ok(_busy) = updates.busy.try_lock() else {
-        return updates.status().await;
+        return shown(updates.status().await);
     };
 
     publish(app, &updates, UpdateStatus::Checking).await;
@@ -233,7 +236,10 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     let Some(found) = found else {
         let status = unless_announced(&before, UpdateStatus::Held);
         publish(app, &updates, status.clone()).await;
-        return status;
+        return CheckOutcome {
+            status,
+            held_back: true,
+        };
     };
 
     let status = match found {
@@ -265,7 +271,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
         }
     };
     publish(app, &updates, status.clone()).await;
-    status
+    shown(status)
 }
 
 /// Downloads, verifies and installs the announced update, then restarts.
@@ -353,7 +359,7 @@ pub fn spawn<R: Runtime>(app: AppHandle<R>) {
             // promises one once traffic is protected again, and a tunnel that
             // was down at launch or at the daily tick would otherwise cost the
             // whole day -- often the whole session.
-            while super::retry_when_released(&check(&app, Trigger::Scheduled).await) {
+            while super::retry_when_released(&check_outcome(&app, Trigger::Scheduled).await) {
                 guard_released(&app).await;
             }
         }

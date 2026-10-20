@@ -206,6 +206,22 @@ pub fn unless_announced(before: &UpdateStatus, otherwise: UpdateStatus) -> Updat
     }
 }
 
+/// What a check did, as the scheduler needs to know it.
+///
+/// Two things, deliberately separate. `status` is what the person sees, and a
+/// hold over an announced update shows `Available` -- see
+/// [`unless_announced`]. `held_back` is whether the guard stopped the attempt,
+/// which is what owes a recheck. Reading the retry off the status instead
+/// missed exactly that case (Codex, #236): the announcement stood, the loop
+/// saw no `Held`, and a newer release waited a day.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckOutcome {
+    /// What to show.
+    pub status: UpdateStatus,
+    /// Whether the egress guard kept the check from running or finishing.
+    pub held_back: bool,
+}
+
 /// Whether a scheduled check should be tried again as soon as the guard
 /// releases, rather than at the next daily tick.
 ///
@@ -213,8 +229,8 @@ pub fn unless_announced(before: &UpdateStatus, otherwise: UpdateStatus) -> Updat
 /// tick like anything else: retrying it in a loop would hammer GitHub from a
 /// machine that is simply offline.
 #[must_use]
-pub const fn retry_when_released(status: &UpdateStatus) -> bool {
-    matches!(status, UpdateStatus::Held)
+pub const fn retry_when_released(outcome: &CheckOutcome) -> bool {
+    outcome.held_back
 }
 
 /// Whether this is an official release build, made by this repository's
@@ -480,8 +496,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_guard_skip_is_retried_on_release() {
-        assert!(retry_when_released(&UpdateStatus::Held));
+    fn only_a_check_the_guard_held_back_is_retried_on_release() {
+        let shown = |status| CheckOutcome {
+            status,
+            held_back: false,
+        };
+        assert!(retry_when_released(&CheckOutcome {
+            status: UpdateStatus::Held,
+            held_back: true,
+        }));
         for status in [
             UpdateStatus::Idle,
             UpdateStatus::UpToDate { checked_at: 1 },
@@ -489,13 +512,23 @@ mod tests {
                 reason: FailureKind::Network,
                 stage: FailureStage::Check,
             },
-            UpdateStatus::Available {
-                version: "1.5.1".to_owned(),
-                delivery: Delivery::InPlace,
-            },
         ] {
-            assert!(!retry_when_released(&status), "{status:?}");
+            assert!(!retry_when_released(&shown(status.clone())), "{status:?}");
         }
+    }
+
+    /// Codex, #236: a hold over an announced update shows `Available`, and
+    /// must still be retried -- the retry follows the attempt, not the status.
+    #[test]
+    fn a_hold_behind_an_announcement_is_still_retried() {
+        let available = UpdateStatus::Available {
+            version: "1.5.1".to_owned(),
+            delivery: Delivery::InPlace,
+        };
+        assert!(retry_when_released(&CheckOutcome {
+            status: unless_announced(&available, UpdateStatus::Held),
+            held_back: true,
+        }));
     }
 
     #[test]
