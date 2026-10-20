@@ -295,6 +295,16 @@ impl AppState {
         status
     }
 
+    /// Whether the egress guard refuses traffic, by either reading of it.
+    ///
+    /// The published status *or* a fresh probe, so a tunnel that dropped
+    /// since the last tick is caught rather than trusted for up to a second.
+    /// For egress that is not the engine's -- the usage sender -- and for the
+    /// engine's own start, which needs the same pair.
+    pub async fn egress_refused_now(&self) -> bool {
+        self.egress_status().await.held || !self.transfer_permitted_now().await
+    }
+
     /// Whether the egress path permits transfer **right now**, probed afresh.
     ///
     /// Deliberately not [`Self::egress_status`], which returns the last
@@ -590,7 +600,7 @@ impl AppState {
         // after, which it shuts down. There is no third ordering. Brief,
         // too: a status read, one probe, and a pointer write.
         let mut slot = self.engine.write().await;
-        if self.egress_status().await.held || !self.transfer_permitted_now().await {
+        if self.egress_refused_now().await {
             drop(slot);
             log::info!("egress guard began holding while the engine was starting; discarding it");
             engine.shutdown().await;

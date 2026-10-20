@@ -16,8 +16,22 @@
 //! Never per event: a request every time something happens would both cost
 //! more than the data is worth and give a torrent client a distinctive
 //! outbound traffic pattern.
+//!
+//! # The egress guard
+//!
+//! Nothing is sent while the tunnel guard holds. A held guard means traffic
+//! would leave from the address the user turned the guard on to protect, and
+//! a POST to the collector from there is exactly the connection the guard
+//! refuses for torrents -- an opt-in count is not a reason to make it. The
+//! batch is left queued, untouched, and goes on a later tick or the next
+//! launch; the queue already ages events out after three days, so a guard
+//! that holds for a week loses counts rather than accumulating them.
+//!
+//! This module cannot ask the guard itself without importing Tauri, so the
+//! caller passes the answer in: [`spawn`] takes a check to run before every
+//! scheduled flush, and [`Sender::flush`] takes its result.
 
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use rand::RngExt;
 
@@ -291,8 +305,16 @@ impl Sender {
 
     /// Sends whatever is queued, restoring it if the send does not land.
     ///
-    /// Does nothing when consent is absent or the queue is empty.
-    pub async fn flush(&self, recorder: &Recorder) {
+    /// Does nothing when consent is absent, the queue is empty, or `held` --
+    /// the egress guard is holding, so a send would leave from the address it
+    /// protects. The held check comes before `take_batch` on purpose: a
+    /// batch that is never taken cannot be lost, and the queue file is not
+    /// rewritten on every skipped tick.
+    pub async fn flush(&self, recorder: &Recorder, held: bool) {
+        if held {
+            log::debug!("egress guard is holding; usage batch left queued");
+            return;
+        }
         let Some(envelope) = recorder.take_batch() else {
             return;
         };
@@ -418,8 +440,14 @@ fn warn_on_settled_refusal(previous: Delivery, outcome: Delivery) {
 /// Runs the flush loop until the process exits.
 ///
 /// Tauri-free by design, so `lib.rs` owns the decision of when to start it and
-/// this module stays testable.
-pub fn spawn(recorder: Arc<Recorder>) {
+/// this module stays testable. `held` answers whether the egress guard is
+/// holding; it is asked afresh before every flush rather than once, because
+/// a tunnel that was up at launch can drop at any hour.
+pub fn spawn<F, Fut>(recorder: Arc<Recorder>, held: F)
+where
+    F: Fn() -> Fut + Send + 'static,
+    Fut: Future<Output = bool> + Send,
+{
     let Some(sender) = Sender::new() else {
         // Loud when it matters, quiet when it does not: a build with no
         // endpoint is the normal state for CI, `cargo test`, and any fork, and
@@ -444,7 +472,7 @@ pub fn spawn(recorder: Arc<Recorder>) {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
-            sender.flush(&recorder).await;
+            sender.flush(&recorder, held().await).await;
             ticker.tick().await;
         }
     });
@@ -479,6 +507,64 @@ mod tests {
             .expect("the batch should have come back");
         assert_eq!(recovered.events.len(), 1);
         assert_eq!(recovered.events[0].kind, EventKind::Launched);
+    }
+
+    /// A sender aimed at a port nothing listens on.
+    ///
+    /// Built directly rather than through [`Sender::new`], which is `None` in
+    /// any build without an endpoint -- every test run included. Loopback and
+    /// the discard port, so an attempted send fails fast with no answer and
+    /// leaves the machine for nowhere.
+    fn sender_to_nowhere() -> Sender {
+        Sender {
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .expect("client"),
+            endpoint: "https://127.0.0.1:9/v1/events",
+        }
+    }
+
+    #[tokio::test]
+    async fn a_held_guard_sends_nothing_and_keeps_the_batch() {
+        // Architecture rule 12: a held guard means traffic would leave from
+        // the address the user is protecting, and the collector is not an
+        // exception. `Untried` is the proof no request was made -- any attempt
+        // records an outcome, even one that never got an answer.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = Recorder::new(tmp.path().to_path_buf(), Some(true), "1.0.0".to_owned());
+        recorder.record(EventKind::Launched);
+
+        sender_to_nowhere().flush(&recorder, true).await;
+
+        assert_eq!(
+            recorder.delivery(),
+            Delivery::Untried,
+            "a held guard must not attempt a send"
+        );
+        let kept = recorder
+            .take_batch()
+            .expect("the batch should still be queued");
+        assert_eq!(kept.events.len(), 1);
+        assert_eq!(kept.events[0].kind, EventKind::Launched);
+    }
+
+    #[tokio::test]
+    async fn a_released_guard_does_attempt_the_send() {
+        // The control for the test above: without it, `Untried` could mean
+        // this sender never sends at all, and the held case would pass for
+        // the wrong reason.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = Recorder::new(tmp.path().to_path_buf(), Some(true), "1.0.0".to_owned());
+        recorder.record(EventKind::Launched);
+
+        sender_to_nowhere().flush(&recorder, false).await;
+
+        assert_eq!(recorder.delivery(), Delivery::NoResponse);
+        assert!(
+            recorder.take_batch().is_some(),
+            "an unanswered send puts the batch back"
+        );
     }
 
     #[test]

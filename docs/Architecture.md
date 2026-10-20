@@ -70,6 +70,11 @@ would give every piece of UI code an egress path — including anything that
 renders an attacker-controlled torrent name into the DOM. Keeping the sender
 in `usage/sender.rs` means there is exactly one file to audit.
 
+**The sender obeys the egress guard.** While the guard holds, no flush sends
+— scheduled or at quit — and the batch stays queued. `usage/` imports no Tauri
+types, so it cannot ask the guard itself: `lib.rs` hands `spawn` a closure that
+does, and the quit path passes the answer to `flush` directly.
+
 The wire format is a closed enum: every field of every event is an enum or a
 bool, and there is no free-text field. That is a hard constraint rather than a
 style choice, because librqbit's error strings embed tracker URLs and

@@ -872,6 +872,7 @@ pub async fn get_diagnostics(
         home,
         usage_endpoint_configured: crate::usage::sender::is_configured(),
         usage_delivery: state.usage().delivery(),
+        egress_held: state.egress_status().await.held,
         log_tail: &log_tail,
         redactor: &redactor,
     }

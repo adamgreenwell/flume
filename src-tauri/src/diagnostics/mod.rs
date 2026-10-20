@@ -228,6 +228,8 @@ pub struct Report<'a> {
     pub usage_endpoint_configured: bool,
     /// What happened on the most recent send attempt this session.
     pub usage_delivery: Delivery,
+    /// Whether the egress guard is holding, which stops usage sends too.
+    pub egress_held: bool,
     /// The tail of the current session's log, oldest first.
     pub log_tail: &'a [String],
     /// Redacts the log tail and anything else free-form.
@@ -350,6 +352,7 @@ impl Report<'_> {
                 self.settings.usage_reporting,
                 self.usage_endpoint_configured,
                 self.usage_delivery,
+                self.egress_held,
             ),
         );
 
@@ -422,10 +425,24 @@ fn on_off(value: bool) -> String {
 /// value is compiled in and still cannot work, so a sentence saying no
 /// endpoint was compiled in would send someone off to set a variable they
 /// already set.
-fn describe_usage(consent: Option<bool>, endpoint_configured: bool, delivery: Delivery) -> String {
+///
+/// A held guard is said out loud because otherwise the line reads as a fault:
+/// a user who is always held sees "nothing sent yet this session" forever,
+/// which is true and explains nothing. Holding is the guard doing its job,
+/// so it is stated as a fact, not a problem.
+fn describe_usage(
+    consent: Option<bool>,
+    endpoint_configured: bool,
+    delivery: Delivery,
+    held: bool,
+) -> String {
     match (consent, endpoint_configured) {
         (None, _) => "not asked".to_owned(),
         (Some(false), _) => "off".to_owned(),
+        (Some(true), true) if held => format!(
+            "on; held by the tunnel check, so nothing is sent until it releases; {}",
+            describe_delivery(delivery)
+        ),
         (Some(true), true) => format!("on; {}", describe_delivery(delivery)),
         (Some(true), false) => {
             "ON, BUT THIS BUILD HAS NO USABLE COLLECTOR ENDPOINT -- events are queued \
@@ -630,6 +647,7 @@ mod tests {
             home: Some(PathBuf::from("/Users/adam")),
             usage_endpoint_configured: true,
             usage_delivery: Delivery::Untried,
+            egress_held: false,
             log_tail: log,
             redactor,
         }
@@ -708,28 +726,41 @@ mod tests {
     #[test]
     fn usage_reporting_is_described_by_consent_and_endpoint_together() {
         let untried = Delivery::Untried;
-        assert_eq!(describe_usage(None, true, untried), "not asked");
-        assert_eq!(describe_usage(None, false, untried), "not asked");
+        assert_eq!(describe_usage(None, true, untried, false), "not asked");
+        assert_eq!(describe_usage(None, false, untried, false), "not asked");
         // A decline is a decline; the endpoint is irrelevant and mentioning it
         // would imply the setting is not being honoured.
-        assert_eq!(describe_usage(Some(false), false, untried), "off");
+        assert_eq!(describe_usage(Some(false), false, untried, false), "off");
         assert!(
-            describe_usage(Some(true), false, untried).contains("NO USABLE COLLECTOR ENDPOINT")
+            describe_usage(Some(true), false, untried, false)
+                .contains("NO USABLE COLLECTOR ENDPOINT")
         );
 
         // On, and the delivery half is a fact rather than a diagnosis.
         assert_eq!(
-            describe_usage(Some(true), true, Delivery::Accepted),
+            describe_usage(Some(true), true, Delivery::Accepted, false),
             "on; last batch accepted"
         );
         assert_eq!(
-            describe_usage(Some(true), true, Delivery::Refused(404)),
+            describe_usage(Some(true), true, Delivery::Refused(404), false),
             "on; last batch refused with 404"
         );
 
         // The load-bearing one: a closed laptop must not be told anything is
         // wrong, and must not be told which of several causes it was.
-        let offline = describe_usage(Some(true), true, Delivery::NoResponse);
+        // Held is the guard working, not reporting failing, and the line has
+        // to say which -- but only where it changes anything. A decline or a
+        // build that cannot send is described the same either way.
+        let held = describe_usage(Some(true), true, Delivery::Untried, true);
+        assert!(held.contains("held by the tunnel check"), "{held}");
+        assert!(held.ends_with("nothing sent yet this session"), "{held}");
+        assert_eq!(describe_usage(Some(false), true, untried, true), "off");
+        assert!(
+            describe_usage(Some(true), false, untried, true)
+                .contains("NO USABLE COLLECTOR ENDPOINT")
+        );
+
+        let offline = describe_usage(Some(true), true, Delivery::NoResponse, false);
         assert!(offline.contains("no answer"), "{offline}");
         assert!(offline.contains("not distinguishable"), "{offline}");
         for verdict in ["broken", "BROKEN", "failed", "error"] {

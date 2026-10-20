@@ -43,8 +43,8 @@ download folder appears as "exists, inside the home directory", a proxy as
 "configured (socks5)" — and the last 200 lines of the current session's log
 with paths, addresses, URLs, info hashes and torrent names removed.
 
-If usage reporting is on, it also says what happened to the last batch — that
-it was accepted, that it was refused with a status code, or that it got no
+If usage reporting is on, it also says whether the tunnel check is holding
+sends back, and what happened to the last batch — that it was accepted, that it was refused with a status code, or that it got no
 answer at all. That last one is reported as exactly that, without guessing:
 being offline, a DNS block, a certificate problem and a proxy in the way are
 not distinguishable from inside Flume, and claiming to know which would be a
@@ -101,6 +101,13 @@ Every event is timed to the hour, not the second.
 
 Counts are ranges rather than exact numbers because a range is what anyone
 would graph, and "the install with 1,483 torrents" is one identifiable person.
+
+**Nothing is sent while the tunnel check is holding.** If you have turned on
+the tunnel check and traffic is not leaving through a tunnel, Flume does not
+send usage counts either — not on the hour and not when you quit. They stay
+queued on your machine and go once the tunnel is back, or are discarded after
+three days like any other batch that cannot be sent. An opt-in count is not a
+reason to connect from the address the check exists to protect.
 
 ### What the collector stores
 
@@ -171,8 +178,8 @@ your address to a third party in order to tell you your address is protected.
 
 **What holding actually does.** Flume does not pause your torrents; it does not
 start the torrent engine at all. So while transfer is held there is no session:
-no peer connections, no tracker announces, no DHT, no listening port. Your
-torrents are not modified, which is why the ones you paused yourself stay paused
+no peer connections, no tracker announces, no DHT, no listening port — and no
+usage counts, if you send them. Your torrents are not modified, which is why the ones you paused yourself stay paused
 and the ones that were running come back running when a tunnel returns.
 
 A drop takes effect immediately. Recovery waits about ten seconds of a steady
