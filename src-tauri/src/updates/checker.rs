@@ -19,7 +19,8 @@ use tokio::sync::{Mutex, RwLock};
 
 use super::{
     Bundle, CHECK_INTERVAL, CHECK_TIMEOUT, Delivery, FailureKind, FailureStage, STARTUP_DELAY,
-    Skip, Trigger, UpdateStatus, after_hold, delivery_for, is_configured, may_check,
+    Skip, Trigger, UpdateStatus, delivery_for, is_configured, may_check, official_build,
+    unless_announced,
 };
 use crate::state::AppState;
 
@@ -68,7 +69,8 @@ impl Updates {
     }
 }
 
-/// Whether the running build's config carries an updater public key.
+/// Whether this build may check: an official release build whose config
+/// carries an updater public key. See [`is_configured`].
 #[must_use]
 pub fn build_is_configured<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.config()
@@ -77,7 +79,7 @@ pub fn build_is_configured<R: Runtime>(app: &AppHandle<R>) -> bool {
         .get("updater")
         .and_then(|updater| updater.get("pubkey"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(is_configured)
+        .is_some_and(|pubkey| is_configured(pubkey, official_build()))
 }
 
 /// How this copy of Flume was installed, as the bundler recorded it.
@@ -199,7 +201,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     match may_check(trigger, updates.configured, enabled, held) {
         Ok(()) => {}
         Err(Skip::Held) => {
-            let status = after_hold(&before);
+            let status = unless_announced(&before, UpdateStatus::Held);
             publish(app, &updates, status.clone()).await;
             return status;
         }
@@ -229,7 +231,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     })
     .await;
     let Some(found) = found else {
-        let status = after_hold(&before);
+        let status = unless_announced(&before, UpdateStatus::Held);
         publish(app, &updates, status.clone()).await;
         return status;
     };
@@ -253,10 +255,13 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
             // Local log only. The message can name the endpoint, which is
             // public, but nothing here is reported anywhere.
             log::info!("update check failed: {err}");
-            UpdateStatus::Failed {
-                reason: classify(&err),
-                stage: FailureStage::Check,
-            }
+            unless_announced(
+                &before,
+                UpdateStatus::Failed {
+                    reason: classify(&err),
+                    stage: FailureStage::Check,
+                },
+            )
         }
     };
     publish(app, &updates, status.clone()).await;

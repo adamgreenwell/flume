@@ -219,8 +219,11 @@ jobs:
       # from a committed file rather than an inline JSON string: tauri-action
       # splits `args` on whitespace, and quoting JSON through that is fragile.
       # An absolute path, because the CLI changes into src-tauri/ partway.
+      # Only in this repository. A fork that copies the workflow and sets its
+      # own secret must not get the official-build marker below, or its builds
+      # would check this repository's releases (Codex, #236).
       - name: Enable updater artifacts, if a key is configured
-        if: env.HAS_UPDATER_KEY == 'true'
+        if: env.HAS_UPDATER_KEY == 'true' && github.repository == 'adamgreenwell/flume'
         shell: bash
         run: |
           # The CLI signs everything and only then validates the public key,
@@ -239,6 +242,11 @@ jobs:
             exit 1
           fi
           echo "UPDATER_ARGS=--config ${GITHUB_WORKSPACE}/src-tauri/tauri.updater.conf.json" >> "$GITHUB_ENV"
+          # Compiled in by `updates::official_build`. The committed public key
+          # alone is not enough to make a build check for updates, because
+          # every fork inherits it; this marker is what only an official
+          # release build carries.
+          echo "FLUME_OFFICIAL_UPDATES=1" >> "$GITHUB_ENV"
           echo "Updater artifacts will be built; the updater-manifest job writes latest.json."
 
       # Two steps rather than one, because passing empty APPLE_* variables is
@@ -484,7 +492,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     env:
-      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && github.repository == 'adamgreenwell/flume' }}
     steps:
       - uses: actions/checkout@v7
         if: env.HAS_UPDATER_KEY == 'true'

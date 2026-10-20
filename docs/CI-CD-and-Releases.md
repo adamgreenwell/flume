@@ -136,6 +136,10 @@ checking at all. To turn updates on ([#176](https://github.com/adamgreenwell/flu
 3. Paste the contents of `~/.tauri/flume-updater.key.pub` into
    `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`, through a PR.
 
-The next tagged release then ships `latest.json` and signed updater artifacts.
+The next tagged release then ships `latest.json` and signed updater artifacts,
+and its builds carry `FLUME_OFFICIAL_UPDATES=1`, the marker that lets them check
+at all. Only this repository's workflow sets it: the public key is committed,
+so a fork inherits it, and the marker is what stops a fork's build checking
+this repository's releases and offering to replace itself with them.
 Installs from before that release cannot update themselves, because they have
 no key to verify with — that release is the last one anyone installs by hand.

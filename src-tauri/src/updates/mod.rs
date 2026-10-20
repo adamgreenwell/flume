@@ -189,16 +189,20 @@ pub async fn abandon_when<T>(
     }
 }
 
-/// The status to publish when the guard stopped or prevented an operation.
+/// The status to publish when an operation was stopped or failed: `otherwise`,
+/// unless an update was already announced, which stands.
 ///
-/// What Flume knew before still stands if it was an announced update -- the
-/// banner, which knows the guard is holding, explains why Install waits.
-/// Anything else becomes [`UpdateStatus::Held`].
+/// A guard hold or a failed recheck says nothing about whether the announced
+/// update still exists, and replacing it would hide the banner -- a failed
+/// *background* check is deliberately quiet -- leaving the pending update
+/// unreachable until someone happened to check by hand. Only a check that
+/// succeeds may retract an announcement. Codex found both routes on #236:
+/// a hold during an install, then a failed daily recheck.
 #[must_use]
-pub fn after_hold(before: &UpdateStatus) -> UpdateStatus {
+pub fn unless_announced(before: &UpdateStatus, otherwise: UpdateStatus) -> UpdateStatus {
     match before {
         UpdateStatus::Available { .. } => before.clone(),
-        _ => UpdateStatus::Held,
+        _ => otherwise,
     }
 }
 
@@ -213,16 +217,30 @@ pub const fn retry_when_released(status: &UpdateStatus) -> bool {
     matches!(status, UpdateStatus::Held)
 }
 
-/// Whether a build carries an updater public key.
+/// Whether this is an official release build, made by this repository's
+/// release workflow with the updater key.
 ///
-/// The plugin refuses to start with no `plugins.updater` section, so every
-/// build has one; an empty `pubkey` is how a build that cannot verify updates
-/// says so. Forks, CI and development builds are in that state, and the right
-/// thing for them is to ask nothing -- an update they cannot verify is not one
-/// they can install, and a notice they cannot act on is noise.
+/// Set at compile time by `FLUME_OFFICIAL_UPDATES=1`, which only that workflow
+/// exports, and only in `adamgreenwell/flume`. The public key alone cannot
+/// mark an official build: it is committed, so every fork inherits it, and a
+/// packaged fork would otherwise check this repository's releases and offer to
+/// replace itself with them (Codex, #236).
 #[must_use]
-pub fn is_configured(pubkey: &str) -> bool {
-    !pubkey.trim().is_empty()
+pub fn official_build() -> bool {
+    matches!(option_env!("FLUME_OFFICIAL_UPDATES"), Some("1"))
+}
+
+/// Whether a build may check for updates at all.
+///
+/// Both halves are needed. An empty `pubkey` means nothing found could be
+/// verified -- the plugin refuses to start without a `plugins.updater`
+/// section, so an empty key is how a build says it has none. And an
+/// unofficial build, which has the committed key but did not come from this
+/// repository's releases, has no business being told about them. Forks, CI
+/// and development builds are unconfigured, and ask nothing.
+#[must_use]
+pub fn is_configured(pubkey: &str, official: bool) -> bool {
+    official && !pubkey.trim().is_empty()
 }
 
 /// The page for a release, for the "Download" button.
@@ -429,12 +447,21 @@ mod tests {
     }
 
     #[test]
-    fn a_hold_never_hides_an_announced_update() {
+    fn a_hold_or_a_failed_recheck_never_hides_an_announced_update() {
         let available = UpdateStatus::Available {
             version: "1.5.1".to_owned(),
             delivery: Delivery::InPlace,
         };
-        assert_eq!(after_hold(&available), available);
+        let failed = UpdateStatus::Failed {
+            reason: FailureKind::Network,
+            stage: FailureStage::Check,
+        };
+        assert_eq!(unless_announced(&available, UpdateStatus::Held), available);
+        assert_eq!(unless_announced(&available, failed.clone()), available);
+        assert_eq!(
+            unless_announced(&UpdateStatus::Idle, failed.clone()),
+            failed
+        );
         for before in [
             UpdateStatus::Idle,
             UpdateStatus::Checking,
@@ -444,7 +471,11 @@ mod tests {
                 stage: FailureStage::Check,
             },
         ] {
-            assert_eq!(after_hold(&before), UpdateStatus::Held, "{before:?}");
+            assert_eq!(
+                unless_announced(&before, UpdateStatus::Held),
+                UpdateStatus::Held,
+                "{before:?}"
+            );
         }
     }
 
@@ -469,9 +500,26 @@ mod tests {
 
     #[test]
     fn an_empty_key_is_not_a_key() {
-        assert!(!is_configured(""));
-        assert!(!is_configured("  \n"));
-        assert!(is_configured("dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWdu"));
+        assert!(!is_configured("", true));
+        assert!(!is_configured("  \n", true));
+        assert!(is_configured("dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWdu", true));
+    }
+
+    /// A fork inherits the committed public key. Without the official-build
+    /// marker it must not check this repository's releases, or a packaged
+    /// fork would offer to replace itself with official Flume.
+    #[test]
+    fn a_key_alone_does_not_make_an_official_build() {
+        assert!(!is_configured(
+            "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWdu",
+            false
+        ));
+    }
+
+    #[test]
+    fn this_test_build_is_not_official() {
+        // `cargo test` never sets the marker; only the release workflow does.
+        assert!(!official_build());
     }
 
     #[test]

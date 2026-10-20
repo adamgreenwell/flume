@@ -190,9 +190,9 @@ Check for Updates…** still checks, because that is you asking.
 **When it does not.** Never while the [tunnel check](#the-tunnel-check--what-it-can-and-cannot-tell-you)
 is holding transfer — not the daily check, not one you ask for, not a
 download. Someone relying on that guard does not expect Flume to open a
-connection from the address it is protecting, torrent traffic or not. A check
-that was skipped says so, and runs once traffic is leaving through the tunnel
-again. The check follows your operating system's proxy settings; it does not
+connection from the address it is protecting, torrent traffic or not. A daily
+check that was skipped runs once traffic is leaving through the tunnel again;
+one you asked for says it was skipped, and you can ask again then. The check follows your operating system's proxy settings; it does not
 use the SOCKS5 proxy you configured for peers.
 
 **Nothing installs until you choose to.** When a newer version exists, Flume
