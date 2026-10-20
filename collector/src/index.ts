@@ -5,9 +5,17 @@
  * best-effort code running on someone else's machine; this is the thing that
  * cannot be talked into storing a torrent name. Every event is checked against
  * `schema.json` and anything that does not match exactly — an unknown event, an
- * unknown field, a value outside the allowlist — is rejected rather than
+ * unknown field, a value outside the allowlist — is discarded rather than
  * stored. A future bug in the Rust client therefore cannot widen what is
  * collected without a deliberate change to this file.
+ *
+ * Validation is per event, and the envelope is the only all-or-nothing part.
+ * It used to be the whole batch: the first bad event threw, the batch got a
+ * 400, and the client kept it and retried hourly — so a client bug that
+ * produced one bad kind of event silenced that install for good, because
+ * every later batch carried another. Now the valid events are stored, each
+ * discarded one is counted in `rejections` by reason, and the reply is 204.
+ * The client needs no change and old releases benefit at once.
  *
  * Counts are approximate by design. Delivery is at-least-once and there is no
  * dedupe table: a response lost after the row was written means the client
@@ -57,59 +65,100 @@ interface Row {
 /** Why a batch was rejected. Returned to the client, never stored. */
 class Invalid extends Error {}
 
+/**
+ * Why one event was discarded. A closed list, because it is stored.
+ *
+ * - `notAnObject` — not a JSON object, or no string `event` name.
+ * - `unknownEvent` — a name that is not in the schema. Release drift looks
+ *   like this: a client sending an event the deployed Worker predates.
+ * - `unexpectedKeys` — keys other than exactly `at`, `event` and the
+ *   schema's field. The case the privacy promise is about.
+ * - `badTimestamp` — `at` is not an integer number of hours.
+ * - `tooOld` / `tooNew` — `at` is outside the accepted window. The client
+ *   prunes at three days against this four, so either means a wrong clock.
+ * - `unknownValue` — the field's value is not on its allowlist; drift again,
+ *   when a release adds a value such as a new settings key.
+ */
+export type Reason =
+  | "notAnObject"
+  | "unknownEvent"
+  | "unexpectedKeys"
+  | "badTimestamp"
+  | "tooOld"
+  | "tooNew"
+  | "unknownValue";
+
+/**
+ * One event discarded. `event` is the name only when it is on the schema's
+ * allowlist and `null` otherwise, so an unrecognised name never reaches a
+ * row: it is the one string in an event a client could fill with anything.
+ */
+class Rejected extends Error {
+  constructor(
+    readonly reason: Reason,
+    readonly event: string | null,
+  ) {
+    super(reason);
+  }
+}
+
+/**
+ * `schema.json` itself is wrong. A collector bug, not a client one, so the
+ * client is told to keep the batch (503) until a fixed Worker is deployed
+ * rather than having its events counted as rejected.
+ */
+class SchemaBroken extends Error {}
+
 /** Narrows an unknown value to a plain JSON object. */
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Checks an object's keys are exactly `expected`, in any order.
+ * Whether an object's keys are exactly `expected`, in any order.
  *
- * Rejecting unknown keys rather than ignoring them is the whole mechanism:
- * silently dropping an unexpected field would let a client start sending one
- * and nobody would notice until it was already in the database.
+ * Refusing unknown keys rather than ignoring them is the whole mechanism:
+ * stripping an unexpected field and storing the rest would let a client start
+ * sending one and nobody would notice until it was already in the database.
+ * An event with an extra key is discarded whole and counted.
  */
-function requireExactKeys(
+function hasExactKeys(
   value: Record<string, unknown>,
   expected: string[],
-  what: string,
-): void {
+): boolean {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
-  if (
-    actual.length !== wanted.length ||
-    actual.some((k, i) => k !== wanted[i])
-  ) {
-    throw new Invalid(
-      `${what}: expected keys [${wanted.join(", ")}], got [${actual.join(", ")}]`,
-    );
-  }
+  return (
+    actual.length === wanted.length && actual.every((k, i) => k === wanted[i])
+  );
 }
 
-/** Validates one event and flattens it into a row. */
+/** Validates one event and flattens it into a row, or throws `Rejected`. */
 function validateEvent(raw: unknown, now: number): Row {
-  if (!isObject(raw)) throw new Invalid("event: not an object");
+  if (!isObject(raw)) throw new Rejected("notAnObject", null);
 
   const name = raw.event;
-  if (typeof name !== "string") throw new Invalid("event: missing name");
+  if (typeof name !== "string") throw new Rejected("notAnObject", null);
 
-  const fields = (SCHEMA.events as Record<string, Record<string, unknown[]>>)[
-    name
-  ];
-  if (fields === undefined) throw new Invalid(`event: unknown type ${name}`);
+  // `Object.hasOwn`, not a lookup: `toString` or `__proto__` sent as a name
+  // would otherwise find something on the prototype.
+  const events = SCHEMA.events as Record<string, Record<string, unknown[]>>;
+  const fields = Object.hasOwn(events, name) ? events[name] : undefined;
+  if (fields === undefined) throw new Rejected("unknownEvent", null);
 
   const fieldNames = Object.keys(fields);
-  requireExactKeys(raw, ["at", "event", ...fieldNames], `event ${name}`);
+  if (!hasExactKeys(raw, ["at", "event", ...fieldNames])) {
+    throw new Rejected("unexpectedKeys", name);
+  }
 
   const at = raw.at;
   if (typeof at !== "number" || !Number.isInteger(at) || at % HOUR !== 0) {
-    throw new Invalid(`event ${name}: 'at' must be an integer hour`);
+    throw new Rejected("badTimestamp", name);
   }
   // A timestamp outside this window is a broken clock or a replay, and either
   // way it would distort every time series it landed in.
-  if (at < now - MAX_AGE_SECONDS || at > now + MAX_SKEW_SECONDS) {
-    throw new Invalid(`event ${name}: 'at' is outside the accepted window`);
-  }
+  if (at < now - MAX_AGE_SECONDS) throw new Rejected("tooOld", name);
+  if (at > now + MAX_SKEW_SECONDS) throw new Rejected("tooNew", name);
 
   if (fieldNames.length === 0) {
     return { event: name, field: null, value: null, at };
@@ -122,25 +171,37 @@ function validateEvent(raw: unknown, now: number): Row {
   // assumption would be refused here rather than half-stored.
   const field = fieldNames[0];
   if (field === undefined || fieldNames.length > 1) {
-    throw new Invalid(
-      `event ${name}: the schema must declare exactly one field`,
-    );
+    throw new SchemaBroken(`${name} must declare exactly one field`);
   }
 
   const allowed = fields[field];
   if (allowed === undefined) {
-    throw new Invalid(`event ${name}: '${field}' has no allowed values`);
+    throw new SchemaBroken(`${name}.${field} has no allowed values`);
   }
 
   const value = raw[field];
   if (!allowed.includes(value as never)) {
-    throw new Invalid(`event ${name}: '${field}' is not an allowed value`);
+    throw new Rejected("unknownValue", name);
   }
 
   return { event: name, field, value: String(value), at };
 }
 
-/** Validates a whole envelope and flattens it into rows. */
+/** Discarded events of one kind, ready to add to `rejections`. */
+interface Dropped {
+  event: string;
+  reason: Reason;
+  count: number;
+}
+
+/**
+ * Validates a whole envelope and flattens it into rows to store and counts
+ * of what was discarded.
+ *
+ * Throws `Invalid` only for the envelope, which every event shares, and
+ * `SchemaBroken` for the collector's own schema. An invalid event is never
+ * thrown out of here: it is counted and the rest go on.
+ */
 function validate(
   body: unknown,
   now: number,
@@ -150,9 +211,15 @@ function validate(
   os: string;
   arch: string;
   rows: Row[];
+  dropped: Dropped[];
 } {
   if (!isObject(body)) throw new Invalid("envelope: not an object");
-  requireExactKeys(body, SCHEMA.envelope.required, "envelope");
+  if (!hasExactKeys(body, SCHEMA.envelope.required)) {
+    const got = Object.keys(body).sort().join(", ");
+    throw new Invalid(
+      `envelope: expected keys [${[...SCHEMA.envelope.required].sort().join(", ")}], got [${got}]`,
+    );
+  }
 
   if (body.schema !== SCHEMA.schema) {
     throw new Invalid(`envelope: unsupported schema ${String(body.schema)}`);
@@ -186,12 +253,31 @@ function validate(
     throw new Invalid("envelope: too many events");
   }
 
+  const rows: Row[] = [];
+  const dropped = new Map<string, Dropped>();
+  for (const event of events) {
+    try {
+      rows.push(validateEvent(event, now));
+    } catch (thrown) {
+      if (!(thrown instanceof Rejected)) throw thrown;
+      // '' rather than null for an unrecognised name: it is part of the
+      // table's primary key, and SQLite treats every NULL as distinct there,
+      // so NULLs would never aggregate.
+      const name = thrown.event ?? "";
+      const key = `${thrown.reason}\u0000${name}`;
+      const seen = dropped.get(key);
+      if (seen) seen.count += 1;
+      else dropped.set(key, { event: name, reason: thrown.reason, count: 1 });
+    }
+  }
+
   return {
     installId,
     appVersion,
     os,
     arch,
-    rows: events.map((event) => validateEvent(event, now)),
+    rows,
+    dropped: [...dropped.values()],
   };
 }
 
@@ -225,6 +311,9 @@ export default {
     try {
       batch = validate(body, now);
     } catch (thrown) {
+      if (thrown instanceof SchemaBroken) {
+        return new Response("collector schema is broken\n", { status: 503 });
+      }
       // The reason goes back to the client, which logs it at debug level. It
       // is never stored: a rejection message can quote the offending value.
       const reason = thrown instanceof Invalid ? thrown.message : "invalid";
@@ -240,9 +329,21 @@ export default {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
+    const tally = env.DB.prepare(
+      `INSERT INTO rejections (hour, app_version, os, event, reason, count)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (hour, app_version, os, event, reason)
+       DO UPDATE SET count = count + excluded.count`,
+    );
+    const hour = now - (now % HOUR);
+
+    // One batch, so D1 runs it as one transaction: the events and the count
+    // of what was dropped from them land together or not at all. Never empty
+    // -- the envelope requires at least one event, and each is either a row
+    // or part of a tally.
     try {
-      await env.DB.batch(
-        batch.rows.map((row) =>
+      await env.DB.batch([
+        ...batch.rows.map((row) =>
           statement.bind(
             batch.installId,
             batch.appVersion,
@@ -255,12 +356,30 @@ export default {
             now,
           ),
         ),
-      );
+        ...batch.dropped.map((d) =>
+          tally.bind(
+            hour,
+            batch.appVersion,
+            batch.os,
+            d.event,
+            d.reason,
+            d.count,
+          ),
+        ),
+      ]);
     } catch {
       // A 5xx tells the client to keep the batch and try again later.
       return new Response("could not store\n", { status: 503 });
     }
 
-    return new Response(null, { status: 204 });
+    // 204 even when events were dropped: retrying would drop them again. The
+    // count is a header so a person testing with curl can see it; the client
+    // does not read it.
+    const discarded = batch.dropped.reduce((sum, d) => sum + d.count, 0);
+    return new Response(null, {
+      status: 204,
+      headers:
+        discarded > 0 ? { "Flume-Discarded": String(discarded) } : undefined,
+    });
   },
 };

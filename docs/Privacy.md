@@ -23,7 +23,8 @@ log file that leaves your machine:
 There is no free-text field anywhere in the wire format. Every value Flume can
 send is one of a fixed list, enumerated below and enforced twice — once by the
 Rust type in `src-tauri/src/usage/mod.rs`, and again by the collector, which
-rejects any batch containing a field or value it does not recognise.
+discards any event containing a field or value it does not recognise, and
+refuses any batch whose envelope it does not recognise.
 
 ## The two features
 
@@ -104,10 +105,20 @@ would graph, and "the install with 1,483 torrents" is one identifiable person.
 ### What the collector stores
 
 The collector runs on Cloudflare Workers and writes to a D1 database. Its
-source is in `collector/` in this repository — the whole thing is about 250
+source is in `collector/` in this repository — the whole thing is about 350
 lines and you can read it.
 
-It stores exactly the fields listed above. It does **not** store your IP
+It stores exactly the fields listed above, plus one count of what it threw
+away. An event it does not recognise — an unknown type, an extra key, a value
+off the list, a timestamp outside the window — is discarded, and the
+collector adds one to a tally of the hour it arrived, your `appVersion`, your
+`os`, the event's name if it is one on the list, and why it was discarded.
+The tally holds no install ID and none of the discarded event's contents; an
+event name that is not on the list is not kept either, because it is the one
+thing in an event that could say anything. It exists so a broken release
+shows up as a number rather than as silence.
+
+It does **not** store your IP
 address or your `User-Agent`; the code never reads either, and the database
 schema has no column for them. Requests reach Cloudflare, which sees your IP
 as any web server would, but nothing in Flume's control records it.

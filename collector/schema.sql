@@ -32,3 +32,26 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_at      ON events (at);
 CREATE INDEX IF NOT EXISTS events_event   ON events (event, at);
 CREATE INDEX IF NOT EXISTS events_install ON events (install_id, at);
+
+-- Events the collector discarded, as counts. A batch is validated one event
+-- at a time: the valid ones go into `events` and each invalid one adds one
+-- here, so a single bad event no longer costs the whole batch -- and the
+-- drops stay visible instead of silent. A spike in `unknownEvent` or
+-- `unknownValue` for a new app_version is the signature of a release that
+-- went out before this Worker was redeployed with its schema.
+--
+-- Nothing a client chose freely is stored. `event` is a name from the
+-- schema's allowlist, or '' when the client sent one that is not on it -- the
+-- unrecognised name itself is never kept, because it is the one string here a
+-- client could put anything into. No install id, and no rejected value.
+CREATE TABLE IF NOT EXISTS rejections (
+  -- When the collector received them, truncated to the hour.
+  hour         INTEGER NOT NULL,
+  app_version  TEXT    NOT NULL,
+  os           TEXT    NOT NULL,
+  event        TEXT    NOT NULL,
+  -- One of the `Reason` values in src/index.ts.
+  reason       TEXT    NOT NULL,
+  count        INTEGER NOT NULL,
+  PRIMARY KEY (hour, app_version, os, event, reason)
+);

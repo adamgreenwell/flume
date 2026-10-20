@@ -19,12 +19,25 @@ commit.
 The client is best-effort code on someone else's machine. This is the part
 that cannot be talked into storing a torrent name.
 
-Every batch is checked against `schema.json` and **anything unrecognised is
-rejected rather than ignored** — an unknown event type, an unknown field, a
-value outside the allowlist, an extra key on the envelope. Silently dropping
-an unexpected field is the failure mode that matters: a future client bug
+Every event is checked against `schema.json` and **anything unrecognised is
+discarded whole rather than partly stored** — an unknown event type, an
+unknown field, a value outside the allowlist. Stripping an unexpected field
+and keeping the rest is the failure mode that matters: a future client bug
 would start sending one and nobody would find out until it was in the
 database.
+
+Events are judged one at a time. The valid ones in a batch are stored, each
+discarded one adds to a count in the `rejections` table (by hour, version, os,
+allowlisted event name and reason — see `schema.sql`), and the reply is 204.
+Only the envelope is all-or-nothing: a bad `schema`, `os`, `arch`, install id
+or version, or an extra envelope key, is a 400 and stores nothing. It used to
+be the whole batch, which let a single bad event — from a client bug, or a
+release that went out before this Worker learned its new event — silence an
+install, since the client keeps a batch that gets a 400 and retries it.
+
+A spike in `unknownEvent` or `unknownValue` for a new version means a release
+shipped a schema change this Worker does not have yet. Deploy it; the events
+from before that are gone, but the count says how many.
 
 The Worker also never reads `CF-Connecting-IP` or `User-Agent`, and
 `schema.sql` has no column for either.
@@ -37,6 +50,10 @@ npx wrangler d1 create flume-usage    # copy the id into wrangler.jsonc
 npm run migrate
 npm run deploy
 ```
+
+`npm run migrate` runs all of `schema.sql`, and every statement in it is
+`IF NOT EXISTS`, so it is also how an existing database picks up a new table.
+Run it before `deploy` whenever `schema.sql` has changed.
 
 Then build the app with the endpoint baked in:
 
