@@ -660,7 +660,7 @@ fn optional_fields_serialize_as_null_not_absent() {
 
 #[test]
 fn update_status_matches_the_typescript_mirror() {
-    use flume_lib::updates::{Delivery, FailureKind, UpdateStatus};
+    use flume_lib::updates::{Delivery, FailureKind, FailureStage, UpdateStatus};
 
     // A union on `state`, like TorrentSource on `kind`. Every variant listed,
     // with exactly the keys its TypeScript member declares.
@@ -685,9 +685,10 @@ fn update_status_matches_the_typescript_mirror() {
         (
             UpdateStatus::Failed {
                 reason: FailureKind::Network,
+                stage: FailureStage::Check,
             },
             "failed",
-            &["state", "reason"],
+            &["state", "reason", "stage"],
         ),
         (UpdateStatus::Held, "held", &["state"]),
     ];
@@ -696,6 +697,12 @@ fn update_status_matches_the_typescript_mirror() {
         assert_keys(status, keys, &format!("UpdateStatus::{state}"));
     }
 
+    for (stage, expected) in [
+        (FailureStage::Check, "check"),
+        (FailureStage::Install, "install"),
+    ] {
+        assert_eq!(json(&stage), expected);
+    }
     for (delivery, expected) in [
         (Delivery::InPlace, "inPlace"),
         (Delivery::Download, "download"),

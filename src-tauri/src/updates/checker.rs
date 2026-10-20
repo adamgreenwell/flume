@@ -18,8 +18,8 @@ use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use tokio::sync::{Mutex, RwLock};
 
 use super::{
-    Bundle, CHECK_INTERVAL, CHECK_TIMEOUT, Delivery, FailureKind, STARTUP_DELAY, Skip, Trigger,
-    UpdateStatus, delivery_for, is_configured, may_check,
+    Bundle, CHECK_INTERVAL, CHECK_TIMEOUT, Delivery, FailureKind, FailureStage, STARTUP_DELAY,
+    Skip, Trigger, UpdateStatus, after_hold, delivery_for, is_configured, may_check,
 };
 use crate::state::AppState;
 
@@ -195,11 +195,13 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     let enabled = state.settings().await.check_for_updates;
     let held = state.egress_status().await.held;
 
+    let before = updates.status().await;
     match may_check(trigger, updates.configured, enabled, held) {
         Ok(()) => {}
         Err(Skip::Held) => {
-            publish(app, &updates, UpdateStatus::Held).await;
-            return UpdateStatus::Held;
+            let status = after_hold(&before);
+            publish(app, &updates, status.clone()).await;
+            return status;
         }
         Err(Skip::Off | Skip::Unconfigured) => {
             // A `Held` left over from before the switch went off is no longer
@@ -227,8 +229,9 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
     })
     .await;
     let Some(found) = found else {
-        publish(app, &updates, UpdateStatus::Held).await;
-        return UpdateStatus::Held;
+        let status = after_hold(&before);
+        publish(app, &updates, status.clone()).await;
+        return status;
     };
 
     let status = match found {
@@ -252,6 +255,7 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, trigger: Trigger) -> UpdateSt
             log::info!("update check failed: {err}");
             UpdateStatus::Failed {
                 reason: classify(&err),
+                stage: FailureStage::Check,
             }
         }
     };
@@ -279,22 +283,29 @@ pub async fn install<R: Runtime>(app: &AppHandle<R>) -> UpdateStatus {
     if current_delivery() != Delivery::InPlace {
         return updates.status().await;
     }
-    if app.state::<AppState>().egress_status().await.held {
-        publish(app, &updates, UpdateStatus::Held).await;
-        return UpdateStatus::Held;
-    }
     let Ok(_busy) = updates.busy.try_lock() else {
         return updates.status().await;
     };
     let Some(update) = updates.pending.lock().await.clone() else {
         return updates.status().await;
     };
+    // What to put back if the guard stops this: the announcement, so the
+    // person can install once the tunnel returns. Not `Held`, which would
+    // drop the banner and leave the pending update unreachable.
+    let announced = UpdateStatus::Available {
+        version: update.version.clone(),
+        delivery: Delivery::InPlace,
+    };
+    if app.state::<AppState>().egress_status().await.held {
+        publish(app, &updates, announced.clone()).await;
+        return announced;
+    }
 
     publish(app, &updates, UpdateStatus::Installing).await;
     let Some(downloaded) = unless_held(app, update.download(|_, _| {}, || {})).await else {
         log::info!("update download abandoned: the egress guard started holding");
-        publish(app, &updates, UpdateStatus::Held).await;
-        return UpdateStatus::Held;
+        publish(app, &updates, announced.clone()).await;
+        return announced;
     };
     match downloaded.and_then(|bytes| update.install(bytes)) {
         Ok(()) => {
@@ -306,6 +317,7 @@ pub async fn install<R: Runtime>(app: &AppHandle<R>) -> UpdateStatus {
             log::warn!("update install failed: {err}");
             let status = UpdateStatus::Failed {
                 reason: classify(&err),
+                stage: FailureStage::Install,
             };
             publish(app, &updates, status.clone()).await;
             status

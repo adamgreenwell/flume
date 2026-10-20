@@ -24,7 +24,11 @@ export default defineConfig({
     // The collector's tests run here too, so `npm run check`, CI and
     // preflight all cover the Worker without a fourth list to keep in step.
     // They opt into the node environment per file.
-    include: ["src/**/*.test.{ts,tsx}", "collector/test/**/*.test.ts"],
+    include: [
+      "src/**/*.test.{ts,tsx}",
+      "collector/test/**/*.test.ts",
+      "scripts/**/*.test.mjs",
+    ],
     setupFiles: ["./vitest.setup.ts"],
   },
 });

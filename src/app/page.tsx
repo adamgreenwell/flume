@@ -85,8 +85,8 @@ export default function Home() {
   const { status: guardStatus, held } = useEgressGuard();
   const updateStatus = useUpdateStatus();
   // Whether the person asked for the last check, so its answer is shown; the
-  // daily check is silent unless it finds something. And a version they said
-  // "Not now" to, which stays hidden for the rest of this session.
+  // daily check is silent unless it finds something. And the message they
+  // dismissed -- an update's version, a failure -- hidden for the session.
   const [updateAsked, setUpdateAsked] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState<string | null>(null);
   const collected = useThroughputHistory(telemetry);
@@ -509,6 +509,7 @@ export default function Home() {
 
         <UpdateBanner
           status={updateStatus}
+          guardHeld={held}
           asked={updateAsked}
           dismissed={updateDismissed}
           onInstall={() => void installUpdate().catch(() => {})}
@@ -517,9 +518,9 @@ export default function Home() {
               report(caught, "Could not open the release page."),
             )
           }
-          onDismiss={(version) => {
+          onDismiss={(key) => {
             setUpdateAsked(false);
-            setUpdateDismissed(version);
+            setUpdateDismissed(key);
           }}
         />
 

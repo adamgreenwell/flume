@@ -239,7 +239,7 @@ jobs:
             exit 1
           fi
           echo "UPDATER_ARGS=--config ${GITHUB_WORKSPACE}/src-tauri/tauri.updater.conf.json" >> "$GITHUB_ENV"
-          echo "Updater artifacts and latest.json will be built and uploaded."
+          echo "Updater artifacts will be built; the updater-manifest job writes latest.json."
 
       # Two steps rather than one, because passing empty APPLE_* variables is
       # not the same as passing none. tauri-action treats the presence of
@@ -273,9 +273,10 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          # tauri-action merges each leg's entries into one latest.json on the
-          # draft release, so every platform lands in the same manifest.
-          uploadUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+          # Never per leg: five legs read-modify-writing one latest.json race
+          # (Codex, #236). The `updater-manifest` job writes it once, after
+          # all of them. The legs still upload each artifact and its .sig.
+          uploadUpdaterJson: false
           args: ${{ matrix.args }} ${{ env.UPDATER_ARGS }}
 
       - name: Build and bundle (unsigned)
@@ -291,7 +292,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          uploadUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+          uploadUpdaterJson: false
           args: ${{ matrix.args }} ${{ env.UPDATER_ARGS }}
 
   rpm:
@@ -473,6 +474,33 @@ jobs:
           # collision.
           gh release upload "$TAG" rpms/*.rpm --clobber -R "$GITHUB_REPOSITORY"
 
+  updater-manifest:
+    name: Updater manifest (latest.json)
+    # Once, after every build leg -- never per leg, where tauri-action's
+    # read-merge-delete-upload of one shared asset races across the matrix and
+    # can publish a manifest missing platforms. `needs: build` also means a
+    # release that lost a leg publishes no manifest at all; the script refuses
+    # an incomplete one as well. Logic and tests: scripts/updater-manifest.mjs.
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.HAS_UPDATER_KEY == 'true'
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v7
+        if: env.HAS_UPDATER_KEY == 'true'
+        with:
+          node-version-file: .nvmrc
+      - name: Build and upload latest.json
+        if: env.HAS_UPDATER_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/updater-manifest.mjs "$TAG"
+
   checksums:
     name: Publish SHA-256 checksums
     # After every artifact is attached, including the .rpm files that arrive
@@ -496,8 +524,10 @@ jobs:
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" --clobber
 
           # A previous run's checksum file would otherwise be hashed into the
-          # new one.
-          rm -f SHA256SUMS.txt
+          # new one. latest.json is left out too: it is not a download, and the
+          # updater-manifest job runs alongside this one, so whether it had
+          # arrived yet would change the file from run to run.
+          rm -f SHA256SUMS.txt latest.json
 
           count=$(ls -1 | wc -l)
           if [ "$count" -eq 0 ]; then

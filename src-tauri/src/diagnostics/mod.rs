@@ -478,7 +478,7 @@ fn describe_updates(enabled: bool, status: &UpdateStatus, delivery: UpdateDelive
         UpdateStatus::UpToDate { .. } => "up to date at the last check".to_owned(),
         UpdateStatus::Available { version, .. } => format!("{version} available"),
         UpdateStatus::Installing => "installing".to_owned(),
-        UpdateStatus::Failed { reason } => format!(
+        UpdateStatus::Failed { reason, .. } => format!(
             "last attempt failed ({})",
             match reason {
                 UpdateFailure::Network => "no answer: offline, DNS, TLS or a proxy",
@@ -834,6 +834,7 @@ mod tests {
             true,
             &UpdateStatus::Failed {
                 reason: UpdateFailure::Signature,
+                stage: crate::updates::FailureStage::Install,
             },
             UpdateDelivery::InPlace,
         );

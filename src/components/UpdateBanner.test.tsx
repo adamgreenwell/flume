@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { UpdateStatus } from "@/lib/ipc/types";
 
-import { UpdateBanner, describeUpdate } from "./UpdateBanner";
+import { UpdateBanner, describeUpdate, dismissKey } from "./UpdateBanner";
 
 const available = (delivery: "inPlace" | "download"): UpdateStatus => ({
   state: "available",
@@ -11,9 +11,15 @@ const available = (delivery: "inPlace" | "download"): UpdateStatus => ({
   delivery,
 });
 
+const failed = (stage: "check" | "install"): UpdateStatus => ({
+  state: "failed",
+  reason: "network",
+  stage,
+});
+
 function renderBanner(
   status: UpdateStatus | null,
-  { asked = false, dismissed = null as string | null } = {},
+  { asked = false, dismissed = null as string | null, guardHeld = false } = {},
 ) {
   const handlers = {
     onInstall: vi.fn(),
@@ -23,6 +29,7 @@ function renderBanner(
   const view = render(
     <UpdateBanner
       status={status}
+      guardHeld={guardHeld}
       asked={asked}
       dismissed={dismissed}
       {...handlers}
@@ -53,8 +60,12 @@ describe("describeUpdate", () => {
   });
 
   it("stays hidden for a version dismissed this session, and only that one", () => {
-    expect(describeUpdate(available("inPlace"), false, "1.5.1")).toBeNull();
-    expect(describeUpdate(available("inPlace"), false, "1.5.0")).not.toBeNull();
+    expect(
+      describeUpdate(available("inPlace"), false, "available:1.5.1"),
+    ).toBeNull();
+    expect(
+      describeUpdate(available("inPlace"), false, "available:1.5.0"),
+    ).not.toBeNull();
   });
 
   // The daily check speaks up only when there is something to install. These
@@ -69,16 +80,57 @@ describe("describeUpdate", () => {
     expect(describeUpdate(status, true, null)).not.toBeNull();
   });
 
-  it("always reports a failure, asked or not", () => {
-    const failed: UpdateStatus = { state: "failed", reason: "signature" };
-    const message = describeUpdate(failed, false, null);
-    expect(message?.body).toMatch(/nothing was installed/);
+  // Codex review of #236: a failed daily check on an offline laptop said
+  // "Could not update" at every launch.
+  it("keeps a failed daily check quiet, but not one someone asked for", () => {
+    expect(describeUpdate(failed("check"), false, null)).toBeNull();
+    expect(describeUpdate(failed("check"), true, null)?.title).toBe(
+      "Could not update",
+    );
   });
 
-  it("explains a held guard instead of failing silently", () => {
-    expect(describeUpdate({ state: "held" }, true, null)?.body).toMatch(
-      /no connections from the address the guard protects/,
+  it("always reports a failed install -- someone clicked Install", () => {
+    expect(describeUpdate(failed("install"), false, null)?.title).toBe(
+      "Could not update",
     );
+  });
+
+  // Codex review of #236: an install the guard interrupted lost its banner,
+  // leaving the pending update unreachable. Rust now keeps it `available`;
+  // this is the banner's half -- say why, and do not offer a doomed click.
+  it("keeps an update installable through a hold, and says why it waits", () => {
+    const message = describeUpdate(available("inPlace"), false, null, true);
+    expect(message?.actions).toBe("install");
+    expect(message?.waiting).toBe(true);
+    expect(message?.body).toMatch(/tunnel guard is holding/);
+  });
+
+  it("still opens the release page during a hold, which is not Flume's traffic", () => {
+    expect(
+      describeUpdate(available("download"), false, null, true)?.waiting,
+    ).toBe(false);
+  });
+
+  // Codex review of #236: the held message promised a retry that only the
+  // daily check performs.
+  it("does not promise to check by itself after a hold someone asked about", () => {
+    const body = describeUpdate({ state: "held" }, true, null)?.body ?? "";
+    expect(body).not.toMatch(/will check/i);
+    expect(body).toMatch(/Check for Updates again/);
+  });
+});
+
+describe("dismissKey", () => {
+  it("keys an update by version and a failure by step and reason", () => {
+    expect(dismissKey(available("inPlace"))).toBe("available:1.5.1");
+    expect(dismissKey(failed("install"))).toBe("failed:install:network");
+    expect(dismissKey({ state: "held" })).toBe("held");
+  });
+
+  it("lets an install failure be dismissed, though it shows unasked", () => {
+    expect(
+      describeUpdate(failed("install"), false, "failed:install:network"),
+    ).toBeNull();
   });
 });
 
@@ -100,6 +152,18 @@ describe("UpdateBanner", () => {
     ).toBeNull();
   });
 
+  it("disables Install while the guard holds", () => {
+    const { onInstall } = renderBanner(available("inPlace"), {
+      guardHeld: true,
+    });
+    const install = screen.getByRole("button", {
+      name: "Install and restart",
+    });
+    expect((install as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(install);
+    expect(onInstall).not.toHaveBeenCalled();
+  });
+
   it("opens the release page where it cannot install, and never offers to", () => {
     const { onDownload } = renderBanner(available("download"));
     expect(
@@ -109,10 +173,10 @@ describe("UpdateBanner", () => {
     expect(onDownload).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the version to Not now, so only that version is hidden", () => {
+  it("passes the message's key to Not now, so only that version is hidden", () => {
     const { onDismiss } = renderBanner(available("inPlace"));
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
-    expect(onDismiss).toHaveBeenCalledWith("1.5.1");
+    expect(onDismiss).toHaveBeenCalledWith("available:1.5.1");
   });
 
   it("names the status in words, not colour alone", () => {

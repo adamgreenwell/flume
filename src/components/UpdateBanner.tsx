@@ -8,19 +8,26 @@ export interface UpdateBannerProps {
   /** The latest status, or `null` before one arrives. */
   status: UpdateStatus | null;
   /**
+   * Whether the egress guard is holding. An announced update stays on screen
+   * through a hold -- Rust never replaces it -- so this is what explains why
+   * Install is waiting, and keeps the button from offering a download Flume
+   * would refuse.
+   */
+  guardHeld: boolean;
+  /**
    * Whether the person asked for the last check. Only an answer to a question
    * someone asked is worth interrupting with: the daily check speaks up when
    * there is something to install and is silent otherwise.
    */
   asked: boolean;
-  /** A version the person chose "Not now" on this session, if any. */
+  /** The {@link dismissKey} of a message dismissed this session, if any. */
   dismissed: string | null;
   /** Installs the announced update and restarts. */
   onInstall: () => void;
   /** Opens the announced version's release page. */
   onDownload: () => void;
-  /** Hides the notice -- this version, this session. */
-  onDismiss: (version: string | null) => void;
+  /** Hides the notice; passed its {@link dismissKey}. */
+  onDismiss: (key: string) => void;
 }
 
 /** One sentence per failure, because "it failed" is not something to act on. */
@@ -33,6 +40,24 @@ const FAILURE: Record<UpdateFailure, string> = {
   install: "The download or install did not finish. Nothing was changed.",
 };
 
+/**
+ * What "Not now" or "Dismiss" hides, for the rest of the session.
+ *
+ * Keyed by meaning rather than by object: every status arrives as a new
+ * object, so identity would never match. For an update the meaning is its
+ * version, so a newer one still appears after "Not now".
+ */
+export function dismissKey(status: UpdateStatus): string {
+  switch (status.state) {
+    case "available":
+      return `available:${status.version}`;
+    case "failed":
+      return `failed:${status.stage}:${status.reason}`;
+    default:
+      return status.state;
+  }
+}
+
 interface Message {
   icon: IconName;
   tone: string;
@@ -40,8 +65,9 @@ interface Message {
   label: string;
   title: string;
   body: string;
-  version: string | null;
   actions: "install" | "download" | "dismiss" | "none";
+  /** Install is offered but cannot run yet, because the guard is holding. */
+  waiting: boolean;
 }
 
 /**
@@ -54,96 +80,117 @@ export function describeUpdate(
   status: UpdateStatus | null,
   asked: boolean,
   dismissed: string | null,
+  guardHeld = false,
 ): Message | null {
   if (!status) return null;
+  if (dismissed !== null && dismissed === dismissKey(status)) return null;
 
-  if (status.state === "available") {
-    if (dismissed === status.version) return null;
-    const inPlace = status.delivery === "inPlace";
-    return {
-      icon: "arrow-down",
-      tone: "text-acc",
-      label: "Update",
-      title: `Flume ${status.version} is available`,
-      body: inPlace
-        ? "Installing restarts Flume. Torrents pick up where they left off, and nothing installs until you choose to."
-        : "This install is updated by hand or by your package manager, so Flume opens the release page rather than replacing itself.",
-      version: status.version,
-      actions: inPlace ? "install" : "download",
-    };
-  }
-
-  if (status.state === "installing") {
-    return {
-      icon: "clock",
-      tone: "text-fg-2",
-      label: "Working",
-      title: "Installing the update",
-      body: "Flume will restart when it is done.",
-      version: null,
-      actions: "none",
-    };
-  }
-
-  // A failed install is always worth saying, asked or not: the person
-  // clicked Install, and silence would look like it worked.
-  if (status.state === "failed") {
-    return {
-      icon: "alert-triangle",
-      tone: "text-warn",
-      label: "Worth knowing",
-      title: "Could not update",
-      body: FAILURE[status.reason],
-      version: null,
-      actions: "dismiss",
-    };
-  }
-
-  if (!asked) return null;
+  const quiet = { waiting: false } as const;
 
   switch (status.state) {
-    case "checking":
+    case "available": {
+      const inPlace = status.delivery === "inPlace";
+      const waiting = inPlace && guardHeld;
       return {
+        icon: "arrow-down",
+        tone: "text-acc",
+        label: "Update",
+        title: `Flume ${status.version} is available`,
+        body: waiting
+          ? "Flume will not download it while the tunnel guard is holding. Install once traffic is leaving through the tunnel again."
+          : inPlace
+            ? "Installing restarts Flume. Torrents pick up where they left off, and nothing installs until you choose to."
+            : "This install is updated by hand or by your package manager, so Flume opens the release page rather than replacing itself.",
+        actions: inPlace ? "install" : "download",
+        waiting,
+      };
+    }
+
+    case "installing":
+      return {
+        ...quiet,
         icon: "clock",
         tone: "text-fg-2",
         label: "Working",
-        title: "Checking for updates",
-        body: "Asking GitHub for the latest release.",
-        version: null,
+        title: "Installing the update",
+        body: "Flume will restart when it is done.",
         actions: "none",
       };
-    case "upToDate":
+
+    // A failed install is always worth saying, asked or not: the person
+    // clicked Install, and silence would look like it worked. A failed
+    // *check* is said only when someone asked -- the daily one failing on an
+    // offline laptop is not news, and saying so at every launch would teach
+    // people to ignore this banner.
+    case "failed":
+      if (!asked && status.stage !== "install") return null;
       return {
-        icon: "check-circle",
-        tone: "text-ok",
-        label: "Fine",
-        title: "Flume is up to date",
-        body: "There is no newer release.",
-        version: null,
-        actions: "dismiss",
-      };
-    case "held":
-      return {
-        icon: "shield",
+        ...quiet,
+        icon: "alert-triangle",
         tone: "text-warn",
         label: "Worth knowing",
-        title: "Not checked while the tunnel guard is holding",
-        body: "Flume makes no connections from the address the guard protects. It will check once traffic is leaving through the tunnel again.",
-        version: null,
+        title: "Could not update",
+        body: FAILURE[status.reason],
         actions: "dismiss",
       };
-    case "unconfigured":
-      return {
-        icon: "alert-circle",
-        tone: "text-fg-2",
-        label: "Note",
-        title: "This build cannot check for updates",
-        body: "It was built without an update signing key -- usually a development build or a fork. Releases from GitHub can.",
-        version: null,
-        actions: "dismiss",
-      };
+
     case "idle":
       return null;
+
+    // The rest answer a question, so they need someone to have asked it.
+    case "checking":
+      return asked
+        ? {
+            ...quiet,
+            icon: "clock",
+            tone: "text-fg-2",
+            label: "Working",
+            title: "Checking for updates",
+            body: "Asking GitHub for the latest release.",
+            actions: "none",
+          }
+        : null;
+
+    case "upToDate":
+      return asked
+        ? {
+            ...quiet,
+            icon: "check-circle",
+            tone: "text-ok",
+            label: "Fine",
+            title: "Flume is up to date",
+            body: "There is no newer release.",
+            actions: "dismiss",
+          }
+        : null;
+
+    case "held":
+      return asked
+        ? {
+            ...quiet,
+            icon: "shield",
+            tone: "text-warn",
+            label: "Worth knowing",
+            title: "Not checked while the tunnel guard is holding",
+            // No promise of a retry: only the daily check waits for the
+            // guard to release. A check someone asked for is theirs to repeat.
+            body: "Flume makes no connections from the address the guard protects. Choose Check for Updates again once traffic is leaving through the tunnel.",
+            actions: "dismiss",
+          }
+        : null;
+
+    case "unconfigured":
+      return asked
+        ? {
+            ...quiet,
+            icon: "alert-circle",
+            tone: "text-fg-2",
+            label: "Note",
+            title: "This build cannot check for updates",
+            body: "It was built without an update signing key -- usually a development build or a fork. Releases from GitHub can.",
+            actions: "dismiss",
+          }
+        : null;
   }
 }
 
@@ -159,14 +206,15 @@ export function describeUpdate(
  */
 export function UpdateBanner({
   status,
+  guardHeld,
   asked,
   dismissed,
   onInstall,
   onDownload,
   onDismiss,
 }: UpdateBannerProps) {
-  const message = describeUpdate(status, asked, dismissed);
-  if (!message) return null;
+  const message = describeUpdate(status, asked, dismissed, guardHeld);
+  if (!status || !message) return null;
 
   return (
     <div
@@ -191,7 +239,11 @@ export function UpdateBanner({
       {message.actions === "none" ? null : (
         <div className="flex shrink-0 items-center gap-2">
           {message.actions === "install" ? (
-            <Button variant="primary" onClick={onInstall}>
+            <Button
+              variant="primary"
+              onClick={onInstall}
+              disabled={message.waiting}
+            >
               Install and restart
             </Button>
           ) : null}
@@ -200,7 +252,7 @@ export function UpdateBanner({
               Open release page
             </Button>
           ) : null}
-          <Button variant="ghost" onClick={() => onDismiss(message.version)}>
+          <Button variant="ghost" onClick={() => onDismiss(dismissKey(status))}>
             {message.actions === "dismiss" ? "Dismiss" : "Not now"}
           </Button>
         </div>

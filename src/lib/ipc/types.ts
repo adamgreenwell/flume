@@ -959,6 +959,9 @@ export type UpdateDelivery =
 /** Why an update check or install failed. Mirrors Rust `updates::FailureKind`. */
 export type UpdateFailure = "network" | "manifest" | "signature" | "install";
 
+/** Which step failed. Mirrors Rust `updates::FailureStage`. */
+export type UpdateFailureStage = "check" | "install";
+
 /**
  * What Flume knows about updates. Mirrors Rust `updates::UpdateStatus`, a
  * union on `state`; `src-tauri/tests/ipc_contract.rs` pins every member.
@@ -972,8 +975,11 @@ export type UpdateStatus =
   | { state: "upToDate"; checkedAt: number }
   | { state: "available"; version: string; delivery: UpdateDelivery }
   | { state: "installing" }
-  | { state: "failed"; reason: UpdateFailure }
-  /** The egress guard was holding, so no request was made. */
+  | { state: "failed"; reason: UpdateFailure; stage: UpdateFailureStage }
+  /**
+   * The egress guard was holding, so no request was made. Never replaces
+   * `available`: an announced update stays announced through a hold.
+   */
   | { state: "held" };
 
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */

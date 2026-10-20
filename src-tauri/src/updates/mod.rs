@@ -189,6 +189,19 @@ pub async fn abandon_when<T>(
     }
 }
 
+/// The status to publish when the guard stopped or prevented an operation.
+///
+/// What Flume knew before still stands if it was an announced update -- the
+/// banner, which knows the guard is holding, explains why Install waits.
+/// Anything else becomes [`UpdateStatus::Held`].
+#[must_use]
+pub fn after_hold(before: &UpdateStatus) -> UpdateStatus {
+    match before {
+        UpdateStatus::Available { .. } => before.clone(),
+        _ => UpdateStatus::Held,
+    }
+}
+
 /// Whether a scheduled check should be tried again as soon as the guard
 /// releases, rather than at the next daily tick.
 ///
@@ -251,6 +264,21 @@ pub enum FailureKind {
     Install,
 }
 
+/// Which step failed.
+///
+/// The banner needs it: a failed *install* is always shown, because someone
+/// clicked Install and silence would look like success, while a failed daily
+/// check is not -- an offline laptop would otherwise be told so at every
+/// launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureStage {
+    /// Asking for the manifest.
+    Check,
+    /// Downloading or installing, after a click.
+    Install,
+}
+
 /// What Flume knows about updates right now. Pushed to the frontend on every
 /// change and returned by `get_update_status`.
 ///
@@ -285,8 +313,15 @@ pub enum UpdateStatus {
     Failed {
         /// Why.
         reason: FailureKind,
+        /// At which step.
+        stage: FailureStage,
     },
     /// The guard was holding when a check was due, so none was made.
+    ///
+    /// Never replaces [`Self::Available`]: a hold says nothing about whether
+    /// the announced update still exists, and replacing it would leave the
+    /// person no way to install it once the tunnel is back. See
+    /// [`after_hold`].
     Held,
 }
 
@@ -394,6 +429,26 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_never_hides_an_announced_update() {
+        let available = UpdateStatus::Available {
+            version: "1.5.1".to_owned(),
+            delivery: Delivery::InPlace,
+        };
+        assert_eq!(after_hold(&available), available);
+        for before in [
+            UpdateStatus::Idle,
+            UpdateStatus::Checking,
+            UpdateStatus::UpToDate { checked_at: 1 },
+            UpdateStatus::Failed {
+                reason: FailureKind::Network,
+                stage: FailureStage::Check,
+            },
+        ] {
+            assert_eq!(after_hold(&before), UpdateStatus::Held, "{before:?}");
+        }
+    }
+
+    #[test]
     fn only_a_guard_skip_is_retried_on_release() {
         assert!(retry_when_released(&UpdateStatus::Held));
         for status in [
@@ -401,6 +456,7 @@ mod tests {
             UpdateStatus::UpToDate { checked_at: 1 },
             UpdateStatus::Failed {
                 reason: FailureKind::Network,
+                stage: FailureStage::Check,
             },
             UpdateStatus::Available {
                 version: "1.5.1".to_owned(),
