@@ -308,10 +308,12 @@ impl Sender {
     /// Does nothing when consent is absent, the queue is empty, or `held` --
     /// the egress guard is holding, so a send would leave from the address it
     /// protects. The held check comes before `take_batch` on purpose: a
-    /// batch that is never taken cannot be lost, and the queue file is not
-    /// rewritten on every skipped tick.
+    /// batch that is never taken cannot be lost. Expired events are still
+    /// discarded while held, because `take_batch` was the only thing that
+    /// aged them out and a long hold would otherwise keep them indefinitely.
     pub async fn flush(&self, recorder: &Recorder, held: bool) {
         if held {
+            recorder.discard_expired();
             log::debug!("egress guard is holding; usage batch left queued");
             return;
         }
@@ -547,6 +549,29 @@ mod tests {
             .expect("the batch should still be queued");
         assert_eq!(kept.events.len(), 1);
         assert_eq!(kept.events[0].kind, EventKind::Launched);
+    }
+
+    #[tokio::test]
+    async fn a_held_guard_still_ages_events_out() {
+        // Skipping `take_batch` skipped the only prune too, so a guard held
+        // for a week kept a week of events -- against a documented three days.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let recorder = Recorder::new(tmp.path().to_path_buf(), Some(true), "1.0.0".to_owned());
+        recorder
+            .append(crate::usage::Event {
+                at: crate::usage::unix_now() - (crate::usage::MAX_EVENT_AGE.as_secs() + 3_600),
+                kind: EventKind::Launched,
+            })
+            .expect("append");
+        recorder.record(EventKind::TorrentCompleted);
+
+        sender_to_nowhere().flush(&recorder, true).await;
+
+        let on_disk =
+            crate::usage::read_queue(&tmp.path().join(crate::usage::QUEUE_FILE)).expect("read");
+        assert_eq!(on_disk.len(), 1, "the expired event should be gone");
+        assert_eq!(on_disk[0].kind, EventKind::TorrentCompleted);
+        assert_eq!(recorder.delivery(), Delivery::Untried);
     }
 
     #[tokio::test]
