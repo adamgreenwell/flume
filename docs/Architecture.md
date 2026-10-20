@@ -60,15 +60,18 @@ Two subsystems, deliberately not sharing a name.
 
 `telemetry.rs` is the 1 Hz push above: in-process, always on, never leaves the
 machine. `usage/` is opt-in anonymous counts sent to a collector, off unless
-the user says yes, and the only thing in Flume that talks to a server on its
-own behalf.
+the user says yes. `updates/` is the daily check for a newer version, on by
+default and switchable off. Those two are the only things in Flume that talk to
+a server on its own behalf.
 
 **All network egress originates in Rust.** The webview's CSP is
 `connect-src 'self' ipc: http://ipc.localhost`, and it is not widened. A
 frontend analytics or crash-reporting SDK would require relaxing it, which
 would give every piece of UI code an egress path — including anything that
-renders an attacker-controlled torrent name into the DOM. Keeping the sender
-in `usage/sender.rs` means there is exactly one file to audit.
+renders an attacker-controlled torrent name into the DOM. Keeping the senders
+in `usage/sender.rs` and `updates/checker.rs` means there are exactly two files
+to audit, and the updater plugin's JavaScript commands are not granted to the
+webview at all.
 
 The wire format is a closed enum: every field of every event is an enum or a
 bool, and there is no free-text field. That is a hard constraint rather than a

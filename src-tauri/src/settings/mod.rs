@@ -306,6 +306,22 @@ pub struct Settings {
     ///
     /// Only `Some(true)` sends anything. See [`crate::usage`].
     pub usage_reporting: Option<bool>,
+
+    /// Whether Flume checks once a day for a newer version.
+    ///
+    /// A plain `bool`, defaulting to `true`, where usage reporting is a
+    /// three-state opt-in -- deliberately, and the difference is the point.
+    /// Usage counts are for the project's benefit; an update check is for the
+    /// user's, and an install stranded on an old build is a security problem.
+    /// So it is on by default, said plainly on the first-run screen, and this
+    /// one switch turns it off. Because the struct is `#[serde(default)]`, an
+    /// existing install that upgrades reads it as `true` too, which the
+    /// release notes have to say.
+    ///
+    /// Off stops the daily check only; choosing "Check for Updates…" is the
+    /// person asking, and still checks. Nothing is ever installed without a
+    /// click either way. See [`crate::updates`].
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -338,6 +354,7 @@ impl Default for Settings {
             // Not asked yet. Never defaults to `Some(true)`: consent that the
             // user did not give is not consent.
             usage_reporting: None,
+            check_for_updates: true,
         }
     }
 }

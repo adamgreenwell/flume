@@ -425,6 +425,7 @@ const SETTINGS: Settings = {
   egressInterface: null,
   // Not asked, so the mock exercises the state a real first run starts in.
   usageReporting: null,
+  checkForUpdates: true,
 };
 
 /**
@@ -872,6 +873,20 @@ export function install(): void {
           });
           return true;
         }
+        // An update is announced from the start, so the banner can be seen
+        // and styled without a release to find. A manual check answers
+        // "up to date" to exercise the other message.
+        case "get_update_status":
+          return { state: "available", version: "9.9.9", delivery: "inPlace" };
+        case "check_for_updates":
+          return {
+            state: "upToDate",
+            checkedAt: Math.floor(Date.now() / 1000),
+          };
+        case "install_update":
+          return { state: "installing" };
+        case "open_update_page":
+          return null;
         default:
           return null;
       }

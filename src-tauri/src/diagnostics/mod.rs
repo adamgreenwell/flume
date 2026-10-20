@@ -33,7 +33,12 @@ use std::{
 
 use regex::Regex;
 
-use crate::{engine::CoreStatus, settings::Settings, usage::Delivery};
+use crate::{
+    engine::CoreStatus,
+    settings::Settings,
+    updates::{Delivery as UpdateDelivery, FailureKind as UpdateFailure, UpdateStatus},
+    usage::Delivery,
+};
 
 /// How many lines of log tail a bundle carries.
 ///
@@ -228,6 +233,10 @@ pub struct Report<'a> {
     pub usage_endpoint_configured: bool,
     /// What happened on the most recent send attempt this session.
     pub usage_delivery: Delivery,
+    /// What the update checker knows. Passed in, like the usage fields.
+    pub update_status: UpdateStatus,
+    /// How this install would receive an update.
+    pub update_delivery: UpdateDelivery,
     /// The tail of the current session's log, oldest first.
     pub log_tail: &'a [String],
     /// Redacts the log tail and anything else free-form.
@@ -352,6 +361,15 @@ impl Report<'_> {
                 self.usage_delivery,
             ),
         );
+        line(
+            &mut out,
+            "Update checks",
+            &describe_updates(
+                self.settings.check_for_updates,
+                &self.update_status,
+                self.update_delivery,
+            ),
+        );
 
         out.push_str("\n## Recent log\n\n");
         if self.log_tail.is_empty() {
@@ -433,6 +451,45 @@ fn describe_usage(consent: Option<bool>, endpoint_configured: bool, delivery: De
                 .to_owned()
         }
     }
+}
+
+/// The "Update checks" line: the switch, what happened, and how this install
+/// would receive an update.
+///
+/// The delivery is part of the line because "an update was found and nothing
+/// happened" is the expected outcome on a `.deb`, and a report that did not
+/// say so would read as a bug.
+fn describe_updates(enabled: bool, status: &UpdateStatus, delivery: UpdateDelivery) -> String {
+    let switch = if enabled {
+        "on"
+    } else {
+        "off (checks only when asked)"
+    };
+    let how = match delivery {
+        UpdateDelivery::InPlace => "updates in place",
+        UpdateDelivery::Download => "download only for this install format",
+    };
+    let what = match status {
+        UpdateStatus::Unconfigured => {
+            return "this build has no updater key, so it never checks".to_owned();
+        }
+        UpdateStatus::Idle => "no check yet this session".to_owned(),
+        UpdateStatus::Checking => "checking now".to_owned(),
+        UpdateStatus::UpToDate { .. } => "up to date at the last check".to_owned(),
+        UpdateStatus::Available { version, .. } => format!("{version} available"),
+        UpdateStatus::Installing => "installing".to_owned(),
+        UpdateStatus::Failed { reason, .. } => format!(
+            "last attempt failed ({})",
+            match reason {
+                UpdateFailure::Network => "no answer: offline, DNS, TLS or a proxy",
+                UpdateFailure::Manifest => "the release manifest was not usable",
+                UpdateFailure::Signature => "a signature did not verify; nothing was installed",
+                UpdateFailure::Install => "the download or install failed",
+            }
+        ),
+        UpdateStatus::Held => "skipped while the egress guard held".to_owned(),
+    };
+    format!("{switch}; {what}; {how}")
 }
 
 /// Describes the last send attempt as a fact, with no diagnosis attached.
@@ -630,6 +687,8 @@ mod tests {
             home: Some(PathBuf::from("/Users/adam")),
             usage_endpoint_configured: true,
             usage_delivery: Delivery::Untried,
+            update_status: UpdateStatus::Idle,
+            update_delivery: UpdateDelivery::InPlace,
             log_tail: log,
             redactor,
         }
@@ -748,5 +807,37 @@ mod tests {
 
         assert!(rendered.contains("inside the home directory"));
         assert!(!rendered.contains("Media/Linux"));
+    }
+
+    #[test]
+    fn the_update_line_says_switch_outcome_and_delivery() {
+        assert_eq!(
+            describe_updates(true, &UpdateStatus::Unconfigured, UpdateDelivery::InPlace),
+            "this build has no updater key, so it never checks"
+        );
+        assert_eq!(
+            describe_updates(
+                true,
+                &UpdateStatus::Available {
+                    version: "1.5.1".to_owned(),
+                    delivery: UpdateDelivery::Download,
+                },
+                UpdateDelivery::Download,
+            ),
+            "on; 1.5.1 available; download only for this install format"
+        );
+        assert!(
+            describe_updates(false, &UpdateStatus::Held, UpdateDelivery::InPlace)
+                .starts_with("off (checks only when asked); skipped while the egress guard held")
+        );
+        let failed = describe_updates(
+            true,
+            &UpdateStatus::Failed {
+                reason: UpdateFailure::Signature,
+                stage: crate::updates::FailureStage::Install,
+            },
+            UpdateDelivery::InPlace,
+        );
+        assert!(failed.contains("nothing was installed"), "{failed}");
     }
 }

@@ -90,6 +90,15 @@ uuid = { version = "1.24", features = ["v4", "serde"] }
 # for URLs, addresses and hashes is exactly the thing to get subtly wrong.
 regex = "1.13"
 rand = "0.10"
+# `zip` off, and only `zip`. It extracts the v1 updater formats -- zipped
+# Windows installers and the compressed `.AppImage.tar.gz` -- which Flume never
+# builds: `createUpdaterArtifacts: true` (v2) signs the .msi, .exe and AppImage
+# as they are, and macOS's .app.tar.gz uses tar/flate2, which are not behind
+# this feature on macOS. Left on, it pulled zip 4.6.1, whose extraction has
+# three advisories (RUSTSEC-2026-0367/0368/0369: SUID bits, and two symlink
+# escapes) -- in the one code path whose whole job is extracting downloads.
+# `system-proxy` stays: docs/Privacy.md says a check follows the OS proxy.
+tauri-plugin-updater = { version = "2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 
 [features]
 default = []

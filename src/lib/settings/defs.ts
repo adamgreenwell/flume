@@ -492,9 +492,31 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
     consequence: (on) =>
       on === true
         ? "Sending: a random ID for this install, Flume's version, your OS and CPU type, and counts of things like launches, torrents added and errors — bucketed, and timed to the hour. Never torrent names, file names, info hashes, tracker addresses, IP addresses or folder paths. Turning this off deletes the ID and anything not yet sent."
-        : "Nothing is sent. Flume makes no network requests except to trackers, peers and the DHT.",
+        : "Nothing is sent. Flume's only other request of its own is the daily update check below, which says nothing about this install.",
     // Not `restartsSession`: consent applies immediately, and a torrent client
     // that made you restart to stop being counted would deserve the reaction.
+  },
+  {
+    id: "checkForUpdates",
+    section: "privacy",
+    label: "Check for updates",
+    key: "privacy.updates",
+    control: { kind: "toggle" },
+    keywords: [
+      "update",
+      "upgrade",
+      "new version",
+      "auto update",
+      "release",
+      "network",
+    ],
+    // The same standard as the usage row: say exactly what leaves the
+    // machine, and what does not, because that is the question anyone
+    // opening this row is asking.
+    consequence: (on) =>
+      on === true
+        ? "Once a day, Flume asks GitHub for its latest release. The request carries no version, platform or ID -- the comparison happens here -- so GitHub sees only that something asked. Never while the tunnel guard is holding. Nothing installs until you choose to."
+        : "No daily check. Flume → Check for Updates… still asks when you choose it.",
   },
   {
     id: "density",

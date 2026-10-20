@@ -111,13 +111,35 @@ run deploy`. A client that sends events the deployed Worker does not know
 
 ## Secrets
 
-| Secret                                                             | Purpose                         |
-| ------------------------------------------------------------------ | ------------------------------- |
-| `TAURI_SIGNING_PRIVATE_KEY`                                        | Updater signature — **not set** |
-| `APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | macOS signing and notarization  |
-| `WINDOWS_CERTIFICATE`                                              | Windows Authenticode            |
+| Secret                                                             | Purpose                        |
+| ------------------------------------------------------------------ | ------------------------------ |
+| `TAURI_SIGNING_PRIVATE_KEY`                                        | Signs the updater artifacts    |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`                               | Its password, if it has one    |
+| `APPLE_CERTIFICATE`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | macOS signing and notarization |
+| `WINDOWS_CERTIFICATE`                                              | Windows Authenticode           |
 
 None are required for CI to pass; absence disables signing, not the build.
-`TAURI_SIGNING_PRIVATE_KEY` is the exception, and is listed here because it is the
-one the updater will need: it has never been generated, and until it is there is no
-updater to sign for. See [#176](https://github.com/adamgreenwell/flume/issues/176).
+
+**The updater key is the one with no undo.** Every install verifies updates
+against the public half, which is compiled into the app; lose the private half
+and no existing install can ever accept another update. Without the secret,
+the release workflow builds exactly as it did before the updater existed — no
+updater artifacts, no `latest.json` — and the app's empty `pubkey` keeps it from
+checking at all. To turn updates on ([#176](https://github.com/adamgreenwell/flume/issues/176)):
+
+1. On your own machine, never in CI or a shared session:
+   `npm run tauri signer generate -- -w ~/.tauri/flume-updater.key`.
+   Keep the private key and its password in a password manager and an offline
+   backup.
+2. Add the private key's contents as the `TAURI_SIGNING_PRIVATE_KEY` repository
+   secret, and its password as `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+3. Paste the contents of `~/.tauri/flume-updater.key.pub` into
+   `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`, through a PR.
+
+The next tagged release then ships `latest.json` and signed updater artifacts,
+and its builds carry `FLUME_OFFICIAL_UPDATES=1`, the marker that lets them check
+at all. Only this repository's workflow sets it: the public key is committed,
+so a fork inherits it, and the marker is what stops a fork's build checking
+this repository's releases and offering to replace itself with them.
+Installs from before that release cannot update themselves, because they have
+no key to verify with — that release is the last one anyone installs by hand.

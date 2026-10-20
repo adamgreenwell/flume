@@ -363,6 +363,20 @@ export function FirstRun({ onDone }: FirstRunProps) {
           </div>
         </div>
 
+        {/*
+          Disclosure, not a question -- the decision recorded for #176. The
+          update check is on by default because it is for the user's benefit
+          rather than the project's, which is exactly the line between this
+          sentence and the consent card above it. So it is said plainly here,
+          with the one place to turn it off, and not dressed as a choice.
+        */}
+        <p className="text-fg-2 mt-3 px-1 text-[11.5px] leading-[1.5]">
+          Flume checks GitHub once a day for a newer version. The check carries
+          nothing about this install, never runs while the tunnel guard is
+          holding, and nothing installs until you choose to. Turn it off in
+          Settings → Privacy.
+        </p>
+
         {error ? (
           <p
             className="border-err/30 bg-err/10 text-err mt-4 rounded-md border px-3 py-2 text-[12.5px]"
