@@ -147,14 +147,68 @@ Whether or not you consent to usage counts, Flume connects to:
 - **Peers**, directly or through your configured SOCKS5 proxy.
 - **The DHT**, if enabled, which is how magnet links work at all.
 - **Your router**, if UPnP is enabled, to request a port mapping.
+- **GitHub**, once a day, to see whether a newer Flume exists — unless you
+  turn it off. Exactly what that sends is in [Update checks](#update-checks)
+  below; in short, nothing about your install.
 
-That is the complete list. Flume has no update checker, no crash reporter, no
-analytics SDK, no font or asset fetching — the fonts are vendored, so the
-interface renders with no network at all — and no bundled search.
+That is the complete list. Flume has no crash reporter, no analytics SDK, no
+font or asset fetching — the fonts are vendored, so the interface renders with
+no network at all — and no bundled search.
 
 The interface itself cannot make network requests. Its Content Security Policy
 allows it to talk to the Rust backend and nothing else, so every connection
 above originates in Rust where it can be audited in one place.
+
+## Update checks
+
+**Settings → Privacy → Check for updates.** On by default, and said so on the
+first-run screen; this switch turns it off.
+
+Unlike usage counts, this is not something Flume asks permission for, and the
+difference is deliberate. Usage counts are for the project's benefit. An update
+check is for yours: an install that never hears about new versions never gets
+security fixes. So it is on, it is disclosed, and it is one switch away.
+
+**What a check sends.** One HTTPS request to
+
+```
+https://github.com/adamgreenwell/flume/releases/latest/download/latest.json
+```
+
+with the user agent `tauri-plugin-updater/<version>` and nothing else of
+Flume's: no install ID, no Flume version, no operating system, no CPU type, no
+settings. The URL is the same for every install. GitHub answers with a small
+file describing its latest release, and the comparison with your version
+happens on your machine. GitHub — and a CDN it redirects to — sees what any web
+server sees: your IP address and the time. Flume's own servers are not
+involved.
+
+**When it runs.** Between 30 and 90 seconds after launch, then once a day while
+Flume is open. Turned off, there is no daily check at all; choosing **Flume →
+Check for Updates…** still checks, because that is you asking.
+
+**When it does not.** Never while the [tunnel check](#the-tunnel-check--what-it-can-and-cannot-tell-you)
+is holding transfer — not the daily check, not one you ask for, not a
+download. Someone relying on that guard does not expect Flume to open a
+connection from the address it is protecting, torrent traffic or not. A check
+that was skipped says so, and runs once traffic is leaving through the tunnel
+again. The check follows your operating system's proxy settings; it does not
+use the SOCKS5 proxy you configured for peers.
+
+**Nothing installs until you choose to.** When a newer version exists, Flume
+says so. What a click does depends on how Flume was installed:
+
+| Installed from      | What happens                                                                                                                                          |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS `.dmg`        | Flume downloads, verifies and installs it, then restarts.                                                                                             |
+| Linux AppImage      | The same.                                                                                                                                             |
+| Linux `.deb`/`.rpm` | Flume opens the release page. Your package manager owns these files, so Flume does not replace them.                                                  |
+| Windows             | Flume opens the release page, until Flume's Windows installers are code-signed; an unsigned installer would raise a security warning on every update. |
+
+Every download is checked against a signature made with a key only the
+project holds, and the signed version must match the one announced — so a
+tampered download, or an old release dressed up as a new one, is refused and
+nothing is installed.
 
 ## The tunnel check — what it can and cannot tell you
 

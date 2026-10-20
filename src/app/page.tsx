@@ -27,7 +27,9 @@ import { SettingsDialog } from "@/components/SettingsDialog";
 import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
 import { TorrentRow } from "@/components/TorrentRow";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { useEgressGuard } from "@/hooks/useEgressGuard";
+import { useUpdateStatus } from "@/hooks/useUpdateStatus";
 import { useTelemetry } from "@/hooks/useTelemetry";
 import { useThroughputHistory } from "@/hooks/useThroughputHistory";
 import { useTorrentDetail } from "@/hooks/useTorrentDetail";
@@ -53,8 +55,11 @@ import {
 } from "@/lib/views";
 import { sortTorrents } from "@/lib/sort";
 import {
+  checkForUpdates,
   getSettings,
+  installUpdate,
   isFirstRun,
+  openUpdatePage,
   pauseTorrent,
   removeTorrent,
   keepSeeding as keepSeedingCall,
@@ -78,6 +83,12 @@ import {
 export default function Home() {
   const { telemetry, error, isLoading } = useTelemetry();
   const { status: guardStatus, held } = useEgressGuard();
+  const updateStatus = useUpdateStatus();
+  // Whether the person asked for the last check, so its answer is shown; the
+  // daily check is silent unless it finds something. And a version they said
+  // "Not now" to, which stays hidden for the rest of this session.
+  const [updateAsked, setUpdateAsked] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState<string | null>(null);
   const collected = useThroughputHistory(telemetry);
   // Cleared with everything else while held. Telemetry stops when the engine
   // does, so the samples would otherwise sit in the chart describing a session
@@ -197,10 +208,20 @@ export default function Home() {
 
   // The native menu's Settings… and Add Torrent… items. They open the same
   // surfaces as the in-app controls rather than a second path to them.
+  //
+  // One branch per action, never an `else`: with an `else`, every item added
+  // to the menu after these two would have opened the add dialog.
   useMenuEvents(
     useCallback((action) => {
       if (action === "open_settings") setIsConfiguring(true);
-      else setIsAdding(true);
+      if (action === "add_torrent") setIsAdding(true);
+      if (action === "check_updates") {
+        setUpdateAsked(true);
+        setUpdateDismissed(null);
+        // The answer arrives as a `flume://update` event too; the banner
+        // reads that. Failures are a status, not a rejection.
+        void checkForUpdates().catch(() => {});
+      }
     }, []),
   );
 
@@ -485,6 +506,22 @@ export default function Home() {
             <NoteCard note={guardNote} />
           </div>
         ) : null}
+
+        <UpdateBanner
+          status={updateStatus}
+          asked={updateAsked}
+          dismissed={updateDismissed}
+          onInstall={() => void installUpdate().catch(() => {})}
+          onDownload={() =>
+            void openUpdatePage().catch((caught: unknown) =>
+              report(caught, "Could not open the release page."),
+            )
+          }
+          onDismiss={(version) => {
+            setUpdateAsked(false);
+            setUpdateDismissed(version);
+          }}
+        />
 
         {/*
           Suppressed while the guard holds. `get_telemetry` rejects with

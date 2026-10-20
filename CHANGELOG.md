@@ -8,6 +8,20 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Added
+
+- **Flume tells you when a newer version exists, and installs it on a click
+  where it can.** Once a day, Flume asks GitHub for its latest release. The
+  request carries no version, platform or ID — the comparison happens on your
+  machine — and it never runs while the tunnel guard is holding. On macOS and
+  the Linux AppImage, **Install and restart** downloads the update, checks its
+  signature, installs it and restarts. On `.deb`, `.rpm` and (until its
+  installers are code-signed) Windows, Flume opens the release page instead.
+  Nothing installs until you choose to. **This is on by default, including for
+  an install that upgrades to this version;** turn it off in Settings →
+  Privacy → Check for updates. **Flume → Check for Updates…** checks now
+  either way. `docs/Privacy.md` says exactly what a check sends. (#176)
+
 ### Fixed
 
 - **File → About shows something on Windows and Linux.** It opened an empty

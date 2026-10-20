@@ -48,7 +48,8 @@
         "queue.maxDownloads",
         "queue.maxSeeds",
         "queue.maxTotal",
-        "privacy.usage"
+        "privacy.usage",
+        "privacy.updates"
       ]
     },
     "operationFailed": {

@@ -941,7 +941,40 @@ export interface Settings {
    * re-asked. Only `true` sends anything.
    */
   usageReporting: boolean | null;
+  /**
+   * Whether Flume checks once a day for a newer version. On by default and
+   * disclosed at first run; off stops the daily check, not one the person
+   * asks for. Nothing is ever installed without a click.
+   */
+  checkForUpdates: boolean;
 }
+
+/** How a newer version reaches this install. Mirrors Rust `updates::Delivery`. */
+export type UpdateDelivery =
+  /** Flume downloads, verifies and installs it, then restarts, on a click. */
+  | "inPlace"
+  /** Flume opens the release page; the install format is not Flume's to replace. */
+  | "download";
+
+/** Why an update check or install failed. Mirrors Rust `updates::FailureKind`. */
+export type UpdateFailure = "network" | "manifest" | "signature" | "install";
+
+/**
+ * What Flume knows about updates. Mirrors Rust `updates::UpdateStatus`, a
+ * union on `state`; `src-tauri/tests/ipc_contract.rs` pins every member.
+ */
+export type UpdateStatus =
+  /** This build has no updater key and never checks. */
+  | { state: "unconfigured" }
+  | { state: "idle" }
+  | { state: "checking" }
+  /** `checkedAt` is Unix seconds. */
+  | { state: "upToDate"; checkedAt: number }
+  | { state: "available"; version: string; delivery: UpdateDelivery }
+  | { state: "installing" }
+  | { state: "failed"; reason: UpdateFailure }
+  /** The egress guard was holding, so no request was made. */
+  | { state: "held" };
 
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {

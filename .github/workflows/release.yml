@@ -41,6 +41,11 @@ jobs:
       # The `secrets` context is not available in a step-level `if`, so the
       # presence check is hoisted to a job-level env var and tested from there.
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      # Same hoisting, for the updater's minisign key (#176). Absent, the build
+      # is exactly what it was before the updater existed: no updater
+      # artifacts, no latest.json, and an app whose empty `pubkey` keeps it
+      # from checking. Forks and re-runs without the secret stay green.
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     strategy:
       # One platform failing should not discard artifacts that already built:
       # a partial release is still useful, and re-running one leg is cheap.
@@ -56,12 +61,14 @@ jobs:
           # they own. The .dmg is about twice the size (17 MB rather than 9),
           # which is a fair trade for a desktop app.
           #
-          # --bundles dmg suppresses the .app.tar.gz updater artifact, which is
-          # meaningless without an updater and only pads the download list.
+          # `app` as well as `dmg`: the updater archive (.app.tar.gz) is made
+          # from the `app` bundle, and a dmg-only build produces none. Without
+          # the updater key no archive is made either way, so this changes
+          # nothing until the key exists.
           - name: macOS (universal)
             runner: macos-latest
             target: universal-apple-darwin
-            args: "--target universal-apple-darwin --bundles dmg"
+            args: "--target universal-apple-darwin --bundles app,dmg"
           - name: Windows (x64)
             runner: windows-latest
             target: x86_64-pc-windows-msvc
@@ -204,6 +211,36 @@ jobs:
           echo "FLUME_USAGE_ENDPOINT=$ENDPOINT" >> "$GITHUB_ENV"
           echo "Collector endpoint configured."
 
+      # Updater artifacts only when there is a key to sign them with. The CLI
+      # refuses to make them unsigned, so turning them on unconditionally in
+      # tauri.conf.json would break every build without the secret; that is
+      # why src-tauri/tauri.updater.conf.json exists, holding only that switch
+      # (JSON has no comments, so its explanation lives here). Merged
+      # from a committed file rather than an inline JSON string: tauri-action
+      # splits `args` on whitespace, and quoting JSON through that is fragile.
+      # An absolute path, because the CLI changes into src-tauri/ partway.
+      - name: Enable updater artifacts, if a key is configured
+        if: env.HAS_UPDATER_KEY == 'true'
+        shell: bash
+        run: |
+          # The CLI signs everything and only then validates the public key,
+          # so an empty one fails the build at the very end -- on every leg at
+          # once, after the tag is pushed. Found by building locally with a
+          # throwaway key: "failed to decode pubkey: Missing comment in public
+          # key". Checked here instead, in seconds, before the macOS leg's 10x
+          # minutes start. The secret without the public key is exactly the
+          # state between adding one and merging the other.
+          if ! node -e '
+            const c = require("./src-tauri/tauri.conf.json");
+            const key = (c.plugins && c.plugins.updater && c.plugins.updater.pubkey) || "";
+            process.exit(key.trim() ? 0 : 1);
+          '; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is set, but plugins.updater.pubkey in src-tauri/tauri.conf.json is empty. Paste the matching .pub key there first; see docs/CI-CD-and-Releases.md."
+            exit 1
+          fi
+          echo "UPDATER_ARGS=--config ${GITHUB_WORKSPACE}/src-tauri/tauri.updater.conf.json" >> "$GITHUB_ENV"
+          echo "Updater artifacts and latest.json will be built and uploaded."
+
       # Two steps rather than one, because passing empty APPLE_* variables is
       # not the same as passing none. tauri-action treats the presence of
       # APPLE_CERTIFICATE as a request to sign and then fails importing an
@@ -226,28 +263,36 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Read by the CLI only when updater artifacts are on, so an empty
+          # value for a fork is harmless -- unlike APPLE_CERTIFICATE above.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Flume __VERSION__"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          uploadUpdaterJson: false
-          args: ${{ matrix.args }}
+          # tauri-action merges each leg's entries into one latest.json on the
+          # draft release, so every platform lands in the same manifest.
+          uploadUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+          args: ${{ matrix.args }} ${{ env.UPDATER_ARGS }}
 
       - name: Build and bundle (unsigned)
         if: env.HAS_APPLE_CERT != 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Flume __VERSION__"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          uploadUpdaterJson: false
-          args: ${{ matrix.args }}
+          uploadUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+          args: ${{ matrix.args }} ${{ env.UPDATER_ARGS }}
 
   rpm:
     name: Linux ${{ matrix.arch }} (.rpm)

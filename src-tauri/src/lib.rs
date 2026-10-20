@@ -36,6 +36,7 @@ pub mod settings;
 pub mod state;
 pub mod telemetry;
 pub mod tray;
+pub mod updates;
 pub mod usage;
 
 use std::{sync::Arc, time::Duration};
@@ -93,6 +94,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // Rust-only: the capability file grants the webview none of the
+        // updater's JavaScript commands. Checks and installs go through
+        // `updates::checker`, which applies the switch and the guard first.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new(settings, session_dir, first_run))
         .invoke_handler(tauri::generate_handler![
             commands::get_core_status,
@@ -118,10 +123,17 @@ pub fn run() {
             commands::update_settings,
             commands::is_first_run,
             commands::detect_clients,
-            commands::import_client
+            commands::import_client,
+            commands::get_update_status,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::open_update_page
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            app.manage(updates::checker::Updates::new(
+                updates::checker::build_is_configured(&handle),
+            ));
             telemetry::spawn(handle.clone());
 
             // Deliver magnet links opened from the OS while Flume is running.
@@ -206,6 +218,11 @@ pub fn run() {
                 });
 
                 usage::sender::spawn(Arc::clone(state.usage()));
+
+                // After the guard's first tick, like everything else that
+                // talks to the network: before it, the published status is the
+                // held placeholder, not a probe.
+                updates::checker::spawn(handle.clone());
             });
             Ok(())
         })
