@@ -259,6 +259,7 @@ fn settings_match_the_typescript_mirror() {
             "egressGuard",
             "egressInterface",
             "usageReporting",
+            "checkForUpdates",
         ],
         "Settings",
     );
@@ -655,4 +656,65 @@ fn optional_fields_serialize_as_null_not_absent() {
     let value = json(&core);
     assert!(value.get("listenPort").is_some_and(Value::is_null));
     assert!(value.get("announcePort").is_some_and(Value::is_null));
+}
+
+#[test]
+fn update_status_matches_the_typescript_mirror() {
+    use flume_lib::updates::{Delivery, FailureKind, FailureStage, UpdateStatus};
+
+    // A union on `state`, like TorrentSource on `kind`. Every variant listed,
+    // with exactly the keys its TypeScript member declares.
+    let cases: [(UpdateStatus, &str, &[&str]); 8] = [
+        (UpdateStatus::Unconfigured, "unconfigured", &["state"]),
+        (UpdateStatus::Idle, "idle", &["state"]),
+        (UpdateStatus::Checking, "checking", &["state"]),
+        (
+            UpdateStatus::UpToDate { checked_at: 1 },
+            "upToDate",
+            &["state", "checkedAt"],
+        ),
+        (
+            UpdateStatus::Available {
+                version: "1.5.1".to_owned(),
+                delivery: Delivery::InPlace,
+            },
+            "available",
+            &["state", "version", "delivery"],
+        ),
+        (UpdateStatus::Installing, "installing", &["state"]),
+        (
+            UpdateStatus::Failed {
+                reason: FailureKind::Network,
+                stage: FailureStage::Check,
+            },
+            "failed",
+            &["state", "reason", "stage"],
+        ),
+        (UpdateStatus::Held, "held", &["state"]),
+    ];
+    for (status, state, keys) in &cases {
+        assert_eq!(json(status)["state"], *state, "{status:?}");
+        assert_keys(status, keys, &format!("UpdateStatus::{state}"));
+    }
+
+    for (stage, expected) in [
+        (FailureStage::Check, "check"),
+        (FailureStage::Install, "install"),
+    ] {
+        assert_eq!(json(&stage), expected);
+    }
+    for (delivery, expected) in [
+        (Delivery::InPlace, "inPlace"),
+        (Delivery::Download, "download"),
+    ] {
+        assert_eq!(json(&delivery), expected);
+    }
+    for (kind, expected) in [
+        (FailureKind::Network, "network"),
+        (FailureKind::Manifest, "manifest"),
+        (FailureKind::Signature, "signature"),
+        (FailureKind::Install, "install"),
+    ] {
+        assert_eq!(json(&kind), expected);
+    }
 }

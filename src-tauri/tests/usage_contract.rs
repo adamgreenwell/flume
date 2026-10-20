@@ -87,6 +87,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::QueueMaxSeeds,
         SettingKey::QueueMaxTotal,
         SettingKey::PrivacyUsage,
+        SettingKey::PrivacyUpdates,
     ] {
         events.push(EventKind::SettingChanged { key });
     }

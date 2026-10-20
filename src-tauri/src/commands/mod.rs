@@ -18,6 +18,7 @@ use crate::{
     policy::TorrentRules,
     settings::{Settings, SettingsError},
     state::AppState,
+    updates::{self, Trigger, UpdateStatus, checker::Updates},
     usage::{AddSource, CountBucket, EventKind, FailureKind, SettingKey},
 };
 
@@ -274,6 +275,60 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, Comman
 #[tauri::command]
 pub async fn check_egress(state: State<'_, AppState>) -> Result<GuardStatus, CommandError> {
     Ok(state.egress_status().await)
+}
+
+/// What Flume knows about updates right now.
+#[tauri::command]
+pub async fn get_update_status(app: tauri::AppHandle) -> UpdateStatus {
+    app.state::<Updates>().status().await
+}
+
+/// Checks for a newer version because the person asked to.
+///
+/// Runs even with scheduled checks switched off -- a click is the person
+/// asking -- but not while the egress guard holds. The rules are
+/// `updates::may_check`; this only says it was a click.
+#[tauri::command]
+pub async fn check_for_updates(app: tauri::AppHandle) -> UpdateStatus {
+    updates::checker::check(&app, Trigger::Manual).await
+}
+
+/// Installs the announced update and restarts, where the install format
+/// allows it. See `updates::checker::install` for what it refuses.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> UpdateStatus {
+    updates::checker::install(&app).await
+}
+
+/// Opens the announced version's release page in the default browser.
+///
+/// The URL is built in Rust from a version the plugin parsed, so the webview
+/// never hands Rust a URL to open -- which is why this is a command of its own
+/// rather than the opener plugin's `open_url` granted to the frontend.
+///
+/// # Errors
+///
+/// `operationFailed` when nothing is announced or the browser cannot be
+/// opened.
+#[tauri::command]
+pub async fn open_update_page(app: tauri::AppHandle) -> Result<(), CommandError> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let UpdateStatus::Available { version, .. } = app.state::<Updates>().status().await else {
+        return Err(CommandError {
+            kind: "operationFailed",
+            message: "No newer version has been announced.".to_owned(),
+        });
+    };
+    app.opener()
+        .open_url(updates::release_page(&version), None::<&str>)
+        .map_err(|err| {
+            log::warn!("could not open the release page: {err}");
+            CommandError {
+                kind: "operationFailed",
+                message: "Could not open the release page in your browser.".to_owned(),
+            }
+        })
 }
 
 /// Lists the machine's network interfaces, classified, for the pin picker.
@@ -873,6 +928,8 @@ pub async fn get_diagnostics(
         usage_endpoint_configured: crate::usage::sender::is_configured(),
         usage_delivery: state.usage().delivery(),
         egress_held: state.egress_status().await.held,
+        update_status: app.state::<Updates>().status().await,
+        update_delivery: updates::checker::current_delivery(),
         log_tail: &log_tail,
         redactor: &redactor,
     }

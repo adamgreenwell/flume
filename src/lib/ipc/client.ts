@@ -23,6 +23,7 @@ import type {
   TorrentPreview,
   TorrentRules,
   TorrentSource,
+  UpdateStatus,
 } from "./types";
 
 /**
@@ -321,6 +322,44 @@ export async function importClient(
  */
 export async function checkEgress(): Promise<GuardStatus> {
   return invoke<GuardStatus>("check_egress");
+}
+
+/**
+ * What Flume knows about updates right now. Changes arrive as
+ * `flume://update` events; this is for the first render.
+ *
+ * @returns The current update status.
+ */
+export async function getUpdateStatus(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("get_update_status");
+}
+
+/**
+ * Checks for a newer version because the person asked to. Runs even with the
+ * daily check switched off, but never while the egress guard holds.
+ *
+ * @returns The status after the check.
+ */
+export async function checkForUpdates(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("check_for_updates");
+}
+
+/**
+ * Downloads, verifies and installs the announced update, then restarts.
+ * Refused in Rust for install formats that are not replaced in place.
+ *
+ * @returns The status after the attempt; the app restarts on success.
+ */
+export async function installUpdate(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("install_update");
+}
+
+/**
+ * Opens the announced version's release page. The URL is built in Rust; the
+ * webview never supplies one.
+ */
+export async function openUpdatePage(): Promise<void> {
+  return invoke<void>("open_update_page");
 }
 
 /**

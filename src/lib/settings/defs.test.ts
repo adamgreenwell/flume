@@ -28,6 +28,7 @@ const SETTINGS: Settings = {
   egressGuard: "off",
   egressInterface: null,
   usageReporting: null,
+  checkForUpdates: true,
 };
 
 describe("the definition table", () => {
@@ -130,6 +131,35 @@ describe("the definition table", () => {
     expect(restarts).not.toContain("downloadLimitBps");
     expect(restarts).not.toContain("uploadLimitBps");
     expect(restarts).not.toContain("theme");
+  });
+});
+
+describe("the privacy rows", () => {
+  const consequence = (id: string, value: unknown) => {
+    const def = SETTING_DEFS.find((d) => d.id === id);
+    if (!def) throw new Error(`${id} is not defined`);
+    return def.consequence(value as never);
+  };
+
+  // The copy is the contract users read, so its claims are pinned. The usage
+  // row once said Flume made no requests beyond trackers, peers and the DHT,
+  // which the update check made false; this is what would have caught it.
+  it("never claims Flume makes no requests of its own", () => {
+    expect(consequence("usageReporting", false)).not.toMatch(
+      /no network requests/i,
+    );
+    expect(consequence("usageReporting", false)).toMatch(/update check/);
+  });
+
+  it("says what the update check sends, and what it never does", () => {
+    const on = consequence("checkForUpdates", true);
+    expect(on).toMatch(/no version, platform or ID/);
+    expect(on).toMatch(/tunnel guard/);
+    expect(on).toMatch(/Nothing installs until you choose to/);
+  });
+
+  it("says a manual check still works with the switch off", () => {
+    expect(consequence("checkForUpdates", false)).toMatch(/Check for Updates/);
   });
 });
 

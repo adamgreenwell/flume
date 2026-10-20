@@ -1,9 +1,9 @@
 //! Opt-in, anonymous usage counts.
 //!
 //! Not to be confused with [`crate::telemetry`], which is the 1 Hz push of
-//! torrent status to the webview and never leaves the process. This module is
-//! the only thing in Flume that sends anything to a server, and it sends
-//! nothing at all unless the user has said yes.
+//! torrent status to the webview and never leaves the process. This module and
+//! [`crate::updates`] are the only things in Flume that send anything to a
+//! server, and this one sends nothing at all unless the user has said yes.
 //!
 //! Like [`crate::settings`], it imports no Tauri types.
 //!
@@ -241,6 +241,9 @@ pub enum SettingKey {
     /// Usage reporting itself.
     #[serde(rename = "privacy.usage")]
     PrivacyUsage,
+    /// The daily update check turned on or off.
+    #[serde(rename = "privacy.updates")]
+    PrivacyUpdates,
 }
 
 impl SettingKey {
@@ -334,6 +337,10 @@ impl SettingKey {
         note(
             previous.usage_reporting != next.usage_reporting,
             Self::PrivacyUsage,
+        );
+        note(
+            previous.check_for_updates != next.check_for_updates,
+            Self::PrivacyUpdates,
         );
 
         keys

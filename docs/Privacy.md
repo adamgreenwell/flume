@@ -44,11 +44,11 @@ download folder appears as "exists, inside the home directory", a proxy as
 with paths, addresses, URLs, info hashes and torrent names removed.
 
 If usage reporting is on, it also says whether the tunnel check is holding
-sends back, and what happened to the last batch — that it was accepted, that it was refused with a status code, or that it got no
-answer at all. That last one is reported as exactly that, without guessing:
-being offline, a DNS block, a certificate problem and a proxy in the way are
-not distinguishable from inside Flume, and claiming to know which would be a
-verdict the data cannot support.
+sends back, and what happened to the last batch — that it was accepted, that it
+was refused with a status code, or that it got no answer at all. That last one
+is reported as exactly that, without guessing: being offline, a DNS block, a
+certificate problem and a proxy in the way are not distinguishable from inside
+Flume, and claiming to know which would be a verdict the data cannot support.
 
 **One honest limitation.** Redaction removes torrent names by matching them
 against the torrents currently in your library, so a log line naming a torrent
@@ -102,9 +102,11 @@ Every event is timed to the hour, not the second.
 Counts are ranges rather than exact numbers because a range is what anyone
 would graph, and "the install with 1,483 torrents" is one identifiable person.
 
-**Nothing is sent while the tunnel check is holding.** If you have turned on
-the tunnel check and traffic is not leaving through a tunnel, Flume does not
-send usage counts either — not on the hour and not when you quit. They stay
+**Nothing is sent while the
+[tunnel check](#the-tunnel-check--what-it-can-and-cannot-tell-you) is
+holding.** If you have turned it on and traffic is not leaving through a
+tunnel, Flume does not send usage counts, just as it does not check for
+updates — not on the hour and not when you quit. They stay
 queued on your machine and go once the tunnel is back, or are discarded after
 three days like any other batch that cannot be sent. An opt-in count is not a
 reason to connect from the address the check exists to protect.
@@ -154,14 +156,68 @@ Whether or not you consent to usage counts, Flume connects to:
 - **Peers**, directly or through your configured SOCKS5 proxy.
 - **The DHT**, if enabled, which is how magnet links work at all.
 - **Your router**, if UPnP is enabled, to request a port mapping.
+- **GitHub**, once a day, to see whether a newer Flume exists — unless you
+  turn it off. Exactly what that sends is in [Update checks](#update-checks)
+  below; in short, nothing about your install.
 
-That is the complete list. Flume has no update checker, no crash reporter, no
-analytics SDK, no font or asset fetching — the fonts are vendored, so the
-interface renders with no network at all — and no bundled search.
+That is the complete list. Flume has no crash reporter, no analytics SDK, no
+font or asset fetching — the fonts are vendored, so the interface renders with
+no network at all — and no bundled search.
 
 The interface itself cannot make network requests. Its Content Security Policy
 allows it to talk to the Rust backend and nothing else, so every connection
 above originates in Rust where it can be audited in one place.
+
+## Update checks
+
+**Settings → Privacy → Check for updates.** On by default, and said so on the
+first-run screen; this switch turns it off.
+
+Unlike usage counts, this is not something Flume asks permission for, and the
+difference is deliberate. Usage counts are for the project's benefit. An update
+check is for yours: an install that never hears about new versions never gets
+security fixes. So it is on, it is disclosed, and it is one switch away.
+
+**What a check sends.** One HTTPS request to
+
+```
+https://github.com/adamgreenwell/flume/releases/latest/download/latest.json
+```
+
+with the user agent `tauri-plugin-updater/<version>` and nothing else of
+Flume's: no install ID, no Flume version, no operating system, no CPU type, no
+settings. The URL is the same for every install. GitHub answers with a small
+file describing its latest release, and the comparison with your version
+happens on your machine. GitHub — and a CDN it redirects to — sees what any web
+server sees: your IP address and the time. Flume's own servers are not
+involved.
+
+**When it runs.** Between 30 and 90 seconds after launch, then once a day while
+Flume is open. Turned off, there is no daily check at all; choosing **Flume →
+Check for Updates…** still checks, because that is you asking.
+
+**When it does not.** Never while the [tunnel check](#the-tunnel-check--what-it-can-and-cannot-tell-you)
+is holding transfer — not the daily check, not one you ask for, not a
+download. Someone relying on that guard does not expect Flume to open a
+connection from the address it is protecting, torrent traffic or not. A daily
+check that was skipped runs once traffic is leaving through the tunnel again;
+one you asked for says it was skipped, and you can ask again then. The check follows your operating system's proxy settings; it does not
+use the SOCKS5 proxy you configured for peers.
+
+**Nothing installs until you choose to.** When a newer version exists, Flume
+says so. What a click does depends on how Flume was installed:
+
+| Installed from      | What happens                                                                                                                                          |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS `.dmg`        | Flume downloads, verifies and installs it, then restarts.                                                                                             |
+| Linux AppImage      | The same.                                                                                                                                             |
+| Linux `.deb`/`.rpm` | Flume opens the release page. Your package manager owns these files, so Flume does not replace them.                                                  |
+| Windows             | Flume opens the release page, until Flume's Windows installers are code-signed; an unsigned installer would raise a security warning on every update. |
+
+Every download is checked against a signature made with a key only the
+project holds, and the signed version must match the one announced — so a
+tampered download, or an old release dressed up as a new one, is refused and
+nothing is installed.
 
 ## The tunnel check — what it can and cannot tell you
 
@@ -179,8 +235,9 @@ your address to a third party in order to tell you your address is protected.
 **What holding actually does.** Flume does not pause your torrents; it does not
 start the torrent engine at all. So while transfer is held there is no session:
 no peer connections, no tracker announces, no DHT, no listening port — and no
-usage counts, if you send them. Your torrents are not modified, which is why the ones you paused yourself stay paused
-and the ones that were running come back running when a tunnel returns.
+update checks or usage counts either. Your torrents are not modified, which is
+why the ones you paused yourself stay paused and the ones that were running
+come back running when a tunnel returns.
 
 A drop takes effect immediately. Recovery waits about ten seconds of a steady
 tunnel before resuming, so a VPN reconnecting or a laptop waking does not make
