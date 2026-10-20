@@ -40,7 +40,7 @@ function Legend({
   children: React.ReactNode;
 }) {
   return (
-    <span className="text-fg-1 flex items-center gap-1.5 text-[11px]">
+    <span className="text-fg-1 flex items-center gap-1.5 text-[11px] whitespace-nowrap">
       <span className={`block h-[3px] w-2.5 rounded-sm ${swatch}`} />
       <span className={ink}>
         <Icon name={icon} size={11} />
@@ -111,8 +111,16 @@ export function ThroughputChart({
 
   return (
     <div className="relative flex min-w-0 flex-1 flex-col gap-1.5 px-5 pt-3 pb-2.5">
-      <div className="flex items-center gap-4">
-        <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] uppercase">
+      {/*
+        Wraps between items, never within one. Just above `lg` the dock gives
+        the chart about 270px, which the four items do not fit in a single row;
+        without the wrap they squeezed to min-content — title on three lines,
+        "1.0 / MB/s" on two — and then overflowed onto the stat grid beside
+        the chart. A second row is the cheap answer: every item keeps its
+        words, so nothing is reduced to a colour.
+      */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span className="text-fg-3 text-[10px] font-semibold tracking-[0.09em] whitespace-nowrap uppercase">
           {label} · last {WINDOW_SIZE} s
         </span>
         <Legend swatch="bg-chart-down" ink="text-chart-down" icon="arrow-down">
@@ -121,137 +129,149 @@ export function ThroughputChart({
         <Legend swatch="bg-chart-up" ink="text-chart-up" icon="arrow-up">
           Upload
         </Legend>
-        <span className="text-fg-3 flex items-center gap-1.5 text-[11px]">
+        <span className="text-fg-3 flex items-center gap-1.5 text-[11px] whitespace-nowrap">
           <span className="bg-fg-3 block h-px w-2.5" />
           {limitBps === null ? "Peak" : "Limit"}{" "}
           <span className="flume-num">{formatSpeed(ceiling)}</span>
         </span>
       </div>
 
-      <svg
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        // Stretches to whatever width it is given rather than holding 620px.
-        // A time series has no meaningful aspect ratio — squeezing the minute
-        // into less space is the correct response to a narrower window, and
-        // letterboxing it would waste the room instead.
-        preserveAspectRatio="none"
-        className="block h-[88px] w-full overflow-visible"
-        role="img"
-        aria-label={
-          history.length === 0
-            ? "Throughput chart, no samples yet"
-            : `Throughput over the last ${history.length} seconds. Download now ${formatSpeed(history[history.length - 1].downBps)}, upload now ${formatSpeed(history[history.length - 1].upBps)}, peak ${formatSpeed(peak)}.`
-        }
-        onMouseMove={(event) => {
-          const box = event.currentTarget.getBoundingClientRect();
-          // The SVG scales to fit, so pointer pixels are converted back into
-          // user units before they mean anything.
-          const x = ((event.clientX - box.left) / box.width) * WIDTH;
-          setHover(sampleAt(x, WIDTH, history.length));
-        }}
-        onMouseLeave={() => setHover(null)}
-      >
-        <line
-          x1="0"
-          y1="0.5"
-          x2={WIDTH}
-          y2="0.5"
-          stroke="var(--flume-line-2)"
-          strokeWidth="1"
-          strokeDasharray="3 3"
-        />
-        <line
-          x1="0"
-          y1={HEIGHT / 2}
-          x2={WIDTH}
-          y2={HEIGHT / 2}
-          stroke="var(--flume-line)"
-          strokeWidth="1"
-        />
-        <line
-          x1="0"
-          y1={HEIGHT - 0.5}
-          x2={WIDTH}
-          y2={HEIGHT - 0.5}
-          stroke="var(--flume-line)"
-          strokeWidth="1"
-        />
-
-        {/*
-          Only download is filled. Two overlapping translucent areas make the
-          overlap a third colour that means nothing, and hide whichever series
-          is smaller behind whichever is larger.
-        */}
-        <path
-          d={areaPath(downPoints, HEIGHT)}
-          fill="var(--flume-chart-down)"
-          opacity="0.14"
-        />
-        <path
-          d={linePath(downPoints)}
-          fill="none"
-          stroke="var(--flume-chart-down)"
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-        <path
-          d={linePath(upPoints)}
-          fill="none"
-          stroke="var(--flume-chart-up)"
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-
-        {at ? (
+      {/*
+        The plot and its tooltip share a box so the tooltip is placed against
+        the plot rather than the top of the chart. The header above can wrap
+        to two or three rows, and a fixed offset from the top put the tooltip
+        over it. The negative margin and matching padding keep this box as
+        wide as the chart's own, so the tooltip's horizontal placement is
+        exactly what it was.
+      */}
+      <div className="relative -mx-5 px-5">
+        <svg
+          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          // Stretches to whatever width it is given rather than holding 620px.
+          // A time series has no meaningful aspect ratio — squeezing the minute
+          // into less space is the correct response to a narrower window, and
+          // letterboxing it would waste the room instead.
+          preserveAspectRatio="none"
+          className="block h-[88px] w-full overflow-visible"
+          role="img"
+          aria-label={
+            history.length === 0
+              ? "Throughput chart, no samples yet"
+              : `Throughput over the last ${history.length} seconds. Download now ${formatSpeed(history[history.length - 1].downBps)}, upload now ${formatSpeed(history[history.length - 1].upBps)}, peak ${formatSpeed(peak)}.`
+          }
+          onMouseMove={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            // The SVG scales to fit, so pointer pixels are converted back into
+            // user units before they mean anything.
+            const x = ((event.clientX - box.left) / box.width) * WIDTH;
+            setHover(sampleAt(x, WIDTH, history.length));
+          }}
+          onMouseLeave={() => setHover(null)}
+        >
           <line
-            x1={hoverX}
-            y1="0"
-            x2={hoverX}
-            y2={HEIGHT}
+            x1="0"
+            y1="0.5"
+            x2={WIDTH}
+            y2="0.5"
             stroke="var(--flume-line-2)"
             strokeWidth="1"
+            strokeDasharray="3 3"
           />
-        ) : null}
-      </svg>
+          <line
+            x1="0"
+            y1={HEIGHT / 2}
+            x2={WIDTH}
+            y2={HEIGHT / 2}
+            stroke="var(--flume-line)"
+            strokeWidth="1"
+          />
+          <line
+            x1="0"
+            y1={HEIGHT - 0.5}
+            x2={WIDTH}
+            y2={HEIGHT - 0.5}
+            stroke="var(--flume-line)"
+            strokeWidth="1"
+          />
 
-      {at ? (
-        <div
-          className="bg-bg-3 border-line-2 pointer-events-none absolute z-10 rounded-sm border px-[9px] py-[7px] shadow-[0_6px_20px_rgba(0,0,0,0.45)]"
-          style={{
-            // Flips to the left of the crosshair near the right edge so the
-            // tooltip never leaves the dock.
-            left:
-              hoverX / WIDTH > 0.72
-                ? undefined
-                : `calc(${(hoverX / WIDTH) * 100}% - 4px)`,
-            right:
-              hoverX / WIDTH > 0.72
-                ? `calc(${100 - (hoverX / WIDTH) * 100}% + 4px)`
-                : undefined,
-            top: 44,
-          }}
-        >
-          <div className="text-fg-3 mb-1 text-[10px] font-semibold tracking-[0.09em] uppercase">
-            {secondsAgo === 0 ? "Now" : `${secondsAgo} s ago`}
+          {/*
+            Only download is filled. Two overlapping translucent areas make the
+            overlap a third colour that means nothing, and hide whichever series
+            is smaller behind whichever is larger.
+          */}
+          <path
+            d={areaPath(downPoints, HEIGHT)}
+            fill="var(--flume-chart-down)"
+            opacity="0.14"
+          />
+          <path
+            d={linePath(downPoints)}
+            fill="none"
+            stroke="var(--flume-chart-down)"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d={linePath(upPoints)}
+            fill="none"
+            stroke="var(--flume-chart-up)"
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+
+          {at ? (
+            <line
+              x1={hoverX}
+              y1="0"
+              x2={hoverX}
+              y2={HEIGHT}
+              stroke="var(--flume-line-2)"
+              strokeWidth="1"
+            />
+          ) : null}
+        </svg>
+
+        {at ? (
+          <div
+            className="bg-bg-3 border-line-2 pointer-events-none absolute z-10 rounded-sm border px-[9px] py-[7px] shadow-[0_6px_20px_rgba(0,0,0,0.45)]"
+            style={{
+              // Flips to the left of the crosshair near the right edge so the
+              // tooltip never leaves the dock.
+              left:
+                hoverX / WIDTH > 0.72
+                  ? undefined
+                  : `calc(${(hoverX / WIDTH) * 100}% - 4px)`,
+              right:
+                hoverX / WIDTH > 0.72
+                  ? `calc(${100 - (hoverX / WIDTH) * 100}% + 4px)`
+                  : undefined,
+              top: 10,
+            }}
+          >
+            <div className="text-fg-3 mb-1 text-[10px] font-semibold tracking-[0.09em] uppercase">
+              {secondsAgo === 0 ? "Now" : `${secondsAgo} s ago`}
+            </div>
+            <div className="text-fg-1 flex items-center gap-1.5 text-[11px]">
+              <span className="bg-chart-down block h-[3px] w-2.5 rounded-sm" />
+              Down
+              <span className="flume-num text-fg-0">
+                {formatSpeed(at.downBps)}
+              </span>
+            </div>
+            <div className="text-fg-1 mt-0.5 flex items-center gap-1.5 text-[11px]">
+              <span className="bg-chart-up block h-[3px] w-2.5 rounded-sm" />
+              Up
+              <span className="flume-num text-fg-0">
+                {formatSpeed(at.upBps)}
+              </span>
+            </div>
           </div>
-          <div className="text-fg-1 flex items-center gap-1.5 text-[11px]">
-            <span className="bg-chart-down block h-[3px] w-2.5 rounded-sm" />
-            Down
-            <span className="flume-num text-fg-0">
-              {formatSpeed(at.downBps)}
-            </span>
-          </div>
-          <div className="text-fg-1 mt-0.5 flex items-center gap-1.5 text-[11px]">
-            <span className="bg-chart-up block h-[3px] w-2.5 rounded-sm" />
-            Up
-            <span className="flume-num text-fg-0">{formatSpeed(at.upBps)}</span>
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

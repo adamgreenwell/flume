@@ -15,6 +15,16 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   else, and only macOS fills the gaps from the app bundle — which is where
   Flume is developed. It now shows the name, version, description, licence,
   website and copyright on every platform. macOS is unchanged. (#230)
+- **The throughput chart's header no longer spills onto the figures beside
+  it.** In a window a little over 1024px wide, "Peak 1.0 MB/s" was drawn over
+  the dock's ACTIVE heading, and the chart's title and speed figure broke
+  across lines mid-phrase. The header had four items in one row that could
+  neither wrap nor shorten, so once they ran out of room they went sideways.
+  They now wrap onto a second or third row, between items and never inside
+  one, and every label keeps its words. The torrent inspector's copy of the
+  chart had the same problem at the smallest window size and gets the same
+  fix. In both places, the readout that appears on hover now sits on the plot
+  rather than over the wrapped header. (#232)
 
 ## [1.4.1] — 2026-10-19
 
