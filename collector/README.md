@@ -105,7 +105,37 @@ curl -i -X POST http://localhost:8787/v1/usage \
 Expected: `400`, `event launched: expected keys [at, event], got [at, event,
 torrentName]`.
 
-## Querying
+## Viewing usage
+
+The owner-only dashboard reads D1 through your existing Wrangler login and
+opens a local HTML snapshot. It never creates a public read route, sends a
+browser credential to the Worker, or exports raw install IDs.
+
+```bash
+cd collector
+npm ci
+npx wrangler login       # only if you are not already logged in
+npm run dashboard        # reads the deployed D1 database
+```
+
+The page shows 7, 30, 90 days, and all recorded time, with daily event counts,
+distinct reporting installs, event types, and the allowlisted breakdowns. Its
+"last received" value comes from the collector's server timestamp; chart days
+use the client's hour-bucketed event timestamp in UTC. Run the command again
+to refresh. The generated `collector/.dashboard/index.html` is ignored by Git
+and should be kept private because it contains aggregate usage counts.
+
+For local development, first run `npm run migrate:local`, then
+`npm run dashboard:local`. Add `-- --no-open` to either command to generate the
+file without launching a browser. An empty local database displays an empty
+report. The dashboard never modifies D1 data.
+
+Reporting installs are distinct opt-in IDs seen in a selected period, not all
+Flume users or an opt-in rate. Counts can include retries, and the public
+ingest endpoint accepts any correctly shaped batch, so the report is a useful
+signal rather than an authoritative adoption measure.
+
+## Querying with SQL
 
 ```sql
 -- Daily active installs.
