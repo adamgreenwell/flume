@@ -277,6 +277,16 @@ pub async fn check_egress(state: State<'_, AppState>) -> Result<GuardStatus, Com
     Ok(state.egress_status().await)
 }
 
+/// Marks the window as listening for opened links and returns any that
+/// arrived before it was.
+///
+/// Called by `useMagnetLinks` after it subscribes, so a link that launched
+/// Flume -- delivered before the page existed -- is not lost (#241).
+#[tauri::command]
+pub fn take_pending_links(links: State<'_, crate::deeplink::Links>) -> Vec<String> {
+    links.take_pending()
+}
+
 /// What Flume knows about updates right now.
 #[tauri::command]
 pub async fn get_update_status(app: tauri::AppHandle) -> UpdateStatus {

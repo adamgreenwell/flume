@@ -757,6 +757,11 @@ export function install(): void {
   const torrents = scenario === "empty" ? [] : TORRENTS;
   // Mutable, so a written setting stays written for the life of the page.
   let live: Settings = { ...SETTINGS };
+  // `?magnet=` simulates the link a cold launch carries; see
+  // `take_pending_links` below.
+  let pendingLaunchLink = new URLSearchParams(window.location.search).get(
+    "magnet",
+  );
 
   const callbacks = new Map<number, (data: unknown) => void>();
   const listeners = new Map<string, number>();
@@ -887,6 +892,14 @@ export function install(): void {
           return { state: "installing" };
         case "open_update_page":
           return null;
+        // `?magnet=<link>` stands in for a link that launched Flume: handed
+        // over once, the way Rust's inbox does it, so the cold-start path
+        // can be checked in a browser.
+        case "take_pending_links": {
+          const launch = pendingLaunchLink;
+          pendingLaunchLink = null;
+          return launch ? [launch] : [];
+        }
         default:
           return null;
       }
@@ -904,6 +917,19 @@ export function install(): void {
     ((w as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ ??= {}),
     { unregisterListener: () => {} },
   );
+
+  // `window.__FLUME_MOCK_EMIT__(event, payload)` fires any backend event by
+  // hand, for paths that need an event at a moment of the tester's choosing
+  // -- a magnet link arriving while the add dialog is already open, say.
+  (w as Record<string, unknown>).__FLUME_MOCK_EMIT__ = (
+    event: string,
+    payload: unknown,
+  ) => {
+    const handler = listeners.get(event);
+    if (handler !== undefined) {
+      callbacks.get(handler)?.({ event, id: handler, payload });
+    }
+  };
 
   // Drive the telemetry stream at the same 1 Hz the backend uses.
   //
