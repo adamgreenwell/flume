@@ -145,24 +145,43 @@ pub fn run() {
             // Deliver magnet links opened from the OS while Flume is running.
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                let deep_link_handle = handle.clone();
-                app.deep_link().on_open_url(move |event| {
-                    deeplink::focus_main_window(&deep_link_handle);
-                    for url in event.urls() {
-                        deeplink::route_argument(&deep_link_handle, url.as_str());
-                    }
-                });
+
+                // Not on macOS, where links arrive as `RunEvent::Opened` and
+                // are routed from the run callback below. This listener is
+                // built from that same event, and a link that launches Flume
+                // can arrive before `setup` has run -- before this line --
+                // so on macOS it would only ever add a second route for links
+                // the run callback already has.
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let deep_link_handle = handle.clone();
+                    app.deep_link().on_open_url(move |event| {
+                        deeplink::focus_main_window(&deep_link_handle);
+                        for url in event.urls() {
+                            deeplink::route_argument(&deep_link_handle, url.as_str());
+                        }
+                    });
+                }
 
                 // Runtime registration matters for Linux and for development,
                 // where no .desktop entry or bundle exists yet. macOS does not
                 // support it at all -- the association comes from the bundled
                 // app's Info.plist -- so "unsupported platform" here is
                 // expected and not a problem.
+                //
+                // On Linux a failure is worth a warning rather than a debug
+                // line: the per-user handler this writes is what passes the
+                // link to Flume for an AppImage, and a missing `xdg-mime` was
+                // otherwise invisible.
                 if let Err(err) = app.deep_link().register_all() {
-                    log::debug!(
-                        "runtime deep-link registration unavailable ({err}); \
-                         on macOS and Windows the installed bundle registers the scheme"
-                    );
+                    if cfg!(target_os = "linux") {
+                        log::warn!("could not register Flume as the magnet: handler ({err})");
+                    } else {
+                        log::debug!(
+                            "runtime deep-link registration unavailable ({err}); \
+                             on macOS and Windows the installed bundle registers the scheme"
+                        );
+                    }
                 }
             }
 
@@ -242,6 +261,17 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build the Tauri application")
         .run(|app_handle, event| {
+            // macOS delivers opened links here, and only here is it certain
+            // to hear them. A link that launches Flume can arrive before
+            // `setup` runs -- tao hands AppKit's openURLs on as soon as it is
+            // called, ahead of didFinishLaunching -- and so before any
+            // listener registered in `setup` exists. This callback receives
+            // every event from the start of the run loop (#241).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                deeplink::handle_opened(app_handle, urls.iter().map(|url| url.as_str()));
+            }
+
             // Flush fast-resume and session state before the process exits so a
             // restart resumes instead of re-hashing.
             if let tauri::RunEvent::Exit = event {
