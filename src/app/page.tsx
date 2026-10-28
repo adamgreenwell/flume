@@ -24,6 +24,7 @@ import { LibraryToolbar } from "@/components/LibraryToolbar";
 import { Rail } from "@/components/Rail";
 import { NoteCard } from "@/components/NoteCard";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { StatisticsDialog } from "@/components/StatisticsDialog";
 import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
 import { TorrentRow } from "@/components/TorrentRow";
@@ -112,6 +113,7 @@ export default function Home() {
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
+  const [isShowingStatistics, setIsShowingStatistics] = useState(false);
   const [detailOf, setDetailOf] = useState<TorrentSummary | null>(null);
   const [droppedPath, setDroppedPath] = useState<string | undefined>(undefined);
   const [incomingMagnet, setIncomingMagnet] = useState<string | undefined>(
@@ -215,6 +217,7 @@ export default function Home() {
     useCallback((action) => {
       if (action === "open_settings") setIsConfiguring(true);
       if (action === "add_torrent") setIsAdding(true);
+      if (action === "open_statistics") setIsShowingStatistics(true);
       if (action === "check_updates") {
         setUpdateAsked(true);
         setUpdateDismissed(null);
@@ -390,7 +393,11 @@ export default function Home() {
   );
 
   const anyDialogOpen =
-    isAdding || isConfiguring || detailOf !== null || pendingRemoval !== null;
+    isAdding ||
+    isConfiguring ||
+    isShowingStatistics ||
+    detailOf !== null ||
+    pendingRemoval !== null;
 
   // Suspended while a dialog is open: those handle their own keys (Escape to
   // close), and a background shortcut firing behind a modal is disorienting.
@@ -732,6 +739,10 @@ export default function Home() {
 
       {isConfiguring ? (
         <SettingsDialog onClose={() => setIsConfiguring(false)} />
+      ) : null}
+
+      {isShowingStatistics ? (
+        <StatisticsDialog onClose={() => setIsShowingStatistics(false)} />
       ) : null}
 
       {pendingRemoval ? (

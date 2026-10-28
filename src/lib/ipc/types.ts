@@ -982,6 +982,29 @@ export type UpdateStatus =
    */
   | { state: "held" };
 
+/** Bytes each way and time open, over some span. Mirrors Rust `stats::Totals`. */
+export interface Totals {
+  /** Bytes received from peers. */
+  downloadedBytes: number;
+  /** Bytes sent to peers. */
+  uploadedBytes: number;
+  /**
+   * Seconds Flume was open and the machine awake, including while the egress
+   * guard held transfer.
+   */
+  activeSeconds: number;
+}
+
+/** Transfer totals for the statistics view. Mirrors Rust `stats::Statistics`. */
+export interface Statistics {
+  /** Since Flume was launched, across every engine restart in between. */
+  session: Totals;
+  /** Since Flume first recorded statistics on this machine. */
+  allTime: Totals;
+  /** How many times Flume has been launched, this one included. */
+  launches: number;
+}
+
 /** An error returned by a Tauri command. Mirrors Rust `CommandError`. */
 export interface CommandError {
   /** Stable identifier for the error class, e.g. `"engineNotReady"`. */

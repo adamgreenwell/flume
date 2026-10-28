@@ -34,6 +34,7 @@ mod menu;
 pub mod policy;
 pub mod settings;
 pub mod state;
+pub mod stats;
 pub mod telemetry;
 pub mod tray;
 pub mod updates;
@@ -131,7 +132,8 @@ pub fn run() {
             commands::check_for_updates,
             commands::install_update,
             commands::open_update_page,
-            commands::take_pending_links
+            commands::take_pending_links,
+            commands::get_statistics
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -253,6 +255,7 @@ pub fn run() {
                     // is allowed to spend seconds waiting on a socket. Seeding
                     // time should not be the thing a slow network costs.
                     state.persist_seed_times().await;
+                    state.persist_statistics().await;
 
                     // The last flush gets one shot, and the timeout is
                     // shorter than the request's own on purpose: a quit that

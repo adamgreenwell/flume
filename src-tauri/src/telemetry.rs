@@ -25,17 +25,26 @@ pub const TELEMETRY_EVENT: &str = "flume://telemetry";
 /// that the webview is not re-rendering constantly while seeding.
 pub const TELEMETRY_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Telemetry ticks between flushes of accumulated seeding time to disk.
+/// Event carrying the lifetime totals, every tick.
 ///
-/// Seeding time advances every tick for every seeding torrent, but the library
-/// record is written atomically, so persisting per tick would mean a temp file
-/// and a rename every second for as long as anything seeds. A minute bounds
-/// the loss from a crash to under a minute of seeding time per torrent, which
-/// makes a limit fire fractionally late rather than early -- the safe
-/// direction, since firing early stops a torrent that has not earned it.
+/// Separate from [`TELEMETRY_EVENT`] because it has to keep ticking when that
+/// one cannot: a telemetry snapshot is engine state and there is none while
+/// the egress guard holds, but Flume is still open and its time open still
+/// counts. Changing this breaks `src/hooks/useStatistics.ts`.
+pub const STATISTICS_EVENT: &str = "flume://statistics";
+
+/// Telemetry ticks between flushes of accumulated seeding time and lifetime
+/// totals to disk.
+///
+/// Both advance every tick, and both are written atomically, so persisting
+/// per tick would mean a temp file and a rename every second for as long as
+/// Flume is open. A minute bounds the loss from a crash to under a minute of
+/// each, which makes a seed-time limit fire fractionally late rather than
+/// early -- the safe direction, since firing early stops a torrent that has
+/// not earned it -- and understates the totals rather than inflating them.
 ///
 /// Exit flushes as well, so an ordinary quit loses nothing at all.
-const SEED_TIME_FLUSH_TICKS: u32 = 60;
+const FLUSH_TICKS: u32 = 60;
 
 /// Spawns the telemetry loop, which runs until the app exits.
 ///
@@ -55,16 +64,39 @@ pub fn spawn(app: AppHandle) {
         // must seed this set rather than trigger a burst of notifications for
         // downloads the user completed days ago.
         let mut seeded = false;
-        // Counts up to SEED_TIME_FLUSH_TICKS. Ticks skipped while the engine
-        // is down do not advance it, which is correct: nothing is seeding
-        // then, so there is nothing new to write.
+        // Counts up to FLUSH_TICKS, engine or no engine: the totals' time
+        // open keeps advancing while the guard holds, and a seed-time flush
+        // with nothing new to write is a no-op.
         let mut since_flush: u32 = 0;
 
         loop {
             ticker.tick().await;
 
             let state = app.state::<AppState>();
-            let Some(engine) = state.engine().await else {
+            let engine = state.engine().await;
+
+            // Before the engine check, so the tally sees the engine's absence
+            // -- which is how it knows the next reading is a new session.
+            let statistics = state
+                .tally_tick(
+                    engine
+                        .as_ref()
+                        .map(crate::engine::Engine::transfer_counters),
+                    TELEMETRY_INTERVAL.as_secs(),
+                )
+                .await;
+            if let Err(err) = app.emit(STATISTICS_EVENT, statistics) {
+                log::warn!("failed to emit statistics: {err}");
+            }
+
+            since_flush += 1;
+            if since_flush >= FLUSH_TICKS {
+                since_flush = 0;
+                state.persist_seed_times().await;
+                state.persist_statistics().await;
+            }
+
+            let Some(engine) = engine else {
                 continue;
             };
 
@@ -113,12 +145,6 @@ pub fn spawn(app: AppHandle) {
                         }
                     }
                 }
-            }
-
-            since_flush += 1;
-            if since_flush >= SEED_TIME_FLUSH_TICKS {
-                since_flush = 0;
-                state.persist_seed_times().await;
             }
 
             let finished = snapshot

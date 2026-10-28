@@ -83,6 +83,23 @@ pub struct IpFilterStatus {
     pub allowlist: Option<usize>,
 }
 
+/// librqbit's running byte totals for the current session.
+///
+/// Never sent over IPC. These count from zero each time a session is built,
+/// which happens at every launch and again whenever the egress guard releases,
+/// so on their own they answer nothing a person asks about. They exist for
+/// [`crate::stats`], which folds the change between two readings into totals
+/// that outlive the session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TransferCounters {
+    /// Bytes received from peers, including any that later failed a hash.
+    pub downloaded_bytes: u64,
+    /// Bytes sent to peers.
+    pub uploaded_bytes: u64,
+    /// Seconds since this session was built.
+    pub uptime_seconds: u64,
+}
+
 /// A point-in-time snapshot of engine state, safe to send over IPC.
 ///
 /// Contains only scalars and small strings; no torrent piece data ever crosses

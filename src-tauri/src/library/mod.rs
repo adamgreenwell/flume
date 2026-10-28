@@ -623,11 +623,6 @@ impl Library {
         };
         write_atomically(dir, &json)
     }
-
-    /// Where the atomic write stages.
-    fn temp_path(dir: &Path) -> PathBuf {
-        dir.join(format!("{LIBRARY_FILE}.tmp"))
-    }
 }
 
 /// Writes `json` to the record file in `dir`, atomically.
@@ -639,32 +634,40 @@ impl Library {
 ///
 /// [`LibraryError::Save`] if the directory or file cannot be written.
 pub fn write_atomically(dir: &Path, json: &str) -> Result<(), LibraryError> {
-    {
-        std::fs::create_dir_all(dir).map_err(|source| LibraryError::Save {
-            path: dir.display().to_string(),
-            source,
-        })?;
+    write_file_atomically(dir, LIBRARY_FILE, json).map_err(|(path, source)| LibraryError::Save {
+        path: path.display().to_string(),
+        source,
+    })
+}
 
-        let path = dir.join(LIBRARY_FILE);
-        let temp = Library::temp_path(dir);
+/// Writes `json` to `file` in `dir` through a temp file and a rename.
+///
+/// Shared with [`crate::stats`], whose totals are rewritten on the same
+/// cadence for the same reason: a torn write would lose the only copy.
+///
+/// # Errors
+///
+/// The path that could not be written, and why.
+pub fn write_file_atomically(
+    dir: &Path,
+    file: &str,
+    json: &str,
+) -> Result<(), (PathBuf, std::io::Error)> {
+    std::fs::create_dir_all(dir).map_err(|e| (dir.to_path_buf(), e))?;
 
-        std::fs::write(&temp, json).map_err(|source| LibraryError::Save {
-            path: temp.display().to_string(),
-            source,
-        })?;
+    let path = dir.join(file);
+    let temp = dir.join(format!("{file}.tmp"));
 
-        // Overwrites on every platform Flume targets: Rust's rename uses
-        // MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows.
-        std::fs::rename(&temp, &path).map_err(|source| {
-            // A failed rename leaves the temp file behind; clearing it stops
-            // the session directory accumulating one per failure.
-            let _ = std::fs::remove_file(&temp);
-            LibraryError::Save {
-                path: path.display().to_string(),
-                source,
-            }
-        })
-    }
+    std::fs::write(&temp, json).map_err(|e| (temp.clone(), e))?;
+
+    // Overwrites on every platform Flume targets: Rust's rename uses
+    // MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows.
+    std::fs::rename(&temp, &path).map_err(|e| {
+        // A failed rename leaves the temp file behind; clearing it stops
+        // the session directory accumulating one per failure.
+        let _ = std::fs::remove_file(&temp);
+        (path, e)
+    })
 }
 
 #[cfg(test)]
@@ -1043,7 +1046,7 @@ mod tests {
         library.note_added(A, Some(1));
         library.save(tmp.path()).expect("save");
 
-        assert!(!Library::temp_path(tmp.path()).exists());
+        assert!(!tmp.path().join(format!("{LIBRARY_FILE}.tmp")).exists());
         assert!(tmp.path().join(LIBRARY_FILE).exists());
     }
 

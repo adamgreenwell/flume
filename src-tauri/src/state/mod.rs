@@ -17,6 +17,7 @@ use crate::{
     library::{Library, Noted, persisted_info_hashes, write_atomically},
     policy::{PolicyState, QueueLimits, Rules, TorrentRules},
     settings::Settings,
+    stats::{Statistics, Tally},
     usage::{EventKind, Recorder},
 };
 
@@ -84,6 +85,9 @@ pub struct AppState {
     /// losing a label someone just typed is not acceptable the way a missed
     /// usage count is. See [`crate::library`].
     library: RwLock<Library>,
+    /// Lifetime transfer totals. See [`crate::stats`] for why they are a
+    /// tally of per-tick differences rather than a saved total.
+    stats: Mutex<Tally>,
 
     /// The last status the guard loop published.
     ///
@@ -203,6 +207,10 @@ impl AppState {
         if let Some(problem) = problem {
             log::warn!("{problem}");
         }
+        let (stats, problem) = Tally::load(&session_dir);
+        if let Some(problem) = problem {
+            log::warn!("{problem}");
+        }
 
         // Probed once here, synchronously, so no command can ever observe a
         // status that does not exist yet. It costs one uncached probe -- about
@@ -237,6 +245,7 @@ impl AppState {
             usage,
             started_at: Instant::now(),
             library: RwLock::new(library),
+            stats: Mutex::new(stats),
             egress: Mutex::new(watcher),
             gate: Mutex::new(TransferGate::default()),
             status: RwLock::new(status),
@@ -1166,6 +1175,38 @@ impl AppState {
             library.to_json()
         };
         self.persist_library(json);
+    }
+
+    /// Folds one telemetry tick into the lifetime totals.
+    ///
+    /// Called every tick whether or not an engine exists -- `None` while there
+    /// is none -- because time open keeps counting while the guard holds, and
+    /// a tally that never sees the engine absent cannot tell two sessions
+    /// apart by anything but their counters.
+    pub async fn tally_tick(
+        &self,
+        reading: Option<crate::engine::TransferCounters>,
+        seconds: u64,
+    ) -> Statistics {
+        let mut stats = self.stats.lock().await;
+        stats.tick(reading, seconds);
+        stats.statistics()
+    }
+
+    /// The lifetime totals as they stand.
+    pub async fn statistics(&self) -> Statistics {
+        self.stats.lock().await.statistics()
+    }
+
+    /// Writes the lifetime totals, on the same cadence as seeding time.
+    ///
+    /// A crash loses at most the minute since the last write, which
+    /// understates rather than overstates -- the same trade
+    /// [`Self::persist_seed_times`] makes.
+    pub async fn persist_statistics(&self) {
+        if let Err(err) = self.stats.lock().await.save(&self.session_dir) {
+            log::warn!("{err}");
+        }
     }
 
     /// Shuts the engine down if one is running, and clears it.

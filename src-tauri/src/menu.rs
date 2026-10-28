@@ -28,6 +28,8 @@ pub const ADD_TORRENT: &str = "add_torrent";
 /// Rust, so the answer to a check the person asked for is shown to them --
 /// the daily check only speaks up when there is something to install.
 pub const CHECK_UPDATES: &str = "check_updates";
+/// Opens the lifetime statistics view. In Window, where Transmission keeps it.
+pub const OPEN_STATISTICS: &str = "open_statistics";
 
 /// Builds and installs the application menu.
 ///
@@ -46,6 +48,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let add = MenuItem::with_id(app, ADD_TORRENT, "Add Torrent…", true, Some("CmdOrCtrl+N"))?;
     let check_updates =
         MenuItem::with_id(app, CHECK_UPDATES, "Check for Updates…", true, None::<&str>)?;
+    let statistics = MenuItem::with_id(app, OPEN_STATISTICS, "Statistics", true, None::<&str>)?;
 
     let package = app.package_info();
     let about = about_metadata(
@@ -114,6 +117,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             &PredefinedMenuItem::maximize(app, None)?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::fullscreen(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &statistics,
         ],
     )?;
 
@@ -122,7 +127,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     app.on_menu_event(|app, event| {
         let id = event.id().as_ref();
-        if ![OPEN_SETTINGS, ADD_TORRENT, CHECK_UPDATES].contains(&id) {
+        if ![OPEN_SETTINGS, ADD_TORRENT, CHECK_UPDATES, OPEN_STATISTICS].contains(&id) {
             return;
         }
 

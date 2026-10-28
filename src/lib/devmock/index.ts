@@ -759,6 +759,19 @@ export function install(): void {
   let live: Settings = { ...SETTINGS };
   // `?magnet=` simulates the link a cold launch carries; see
   // `take_pending_links` below.
+  // Lifetime totals, advanced by each tick's rates so the statistics view
+  // moves. All time starts well ahead of the session, as it would after a
+  // few months of use.
+  const statistics = {
+    session: { downloadedBytes: 0, uploadedBytes: 0, activeSeconds: 0 },
+    allTime: {
+      downloadedBytes: 1_284_000_000_000,
+      uploadedBytes: 2_031_000_000_000,
+      activeSeconds: 3_412_800,
+    },
+    launches: 214,
+  };
+
   let pendingLaunchLink = new URLSearchParams(window.location.search).get(
     "magnet",
   );
@@ -895,6 +908,8 @@ export function install(): void {
         // `?magnet=<link>` stands in for a link that launched Flume: handed
         // over once, the way Rust's inbox does it, so the cold-start path
         // can be checked in a browser.
+        case "get_statistics":
+          return statistics;
         case "take_pending_links": {
           const launch = pendingLaunchLink;
           pendingLaunchLink = null;
@@ -959,6 +974,20 @@ export function install(): void {
         CORE.uploadBps * (1 + 0.34 * wobble(11, 2.4) + 0.15 * wobble(4, 0.6)),
       ),
     );
+
+    for (const span of [statistics.session, statistics.allTime]) {
+      span.downloadedBytes += downloadBps;
+      span.uploadedBytes += uploadBps;
+      span.activeSeconds += 1;
+    }
+    const statisticsHandler = listeners.get("flume://statistics");
+    if (statisticsHandler !== undefined) {
+      callbacks.get(statisticsHandler)?.({
+        event: "flume://statistics",
+        id: statisticsHandler,
+        payload: structuredClone(statistics),
+      });
+    }
 
     callbacks.get(handler)?.({
       event: "flume://telemetry",

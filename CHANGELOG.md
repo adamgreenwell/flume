@@ -22,6 +22,13 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   Privacy → Check for updates. **Flume → Check for Updates…** checks now
   either way. `docs/Privacy.md` says exactly what a check sends. (#176)
 
+- **Statistics that survive a restart.** Window → Statistics shows how much
+  Flume has downloaded and uploaded, the share ratio and how long it has been
+  open — for this session and for all time — plus how many times it has been
+  launched. The totals carry through the tunnel guard stopping and restarting
+  the engine, are saved every minute and on quit, and stay on your machine.
+  (#65)
+
 ### Fixed
 
 - **A magnet link that opens Flume now opens the add dialog with it.** When
