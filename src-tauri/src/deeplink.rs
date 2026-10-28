@@ -204,6 +204,131 @@ pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
     }
 }
 
+/// What to do about the `magnet:` handler on Linux at launch.
+///
+/// Pure, so the rules are tested without a desktop; [`settle_linux_handler`]
+/// carries them out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinuxHandlerPlan {
+    /// Write Flume's own per-user entry, as `register_all` does.
+    pub register_own: bool,
+    /// Strip the per-user entry an earlier version wrote.
+    pub remove_own: bool,
+    /// Make the package's own entry the default `magnet:` handler.
+    pub default_to_packaged: bool,
+}
+
+/// Decides how Flume claims `magnet:` on Linux.
+///
+/// A `.deb` or `.rpm` ships a desktop entry that handles `magnet:` itself, so
+/// the per-user one `register_all` writes is a duplicate: the desktop's "Open
+/// With" chooser listed Flume twice. Only an AppImage, or a development build,
+/// has no packaged entry and needs Flume to write its own.
+///
+/// The default moves to the packaged entry only when nothing else holds it, or
+/// when Flume's own per-user entry did -- never away from a client the person
+/// chose. `register_all` used to reclaim the default at every launch.
+///
+/// `current_default` is what `xdg-mime query default` reports, and `own_entry`
+/// the per-user entry's file name. `own_entry_claims` says whether that file
+/// still lists `magnet:` -- `unregister` strips the claim and leaves the file,
+/// so its mere existence would repeat the removal at every launch.
+#[must_use]
+pub fn linux_handler_plan(
+    packaged: bool,
+    current_default: Option<&str>,
+    own_entry: &str,
+    own_entry_claims: bool,
+) -> LinuxHandlerPlan {
+    if !packaged {
+        return LinuxHandlerPlan {
+            register_own: true,
+            remove_own: false,
+            default_to_packaged: false,
+        };
+    }
+    let unclaimed = current_default.is_none_or(|name| name.trim().is_empty());
+    let held_by_own = current_default.is_some_and(|name| name.trim() == own_entry);
+    LinuxHandlerPlan {
+        register_own: false,
+        remove_own: own_entry_claims,
+        default_to_packaged: unclaimed || held_by_own,
+    }
+}
+
+/// Settles the `magnet:` handler on Linux; see [`linux_handler_plan`].
+///
+/// Failures are logged, not returned: a launch is never worth failing over a
+/// handler, and each step is retried on the next launch.
+#[cfg(target_os = "linux")]
+pub fn settle_linux_handler(app: &AppHandle) {
+    use std::process::Command;
+
+    use tauri::utils::{config::BundleType, platform};
+    use tauri_plugin_deep_link::DeepLinkExt;
+
+    const MIME: &str = "x-scheme-handler/magnet";
+
+    let packaged = matches!(
+        platform::bundle_type(),
+        Some(BundleType::Deb | BundleType::Rpm)
+    );
+    let own_entry = platform::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .map(|name| format!("{name}-handler.desktop"));
+    let own_entry_claims = own_entry.as_ref().is_some_and(|name| {
+        app.path().data_dir().is_ok_and(|dir| {
+            std::fs::read_to_string(dir.join("applications").join(name))
+                .is_ok_and(|entry| entry.contains(MIME))
+        })
+    });
+    let current_default = Command::new("xdg-mime")
+        .args(["query", "default", MIME])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned());
+
+    let plan = linux_handler_plan(
+        packaged,
+        current_default.as_deref(),
+        own_entry.as_deref().unwrap_or_default(),
+        own_entry_claims,
+    );
+
+    if plan.register_own {
+        if let Err(err) = app.deep_link().register_all() {
+            log::warn!("could not register Flume as the magnet: handler ({err})");
+        }
+        return;
+    }
+    if plan.remove_own
+        && let Err(err) = app.deep_link().unregister("magnet")
+    {
+        log::warn!("could not remove Flume's duplicate magnet: handler entry ({err})");
+    }
+    if plan.default_to_packaged {
+        // The packaged entry is named for the product, as the bundler names it.
+        let packaged_entry = format!("{}.desktop", app.package_info().name);
+        match Command::new("xdg-mime")
+            .args(["default", &packaged_entry, MIME])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                log::warn!("xdg-mime could not make Flume the magnet: handler ({status})")
+            }
+            Err(err) => {
+                log::warn!("could not run xdg-mime to make Flume the magnet: handler ({err})")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -344,5 +469,54 @@ mod tests {
                 "the .{package} must use the template"
             );
         }
+    }
+
+    const OWN: &str = "flume-app-handler.desktop";
+
+    #[test]
+    fn an_appimage_or_dev_build_writes_its_own_entry() {
+        let plan = super::linux_handler_plan(false, None, OWN, false);
+        assert!(plan.register_own);
+        assert!(!plan.remove_own && !plan.default_to_packaged);
+    }
+
+    #[test]
+    fn a_fresh_package_install_claims_an_unclaimed_default() {
+        for default in [None, Some(""), Some("  ")] {
+            let plan = super::linux_handler_plan(true, default, OWN, false);
+            assert!(!plan.register_own, "the package ships its own entry");
+            assert!(!plan.remove_own, "there is no per-user entry to remove");
+            assert!(plan.default_to_packaged, "nothing else holds {default:?}");
+        }
+    }
+
+    // The upgrade case: an earlier version wrote the per-user entry and made it
+    // the default, which is what put Flume twice in the "Open With" chooser.
+    #[test]
+    fn an_upgraded_package_install_moves_the_default_off_the_duplicate() {
+        let plan = super::linux_handler_plan(true, Some(OWN), OWN, true);
+        assert!(!plan.register_own);
+        assert!(plan.remove_own);
+        assert!(plan.default_to_packaged);
+    }
+
+    #[test]
+    fn another_client_chosen_as_the_default_is_left_alone() {
+        let plan = super::linux_handler_plan(true, Some("transmission-gtk.desktop"), OWN, true);
+        assert!(plan.remove_own, "the duplicate still goes");
+        assert!(!plan.default_to_packaged, "the person's choice stands");
+    }
+
+    #[test]
+    fn a_default_already_on_the_packaged_entry_needs_nothing() {
+        let plan = super::linux_handler_plan(true, Some("Flume.desktop"), OWN, false);
+        assert_eq!(
+            plan,
+            super::LinuxHandlerPlan {
+                register_own: false,
+                remove_own: false,
+                default_to_packaged: false,
+            }
+        );
     }
 }

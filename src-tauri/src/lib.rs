@@ -163,25 +163,21 @@ pub fn run() {
                     });
                 }
 
-                // Runtime registration matters for Linux and for development,
-                // where no .desktop entry or bundle exists yet. macOS does not
-                // support it at all -- the association comes from the bundled
-                // app's Info.plist -- so "unsupported platform" here is
-                // expected and not a problem.
-                //
-                // On Linux a failure is worth a warning rather than a debug
-                // line: the per-user handler this writes is what passes the
-                // link to Flume for an AppImage, and a missing `xdg-mime` was
-                // otherwise invisible.
+                // Linux decides between writing Flume's own entry and using the
+                // package's -- see `deeplink::linux_handler_plan`.
+                #[cfg(target_os = "linux")]
+                deeplink::settle_linux_handler(app.handle());
+
+                // Runtime registration matters for development, where no
+                // bundle exists yet. macOS does not support it at all -- the
+                // association comes from the bundled app's Info.plist -- so
+                // "unsupported platform" here is expected and not a problem.
+                #[cfg(not(target_os = "linux"))]
                 if let Err(err) = app.deep_link().register_all() {
-                    if cfg!(target_os = "linux") {
-                        log::warn!("could not register Flume as the magnet: handler ({err})");
-                    } else {
-                        log::debug!(
-                            "runtime deep-link registration unavailable ({err}); \
-                             on macOS and Windows the installed bundle registers the scheme"
-                        );
-                    }
+                    log::debug!(
+                        "runtime deep-link registration unavailable ({err}); \
+                         on macOS and Windows the installed bundle registers the scheme"
+                    );
                 }
             }
 

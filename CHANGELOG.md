@@ -43,6 +43,13 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   passes the link to Flume, so even a click before Flume has ever run opens
   it. (#241)
 
+- **Flume appears once in Linux's "Open With" list, not twice.** Flume used
+  to write a second, hidden menu entry for `magnet:` links at every launch,
+  even when installed from a `.deb` or `.rpm` whose own entry already handles
+  them. It now writes one only for the AppImage, removes the duplicate an
+  earlier version left, and no longer takes the default `magnet:` handler
+  back from a client you chose yourself.
+
 - **File → About shows something on Windows and Linux.** It opened an empty
   box titled just "About". Flume gave the dialog no name, version or anything
   else, and only macOS fills the gaps from the app bundle — which is where
