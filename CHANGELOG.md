@@ -8,6 +8,8 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-28
+
 ### Added
 
 - **Flume tells you when a newer version exists, and installs it on a click
@@ -20,7 +22,9 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   Nothing installs until you choose to. **This is on by default, including for
   an install that upgrades to this version;** turn it off in Settings →
   Privacy → Check for updates. **Flume → Check for Updates…** checks now
-  either way. `docs/Privacy.md` says exactly what a check sends. (#176)
+  either way. `docs/Privacy.md` says exactly what a check sends. This is the
+  first version that can do it, so it starts paying off with the next release:
+  this one is still installed by hand. (#176)
 
 - **Statistics that survive a restart.** Window → Statistics shows how much
   Flume has downloaded and uploaded, the share ratio and how long it has been
@@ -30,6 +34,16 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   (#65)
 
 ### Fixed
+
+- **Usage counts are no longer sent while the tunnel check is holding.** With
+  both usage reporting and the tunnel check turned on, Flume stopped
+  transferring when traffic was not leaving through a tunnel, but it still
+  sent its hourly usage counts, and the batch at quit, from the address the
+  check exists to protect. Now nothing is sent while the check holds. The
+  counts stay queued on your machine and go once the tunnel is back, or are
+  discarded after three days like any batch that cannot be sent. The
+  diagnostics report says when the tunnel check is what is holding them.
+  (#237)
 
 - **A magnet link that opens Flume now opens the add dialog with it.** When
   Flume was not already running, clicking a magnet link started it and then
@@ -43,18 +57,21 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   passes the link to Flume, so even a click before Flume has ever run opens
   it. (#241)
 
-- **Flume appears once in Linux's "Open With" list, not twice.** Flume used
-  to write a second, hidden menu entry for `magnet:` links at every launch,
-  even when installed from a `.deb` or `.rpm` whose own entry already handles
-  them. It now writes one only for the AppImage, removes the duplicate an
-  earlier version left, and no longer takes the default `magnet:` handler
-  back from a client you chose yourself.
+- **Flume appears once in Linux's "Open With" list, not twice.** Installed
+  from a `.deb` or `.rpm`, Flume used to write a second, hidden menu entry for
+  `magnet:` links at every launch, beside the package's own entry that already
+  handles them. It now leaves that to the package, removes the duplicate an
+  earlier version left, and no longer takes the default `magnet:` handler back
+  from a client you chose yourself. The AppImage, which has no packaged entry,
+  still writes its own and still makes itself the default each time it starts.
+  (#241)
 
 - **File → About shows something on Windows and Linux.** It opened an empty
   box titled just "About". Flume gave the dialog no name, version or anything
   else, and only macOS fills the gaps from the app bundle — which is where
   Flume is developed. It now shows the name, version, description, licence,
   website and copyright on every platform. macOS is unchanged. (#230)
+
 - **The throughput chart's header no longer spills onto the figures beside
   it.** In a window a little over 1024px wide, "Peak 1.0 MB/s" was drawn over
   the dock's ACTIVE heading, and the chart's title and speed figure broke
@@ -411,6 +428,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.5.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.0
 [1.4.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.1
 [1.4.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.0
 [1.3.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.3.0

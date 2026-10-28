@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "flume-app"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "directories",

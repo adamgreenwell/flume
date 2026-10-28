@@ -148,6 +148,14 @@ events are both deleted from your machine. Data already received cannot be
 tied back to you — the ID is gone from your side and was never linked to you
 in the first place — so there is nothing to request the deletion of.
 
+## Statistics stay on your machine
+
+**Window → Statistics** — how much Flume has downloaded and uploaded, how long
+it has been open, how many times it has been launched — is kept in
+`stats.json` in Flume's app-data folder and nowhere else. It is not part of the
+usage counts and not part of the diagnostics report, and Flume never sends it
+anywhere. Deleting the file while Flume is closed resets the totals.
+
 ## Network connections Flume makes
 
 Whether or not you consent to usage counts, Flume connects to:
