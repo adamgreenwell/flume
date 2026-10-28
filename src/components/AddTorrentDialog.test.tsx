@@ -506,3 +506,82 @@ describe("a remembered destination", () => {
     );
   });
 });
+
+// Codex review of #250: a new magnet link re-keys the dialog, which unmounts
+// the old one even while its add is still running.
+describe("a dialog replaced while its add is running", () => {
+  /** A `confirmAdd` that stays in flight until the test settles it. */
+  function heldConfirm() {
+    let settle!: {
+      resolve: (id: number) => void;
+      reject: (e: unknown) => void;
+    };
+    confirmAdd.mockImplementation(
+      () =>
+        new Promise<number>((resolve, reject) => {
+          settle = { resolve, reject };
+        }),
+    );
+    return () => settle;
+  }
+
+  async function startAdd(onClose: () => void) {
+    const view = render(
+      <AddTorrentDialog droppedPath="/tmp/x.torrent" onClose={onClose} />,
+    );
+    const add = await screen.findByRole("button", { name: /^Add 1 file/ });
+    await waitFor(() =>
+      expect((add as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(add);
+    await waitFor(() => expect(confirmAdd).toHaveBeenCalled());
+    return view;
+  }
+
+  it("does not close the flow when its add finishes", async () => {
+    const settle = heldConfirm();
+    const onClose = vi.fn();
+    const { unmount } = await startAdd(onClose);
+
+    unmount(); // replaced by a dialog for the new link
+    await act(async () => settle().resolve(1));
+
+    // Closing here would close the replacement and drop its link.
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not discard the preview its add is confirming", async () => {
+    const settle = heldConfirm();
+    const { unmount } = await startAdd(() => {});
+
+    unmount();
+    expect(discardPreview).not.toHaveBeenCalled();
+    await act(async () => settle().resolve(1));
+    expect(discardPreview).not.toHaveBeenCalled();
+  });
+
+  it("still discards a preview nobody confirmed", async () => {
+    const { unmount } = render(
+      <AddTorrentDialog droppedPath="/tmp/x.torrent" onClose={() => {}} />,
+    );
+    await screen.findByRole("button", { name: /^Add 1 file/ });
+
+    unmount();
+    expect(discardPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the preview back when the add fails, so closing discards it", async () => {
+    const settle = heldConfirm();
+    const { unmount } = await startAdd(() => {});
+
+    await act(async () => settle().reject(new Error("refused")));
+    unmount();
+    expect(discardPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("still closes normally when it is the dialog on screen", async () => {
+    const onClose = vi.fn();
+    await startAdd(onClose);
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+});
