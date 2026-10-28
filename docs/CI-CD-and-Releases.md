@@ -41,6 +41,21 @@ deterministic; run them locally before a librqbit upgrade.
 `cargo audit` and `npm audit --omit=dev`, in a separate job so a new advisory
 does not mask a real test failure.
 
+### Hand-check builds
+
+Two dispatch-only workflows build installable packages without a tag or a
+draft release, for checking a fix by hand on a platform the development Mac
+cannot reach. Both upload their output as workflow artifacts.
+
+| Workflow            | Produces                                     | Notes                                                                                           |
+| ------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `windows-check.yml` | `.msi` and setup `.exe`, x64 and arm64       | Also runs the Windows-only tests (`tests/windows_file_locking.rs`); installers are opt-in       |
+| `linux-check.yml`   | `.deb` and AppImage, x86_64, aarch64 or both | Same Ubuntu 22.04 base and packages as the release; also runs on any PR that edits the workflow |
+
+Neither bakes in the collector endpoint or the updater key, so usage reporting
+is inert and update checks report that the build cannot check. That is the
+right build for a hand check, and the wrong one to hand to anyone else.
+
 ## Dependency updates
 
 Dependabot opens weekly PRs for cargo, npm, and GitHub Actions. Related
