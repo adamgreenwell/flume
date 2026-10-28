@@ -11,7 +11,8 @@ import { useEffect, useRef } from "react";
 export const MENU_EVENT = "flume://menu";
 
 /** Menu items the frontend acts on. Must match the ids in `menu.rs`. */
-export type MenuAction = "open_settings" | "add_torrent" | "check_updates";
+export type MenuAction =
+  "open_settings" | "add_torrent" | "check_updates" | "open_statistics";
 
 /**
  * Runs a handler when the native menu asks for something.

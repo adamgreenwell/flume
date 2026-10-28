@@ -42,7 +42,9 @@ pub use detail::{
 };
 pub use import::{ClientKind, DetectedClient, ImportOutcome};
 pub use note::{Note, NoteSeverity};
-pub use status::{CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, TelemetrySnapshot};
+pub use status::{
+    CoreStatus, DhtStatus, EngineHealth, IpFilterStatus, TelemetrySnapshot, TransferCounters,
+};
 pub use torrent::{PauseReason, SwarmHealth, TorrentFileState, TorrentState, TorrentSummary};
 
 /// The per-torrent facts the engine cannot know about itself.
@@ -452,6 +454,20 @@ impl Engine {
                 }
             }
             None => DhtStatus::disabled(),
+        }
+    }
+
+    /// The session's byte counters, for [`crate::stats`].
+    ///
+    /// Read separately from [`Self::core_status`] because it serves a
+    /// different consumer: nothing here crosses IPC, and the lifetime tally
+    /// reads it every tick whether or not anyone is looking.
+    pub fn transfer_counters(&self) -> TransferCounters {
+        let stats = self.session.stats_snapshot();
+        TransferCounters {
+            downloaded_bytes: stats.counters.fetched_bytes,
+            uploaded_bytes: stats.counters.uploaded_bytes,
+            uptime_seconds: stats.uptime_seconds,
         }
     }
 

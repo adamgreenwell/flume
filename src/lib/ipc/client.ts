@@ -13,6 +13,7 @@ import type {
   CoreStatus,
   DetectedClient,
   GuardStatus,
+  Statistics,
   Hop,
   ImportOutcome,
   SeedLimits,
@@ -399,4 +400,16 @@ export async function listEgressInterfaces(): Promise<Hop[]> {
  */
 export async function getDiagnostics(): Promise<string> {
   return invoke<string>("get_diagnostics");
+}
+
+/**
+ * Transfer totals for this launch and all time.
+ *
+ * For the statistics view's first render; after that it follows
+ * `flume://statistics` events, which keep arriving while no engine exists.
+ *
+ * @returns The totals as they stand.
+ */
+export async function getStatistics(): Promise<Statistics> {
+  return invoke<Statistics>("get_statistics");
 }

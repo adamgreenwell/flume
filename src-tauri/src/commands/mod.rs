@@ -18,6 +18,7 @@ use crate::{
     policy::TorrentRules,
     settings::{Settings, SettingsError},
     state::AppState,
+    stats::Statistics,
     updates::{self, Trigger, UpdateStatus, checker::Updates},
     usage::{AddSource, CountBucket, EventKind, FailureKind, SettingKey},
 };
@@ -285,6 +286,15 @@ pub async fn check_egress(state: State<'_, AppState>) -> Result<GuardStatus, Com
 #[tauri::command]
 pub fn take_pending_links(links: State<'_, crate::deeplink::Links>) -> Vec<String> {
     links.take_pending()
+}
+
+/// Lifetime and this-launch transfer totals.
+///
+/// For the statistics view's first render. After that it follows
+/// `flume://statistics`, which ticks whether or not an engine exists.
+#[tauri::command]
+pub async fn get_statistics(state: State<'_, AppState>) -> Result<Statistics, CommandError> {
+    Ok(state.statistics().await)
 }
 
 /// What Flume knows about updates right now.

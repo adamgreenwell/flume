@@ -38,6 +38,7 @@ use flume_lib::{
     },
     policy::TorrentRules,
     settings::{Settings, SortState, Theme},
+    stats::Statistics,
 };
 use serde_json::Value;
 
@@ -168,6 +169,19 @@ fn dht_status_matches_the_typescript_mirror() {
         &["enabled", "nodesV4", "nodesV6", "outstandingRequests"],
         "DhtStatus",
     );
+}
+
+#[test]
+fn statistics_match_the_typescript_mirror() {
+    let stats = Statistics::default();
+    assert_keys(&stats, &["session", "allTime", "launches"], "Statistics");
+    for (span, value) in [("session", &stats.session), ("allTime", &stats.all_time)] {
+        assert_keys(
+            value,
+            &["downloadedBytes", "uploadedBytes", "activeSeconds"],
+            &format!("Statistics.{span}"),
+        );
+    }
 }
 
 #[test]
