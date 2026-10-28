@@ -3,6 +3,8 @@
 # The collector is its own npm package with its own toolchain.
 collector/node_modules
 collector/.wrangler
+# Local operator snapshot; contains aggregate usage counts.
+collector/.dashboard
 /.pnp
 .pnp.*
 .yarn/*

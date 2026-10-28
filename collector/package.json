@@ -10,7 +10,10 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "migrate": "wrangler d1 execute flume-usage --remote --file=./schema.sql",
-    "migrate:local": "wrangler d1 execute flume-usage --local --file=./schema.sql"
+    "migrate:local": "wrangler d1 execute flume-usage --local --file=./schema.sql",
+    "dashboard": "node dashboard.mjs",
+    "dashboard:local": "node dashboard.mjs --local",
+    "test": "node --test dashboard/*.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260831.1",

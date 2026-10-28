@@ -82,6 +82,10 @@ jobs:
       - name: Vitest
         run: npm run test
 
+      - name: Collector dashboard tests
+        working-directory: collector
+        run: npm test
+
       - name: Next.js static export
         run: npm run build
 
