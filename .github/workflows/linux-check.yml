@@ -1,0 +1,98 @@
+name: Linux check
+
+# Linux packages without a tag or a draft release, the way windows-check
+# builds Windows installers. The release pipeline is tag-driven and builds the
+# 10x macOS leg too, which is most of a release run's cost and none of what a
+# Linux hand-check needs.
+#
+# Runs on dispatch, and on any pull request that edits this file, so a change
+# to the workflow is exercised by the PR that makes it.
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Which architecture to package"
+        type: choice
+        options: [x86_64, aarch64, both]
+        default: x86_64
+  pull_request:
+    paths:
+      - .github/workflows/linux-check.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  linux-packages:
+    name: Linux packages (${{ matrix.arch }})
+    # The same base as the release, for the same reason: ubuntu-22.04 sets the
+    # glibc and WebKitGTK floor, and a package built on a newer runner will not
+    # install on Debian 12. arm64 builds natively on GitHub's arm64 runner.
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # A pull request has no inputs, so it falls through to x86_64.
+        arch: ${{ fromJSON(inputs.arch == 'both' && '["x86_64","aarch64"]' || inputs.arch == 'aarch64' && '["aarch64"]' || '["x86_64"]') }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The release workflow's list, kept identical so a package that builds
+      # here builds there. See release.yml for why each of the last few is
+      # needed (patchelf for the AppImage, xdg-utils and desktop-file-utils
+      # because the arm64 image does not carry them).
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            xdg-utils \
+            desktop-file-utils
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # rust-toolchain.toml selects the pinned version on first use.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      # .deb and AppImage, as the release's Ubuntu legs make. No .rpm: built
+      # on Ubuntu it carries Debian-derived dependency metadata, which is why
+      # the release builds that one in a Fedora container instead.
+      #
+      # No collector endpoint and no updater key, so usage reporting compiles
+      # inert and update checks read "this build cannot check" -- correct for
+      # a build that is only for checking by hand.
+      - name: Bundle the packages
+        run: npm run tauri:build -- --bundles deb,appimage
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: flume-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
