@@ -1341,6 +1341,23 @@ fn classify_health(dht: &DhtStatus, listening: bool) -> EngineHealth {
 mod tests {
     use super::*;
 
+    // gtk-launch, and so a desktop that launches Flume through a GFile, hands
+    // a clicked link over as `magnet:///?xt=...` rather than `magnet:?xt=...`
+    // (#241, seen on Ubuntu 26.04). The preview validates with this parser, so
+    // the rewritten form has to stay a magnet it accepts.
+    #[test]
+    fn a_magnet_rewritten_by_a_desktop_launcher_still_parses() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        for uri in [
+            format!("magnet:?xt=urn:btih:{hash}"),
+            format!("magnet:///?xt=urn:btih:{hash}"),
+        ] {
+            if let Err(err) = Magnet::parse(&uri) {
+                panic!("{uri} should parse: {err:#}");
+            }
+        }
+    }
+
     /// A hash long enough to look like the real thing in the assertions below.
     fn hash(tag: char) -> String {
         std::iter::repeat_n(tag, 40).collect()
