@@ -325,6 +325,19 @@ export async function checkEgress(): Promise<GuardStatus> {
 }
 
 /**
+ * Tells Rust the window is listening for opened links, and takes any that
+ * arrived before it was -- the link that launched Flume, above all (#241).
+ *
+ * Call only after subscribing to `flume://open-magnet`: from this call on,
+ * Rust emits links instead of holding them.
+ *
+ * @returns Links held since launch, oldest first; empty after the first call.
+ */
+export async function takePendingLinks(): Promise<string[]> {
+  return invoke<string[]>("take_pending_links");
+}
+
+/**
  * What Flume knows about updates right now. Changes arrive as
  * `flume://update` events; this is for the first render.
  *

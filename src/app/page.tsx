@@ -616,6 +616,10 @@ export default function Home() {
 
       {isAdding ? (
         <AddTorrentDialog
+          // Keyed on the link, so one arriving while the dialog is already
+          // open replaces what it shows: `initialMagnet` seeds state on mount
+          // only, and without a remount a second link was silently ignored.
+          key={incomingMagnet ?? ""}
           droppedPath={droppedPath}
           initialMagnet={incomingMagnet}
           rateBps={averageDownBps}

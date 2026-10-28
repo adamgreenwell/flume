@@ -145,6 +145,10 @@ export function AddTorrentDialog({
   // Kept in a ref so the unmount cleanup does not need `preview` as a dep,
   // which would re-run cleanup on every preview change.
   const pendingHashRef = useRef<string | null>(null);
+  // Whether this dialog is still the one on screen. A dialog can be replaced
+  // mid-add -- a new magnet link re-keys it -- and its add still finishes;
+  // closing then would close the dialog that replaced it and drop its link.
+  const mountedRef = useRef(false);
 
   const describe = (caught: unknown, fallback: string) =>
     isCommandError(caught) ? caught.message : fallback;
@@ -364,6 +368,13 @@ export function AddTorrentDialog({
       // session's own folder rather than a copy of the global setting made
       // here. The two are the same today and would drift the moment the
       // setting changed while a dialog was open.
+      // The add owns the preview while it runs. Left in the ref, an unmount
+      // mid-add -- the dialog replaced by a new link -- would discard the
+      // very preview being confirmed, and the engine checks the folder
+      // before it takes the preview, so the discard could win and the add
+      // fail. Restored below if the add fails, so a later close still
+      // discards it.
+      pendingHashRef.current = null;
       await confirmAdd(preview.infoHash, all ? null : [...selected], folder);
       // Reported only now, with the add through: a destination recorded
       // when it was picked would outlive a cancelled dialog.
@@ -387,9 +398,11 @@ export function AddTorrentDialog({
           ? folder !== remembered
           : !sameFolder(folder, remembered);
       if (changed && !preview.alreadyAdded) onFolderUsed?.(folder);
-      pendingHashRef.current = null;
-      onClose();
+      // The add went through either way. Only the dialog still on screen
+      // closes the flow; a replaced one would close its replacement.
+      if (mountedRef.current) onClose();
     } catch (caught: unknown) {
+      pendingHashRef.current = preview.infoHash;
       setError(describe(caught, "Could not start that torrent."));
       setIsAdding(false);
       // The destination went away while the sheet was open, which the engine
@@ -410,7 +423,12 @@ export function AddTorrentDialog({
   // Release any preview the user abandoned, so its resolved metadata is not
   // retained in the engine for the life of the process.
   useEffect(() => {
+    // Set here, not at declaration: React runs this effect, its cleanup, then
+    // the effect again in development, and the second run must undo the
+    // first cleanup.
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       const hash = pendingHashRef.current;
       if (hash) void discardPreview(hash).catch(() => {});
     };

@@ -24,6 +24,13 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ### Fixed
 
+- **A magnet link that opens Flume now opens the add dialog with it.** When
+  Flume was not already running, clicking a magnet link started it and then
+  lost the link, on every platform: it was handed over before the window was
+  listening, and nothing held onto it. Flume now holds links until the window
+  is ready. A link that arrives while the add dialog is open replaces the one
+  it shows, and on Windows and Linux one click no longer arrives twice. (#241)
+
 - **File → About shows something on Windows and Linux.** It opened an empty
   box titled just "About". Flume gave the dialog no name, version or anything
   else, and only macOS fills the gaps from the app bundle — which is where

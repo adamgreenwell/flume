@@ -99,6 +99,9 @@ pub fn run() {
         // `updates::checker`, which applies the switch and the guard first.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new(settings, session_dir, first_run))
+        // Before anything can route a link: the single-instance callback, the
+        // deep-link listener and the cold-start argument loop all offer to it.
+        .manage(deeplink::Links::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_core_status,
             commands::get_telemetry,
@@ -127,7 +130,8 @@ pub fn run() {
             commands::get_update_status,
             commands::check_for_updates,
             commands::install_update,
-            commands::open_update_page
+            commands::open_update_page,
+            commands::take_pending_links
         ])
         .setup(|app| {
             let handle = app.handle().clone();
