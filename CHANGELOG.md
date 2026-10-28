@@ -36,7 +36,12 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
   lost the link, on every platform: it was handed over before the window was
   listening, and nothing held onto it. Flume now holds links until the window
   is ready. A link that arrives while the add dialog is open replaces the one
-  it shows, and on Windows and Linux one click no longer arrives twice. (#241)
+  it shows, and on Windows and Linux one click no longer arrives twice. On
+  macOS the launching link often arrived before Flume had finished starting,
+  which made the fix work only some of the time there; it is now caught
+  however early it comes. On Linux, the `.deb` and `.rpm` menu entry now
+  passes the link to Flume, so even a click before Flume has ever run opens
+  it. (#241)
 
 - **File → About shows something on Windows and Linux.** It opened an empty
   box titled just "About". Flume gave the dialog no name, version or anything

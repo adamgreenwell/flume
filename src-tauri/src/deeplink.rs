@@ -17,9 +17,12 @@
 //! platform (#241). On Windows and Linux it is a process argument, routed in
 //! `setup` -- before the webview has loaded, let alone subscribed -- and
 //! `tauri-plugin-deep-link` announces its own copy during plugin setup, before
-//! Flume's listener exists. On macOS it arrives as `RunEvent::Opened` just
-//! after setup, still ahead of the page. Tauri does not buffer events, so each
-//! emit went nowhere and the link was lost.
+//! Flume's listener exists. On macOS it arrives as `RunEvent::Opened`, often
+//! *before* setup: tao passes AppKit's openURLs on the moment it is called,
+//! ahead of didFinishLaunching, which is what runs setup. So macOS links are
+//! routed from the run callback, the one place that hears every event, and not
+//! from a listener registered in setup, which missed them. Tauri does not
+//! buffer events, so each emit went nowhere and the link was lost.
 //!
 //! So nothing is emitted until the window has said it is listening. Links
 //! wait in an [`Inbox`]; the frontend subscribes first, then calls
@@ -180,6 +183,18 @@ pub fn route_argument(app: &AppHandle, argument: &str) {
     }
 }
 
+/// Routes the links macOS hands over in `RunEvent::Opened`.
+///
+/// Called from the run callback, which may be before `setup` has run and so
+/// before the window exists. That is fine: focusing finds no window and does
+/// nothing, and the link is held for the page like any other early link.
+pub fn handle_opened<'a>(app: &AppHandle, urls: impl IntoIterator<Item = &'a str>) {
+    focus_main_window(app);
+    for url in urls {
+        route_argument(app, url);
+    }
+}
+
 /// Handles a second launch: focus the existing window and act on its arguments.
 pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
     focus_main_window(app);
@@ -190,6 +205,7 @@ pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use std::time::{Duration, Instant};
 
@@ -304,5 +320,29 @@ mod tests {
         // arbitrary URLs into the torrent add flow.
         assert!(!actionable("file:///etc/passwd"));
         assert!(!actionable("javascript:alert(1)"));
+    }
+
+    // The shipped Linux desktop entry has to hand the link over. Without a
+    // field code GLib falls back to %f, which a magnet: URI cannot fill, so a
+    // click before Flume has ever run -- before `register_all` has written a
+    // per-user handler -- launched Flume with no link at all (#241).
+    #[test]
+    fn the_linux_desktop_entry_passes_the_link_to_flume() {
+        let template = include_str!("../linux/main.desktop");
+        let exec = template
+            .lines()
+            .find(|line| line.starts_with("Exec="))
+            .expect("the template has an Exec line");
+        assert!(exec.ends_with(" %u"), "Exec must carry %u, got {exec:?}");
+        assert!(template.contains("MimeType={{mime_type}}"));
+
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid config");
+        for package in ["deb", "rpm"] {
+            assert_eq!(
+                config["bundle"]["linux"][package]["desktopTemplate"], "linux/main.desktop",
+                "the .{package} must use the template"
+            );
+        }
     }
 }
