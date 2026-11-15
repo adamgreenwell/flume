@@ -49,6 +49,7 @@ run "typecheck"        npm run typecheck
 run "lint"             npm run lint
 run "format"           npm run format:check
 run "tests"            npm run test
+run "collector tests"  npm --prefix collector test
 run "static export"    npm run build
 
 echo "Backend"
