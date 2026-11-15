@@ -8,6 +8,15 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-11-15
+
+**The first version Flume can update to by itself.** On macOS and the Linux
+AppImage, 1.5.0 offers this release within a day of it coming out — or at once
+from **Flume → Check for Updates…** — and **Install and restart** downloads it,
+checks its signature, installs it and restarts. On Windows and `.deb`, 1.5.0
+tells you it exists and opens the release page; on `.rpm` it does not, which
+is the fix below. Nothing installs until you choose to.
+
 ### Fixed
 
 - **The `.rpm` package now tells you when a newer version exists.** 1.5.0
@@ -437,6 +446,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.5.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.1
 [1.5.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.0
 [1.4.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.1
 [1.4.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.0
