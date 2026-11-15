@@ -156,4 +156,10 @@ pub struct TelemetrySnapshot {
     pub core: CoreStatus,
     /// One entry per torrent, ordered by id.
     pub torrents: Vec<super::TorrentSummary>,
+    /// Magnets added before their file list arrived (#148).
+    ///
+    /// Not torrents yet -- librqbit holds none of them -- so a separate list
+    /// rather than summaries with invented sizes and states. Filled in by
+    /// `AppState`, which owns them; the engine always leaves it empty.
+    pub pending_magnets: Vec<crate::library::magnet::PendingMagnetStatus>,
 }

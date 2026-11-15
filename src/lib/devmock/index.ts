@@ -755,6 +755,31 @@ export function install(): void {
   // screens that get neglected, so they need to be easy to look at.
   const scenario = new URLSearchParams(window.location.search).get("mock");
   const torrents = scenario === "empty" ? [] : TORRENTS;
+  // Magnets added before their file list arrived (#148): one still being
+  // looked for, one waiting on the user. Mutable so removing one sticks.
+  let pendingMagnets =
+    scenario === "empty"
+      ? []
+      : [
+          {
+            infoHash: "5e1fd1ae3c2b0a9f8e7d6c5b4a3928170615f4e3",
+            name: "archive-2019-snapshot",
+            addedAt: Math.floor(Date.now() / 1000) - 3600,
+            state: "searching" as const,
+            searchingNow: false,
+            failedAttempts: 3,
+            nextAttemptInSeconds: 240,
+          },
+          {
+            infoHash: "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b",
+            name: "field-recordings-vol-2",
+            addedAt: Math.floor(Date.now() / 1000) - 7200,
+            state: "ready" as const,
+            searchingNow: false,
+            failedAttempts: 0,
+            nextAttemptInSeconds: null,
+          },
+        ];
   // Mutable, so a written setting stays written for the life of the page.
   let live: Settings = { ...SETTINGS };
   // `?magnet=` simulates the link a cold launch carries; see
@@ -795,7 +820,7 @@ export function install(): void {
         case "plugin:event|unlisten":
           return null;
         case "get_telemetry":
-          return { core: CORE, torrents };
+          return { core: CORE, torrents, pendingMagnets };
         case "get_core_status":
           return CORE;
         case "is_first_run":
@@ -817,7 +842,31 @@ export function install(): void {
             live) as Settings;
           return live;
         case "preview_torrent":
+          // `?mock=magnet-timeout` shows the offer to keep a magnet whose
+          // file list did not arrive in time.
+          if (
+            scenario === "magnet-timeout" &&
+            (args as { source?: { kind?: string } } | undefined)?.source
+              ?.kind === "magnet"
+          ) {
+            await new Promise((done) => setTimeout(done, 1500));
+            throw {
+              kind: "metadataTimeout",
+              message:
+                "no peer sent this torrent's file list within 10 seconds. The torrent may have few or no active seeders right now.",
+            };
+          }
           return PREVIEW;
+        case "add_pending_magnet":
+          return "0000000000000000000000000000000000000000";
+        case "open_pending_magnet":
+          return PREVIEW;
+        case "remove_pending_magnet": {
+          const hash = (args as { infoHash?: string } | undefined)?.infoHash;
+          const before = pendingMagnets.length;
+          pendingMagnets = pendingMagnets.filter((m) => m.infoHash !== hash);
+          return pendingMagnets.length !== before;
+        }
         case "discard_preview":
           return null;
         case "confirm_add":
@@ -1000,6 +1049,7 @@ export function install(): void {
           uploadBps,
         },
         torrents,
+        pendingMagnets,
       },
     });
   }, 1000);

@@ -51,6 +51,10 @@ Use a real, legal torrent. Ubuntu's is ideal:
 
 - [ ] **Magnet:** paste into the add dialog, press Resolve
 - [ ] The file list appears within ~30s (this needs a working DHT)
+- [ ] **A magnet nobody seeds:** paste one with a made-up info hash
+      (`magnet:?xt=urn:btih:` and any 40 hex digits). About ten seconds after
+      the status dot is green, the dialog offers **Add anyway**; accepting
+      puts it in the list as "Finding files", never as downloading. Remove it.
 - [ ] Deselect a file; the "Download _n_" button updates its size
 - [ ] Confirm; the torrent appears in the list
 - [ ] Progress advances and the download speed is non-zero

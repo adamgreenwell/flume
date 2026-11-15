@@ -87,13 +87,27 @@ pub struct LibraryFacts<'a> {
 /// pending. See issue #154.
 pub const SESSION_START_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// How long a magnet may take to produce a file list before Flume gives up.
+/// How long a magnet may take to produce a file list once peer discovery is
+/// ready (#148).
 ///
-/// A well-seeded magnet resolves in seconds — the live-DHT test does it in
-/// under ten. This is generous enough for a cold DHT that has not finished
-/// bootstrapping, and short enough that a dead magnet fails rather than
-/// hanging the add dialog forever.
-const MAGNET_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
+/// Ten seconds is roughly what a well-seeded magnet takes on a *bootstrapped*
+/// DHT. It was sixty while failing was the only outcome; now that the add
+/// dialog offers to add the magnet anyway and keep looking, the deadline's
+/// job is to reach that choice quickly rather than to wait out every swarm.
+///
+/// Counted from readiness, not from the click -- see
+/// [`MAGNET_READINESS_WAIT`]. Otherwise the first magnet of every session
+/// would expire on the DHT bootstrap rather than on the swarm.
+pub const MAGNET_METADATA_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The longest a magnet preview waits for peer discovery before its own
+/// deadline starts anyway.
+///
+/// A DHT that never reaches [`DHT_READY_NODE_THRESHOLD`] -- blocked UDP, a
+/// network with no route to the bootstrap nodes -- must not leave the dialog
+/// waiting with no end. After this the ten seconds start regardless, and
+/// trackers in the magnet may still answer.
+pub const MAGNET_READINESS_WAIT: Duration = Duration::from_secs(30);
 
 /// How many suspect info hashes a timeout message will name before it counts.
 ///
@@ -208,8 +222,7 @@ pub enum EngineError {
     /// not that the link is malformed.
     #[error(
         "no peer sent this torrent's file list within {seconds} seconds. \
-         The torrent may have no active seeders, or the DHT may still be \
-         warming up — the status dot turns green when it is ready."
+         The torrent may have few or no active seeders right now."
     )]
     MetadataTimeout {
         /// How long was waited, in seconds.
@@ -659,6 +672,7 @@ impl Engine {
         TelemetrySnapshot {
             core: self.core_status(),
             torrents: self.torrent_summaries_with(facts),
+            pending_magnets: Vec::new(),
         }
     }
 
@@ -674,7 +688,129 @@ impl Engine {
     /// [`EngineError::InvalidMagnet`] for an unparseable magnet URI, or
     /// [`EngineError::Metadata`] if metadata cannot be read or fetched.
     pub async fn preview(&self, source: TorrentSource) -> Result<TorrentPreview, EngineError> {
+        if let TorrentSource::Magnet { uri } = &source {
+            // Validated before waiting, so a malformed link is refused at
+            // once rather than after the DHT bootstraps.
+            Magnet::parse(uri).map_err(EngineError::InvalidMagnet)?;
+            self.wait_for_peer_discovery(MAGNET_READINESS_WAIT).await;
+        }
         self.preview_within(source, MAGNET_METADATA_TIMEOUT).await
+    }
+
+    /// Whether peer discovery is ready to be asked for a magnet's metadata.
+    ///
+    /// Ready means the DHT routing table has reached
+    /// [`DHT_READY_NODE_THRESHOLD`] -- the same line [`EngineHealth::Ready`]
+    /// draws. With the DHT switched off there is nothing to wait for, so it
+    /// is ready at once and only the magnet's trackers can answer.
+    #[must_use]
+    pub fn peer_discovery_ready(&self) -> bool {
+        let dht = self.dht_status();
+        !dht.enabled || dht.total_nodes() >= DHT_READY_NODE_THRESHOLD
+    }
+
+    /// Waits until [`Self::peer_discovery_ready`], or until `max` has passed.
+    ///
+    /// Returns whether readiness was reached. Polled rather than notified:
+    /// librqbit's DHT exposes its routing-table size, not a readiness event,
+    /// and a quarter-second poll costs nothing beside the wait it bounds.
+    pub async fn wait_for_peer_discovery(&self, max: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + max;
+        loop {
+            if self.peer_discovery_ready() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    /// Previews a torrent from metadata Flume saved earlier.
+    ///
+    /// The second half of a magnet that resolved in the background (#148):
+    /// its file list was saved when it arrived, and this turns it back into
+    /// a pending add the dialog can confirm -- local work, with no network
+    /// and no deadline.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Metadata`] if the bytes are not a valid torrent.
+    pub async fn preview_saved(&self, bytes: Vec<u8>) -> Result<TorrentPreview, EngineError> {
+        self.preview_add(AddTorrent::from_bytes(bytes), None).await
+    }
+
+    /// Takes the metadata a preview resolved, leaving nothing pending.
+    ///
+    /// For the background resolver, which saves the bytes to disk rather
+    /// than leaving them in an engine that a guard hold or a restart can
+    /// discard.
+    pub async fn take_pending_metadata(&self, info_hash: &str) -> Option<Vec<u8>> {
+        self.pending
+            .write()
+            .await
+            .remove(info_hash)
+            .map(|pending| pending.bytes)
+    }
+
+    /// The info hash and display name a magnet link carries.
+    ///
+    /// Associated rather than a method because it needs no session: adding a
+    /// magnet to the pending list must work while the guard holds and no
+    /// engine exists.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::InvalidMagnet`] for a link that does not parse, or one
+    /// with only a version 2 info hash -- the library is keyed by the v1 hash
+    /// every other part of Flume uses, so a v2-only link has no key.
+    pub fn magnet_identity(uri: &str) -> Result<(String, Option<String>), EngineError> {
+        let magnet = Magnet::parse(uri).map_err(EngineError::InvalidMagnet)?;
+        let Some(id) = magnet.as_id20() else {
+            return Err(EngineError::InvalidMagnet(anyhow::anyhow!(
+                "this magnet carries only a version 2 info hash, which Flume \
+                 cannot keep looking for yet"
+            )));
+        };
+        Ok((id.as_string(), magnet.name.clone()))
+    }
+
+    /// The metadata a preview resolved, left pending.
+    ///
+    /// For the background resolver when the add dialog holds a preview of
+    /// the same torrent: taking it would make the user's confirm fail with
+    /// "no longer pending", so the resolver copies it instead.
+    pub async fn pending_metadata(&self, info_hash: &str) -> Option<Vec<u8>> {
+        self.pending
+            .read()
+            .await
+            .get(info_hash)
+            .map(|pending| pending.bytes.clone())
+    }
+
+    /// Whether `other` is a handle to this same session.
+    ///
+    /// Engines are cheap clones of one session, and a restart or a guard
+    /// hold replaces the session behind `AppState`. Work started on one
+    /// session uses this to notice it is no longer the current one.
+    #[must_use]
+    pub fn is_same_session(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.session, &other.session)
+    }
+
+    /// Whether the session already holds this torrent.
+    #[must_use]
+    pub fn has_torrent(&self, info_hash: &str) -> bool {
+        let wanted = info_hash.to_ascii_lowercase();
+        self.session.with_torrents(|torrents| {
+            for (_, handle) in torrents {
+                if handle.info_hash().as_string() == wanted {
+                    return true;
+                }
+            }
+            false
+        })
     }
 
     /// As [`Self::preview`], with the deadline supplied.
@@ -689,13 +825,13 @@ impl Engine {
         source: TorrentSource,
         timeout: Duration,
     ) -> Result<TorrentPreview, EngineError> {
-        let add = match &source {
+        let (add, deadline) = match &source {
             TorrentSource::Magnet { uri } => {
                 // Validate before handing it to the session: an unparseable
                 // magnet otherwise surfaces as an opaque metadata failure
                 // after a long DHT timeout.
                 Magnet::parse(uri).map_err(EngineError::InvalidMagnet)?;
-                AddTorrent::from_url(uri.clone())
+                (AddTorrent::from_url(uri.clone()), Some(timeout))
             }
             TorrentSource::File { path } => {
                 // Read here rather than in the webview: the frontend then needs
@@ -704,10 +840,21 @@ impl Engine {
                 let bytes = std::fs::read(path).map_err(|e| {
                     EngineError::Metadata(anyhow::anyhow!("could not read {path}: {e}"))
                 })?;
-                AddTorrent::from_bytes(bytes)
+                (AddTorrent::from_bytes(bytes), None)
             }
         };
+        self.preview_add(add, deadline).await
+    }
 
+    /// Lists a torrent without adding it, and holds it pending confirmation.
+    ///
+    /// `deadline` bounds a magnet's metadata fetch; `None` for anything that
+    /// already carries its file list.
+    async fn preview_add(
+        &self,
+        add: AddTorrent<'_>,
+        deadline: Option<Duration>,
+    ) -> Result<TorrentPreview, EngineError> {
         let listing = self.session.add_torrent(
             add,
             Some(AddTorrentOptions {
@@ -726,16 +873,15 @@ impl Engine {
         // Dropping the future on timeout cancels the add: nothing is left in
         // the session, because a list-only add is not registered as a torrent
         // until it returns.
-        let response =
-            match &source {
-                TorrentSource::Magnet { .. } => tokio::time::timeout(timeout, listing)
-                    .await
-                    .map_err(|_| EngineError::MetadataTimeout {
-                        seconds: timeout.as_secs(),
-                    })?,
-                TorrentSource::File { .. } => listing.await,
-            }
-            .map_err(EngineError::Metadata)?;
+        let response = match deadline {
+            Some(timeout) => tokio::time::timeout(timeout, listing).await.map_err(|_| {
+                EngineError::MetadataTimeout {
+                    seconds: timeout.as_secs(),
+                }
+            })?,
+            None => listing.await,
+        }
+        .map_err(EngineError::Metadata)?;
 
         let listed = match response {
             AddTorrentResponse::ListOnly(listed) => listed,

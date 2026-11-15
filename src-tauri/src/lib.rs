@@ -32,6 +32,7 @@ pub mod guard;
 pub mod library;
 mod menu;
 pub mod policy;
+pub mod resolver;
 pub mod settings;
 pub mod state;
 pub mod stats;
@@ -111,6 +112,9 @@ pub fn run() {
             commands::destination_preflight,
             commands::move_in_queue,
             commands::discard_preview,
+            commands::add_pending_magnet,
+            commands::open_pending_magnet,
+            commands::remove_pending_magnet,
             commands::pause_torrent,
             commands::resume_torrent,
             commands::remove_torrent,
@@ -225,6 +229,10 @@ pub fn run() {
                     );
                 }
                 guard::spawn(handle.clone());
+                // After the guard's first tick, like everything else that
+                // reaches the network; it checks the guard before every
+                // attempt regardless.
+                resolver::spawn(handle.clone());
 
                 // Recorded after the engine is up so the library size is the
                 // restored one rather than zero. Both are no-ops unless the

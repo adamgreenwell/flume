@@ -17,7 +17,7 @@ use crate::{
     },
     policy::TorrentRules,
     settings::{Settings, SettingsError},
-    state::AppState,
+    state::{AppState, PendingMagnetError},
     stats::Statistics,
     updates::{self, Trigger, UpdateStatus, checker::Updates},
     usage::{AddSource, CountBucket, EventKind, FailureKind, SettingKey},
@@ -83,13 +83,10 @@ async fn require_engine(state: &AppState) -> Result<Engine, CommandError> {
     }
 }
 
-impl From<EngineError> for CommandError {
-    /// Maps engine failures onto stable identifiers the frontend can branch on.
-    ///
-    /// The `kind` is the contract; the message is for humans and may be
-    /// reworded freely.
-    fn from(err: EngineError) -> Self {
-        let kind = match &err {
+impl CommandError {
+    /// The `kind` an engine failure maps to, without consuming it.
+    fn from_engine_ref(err: &EngineError) -> &'static str {
+        match err {
             EngineError::InvalidMagnet(_) => "invalidMagnet",
             EngineError::Metadata(_) => "metadata",
             // Distinct from `metadata`: nothing is wrong with the link, no
@@ -113,9 +110,18 @@ impl From<EngineError> for CommandError {
             // kinds by design, so this is inert there.
             EngineError::SessionStartTimeout { .. } => "sessionStartTimeout",
             EngineError::Operation(_) => "operationFailed",
-        };
+        }
+    }
+}
+
+impl From<EngineError> for CommandError {
+    /// Maps engine failures onto stable identifiers the frontend can branch on.
+    ///
+    /// The `kind` is the contract; the message is for humans and may be
+    /// reworded freely.
+    fn from(err: EngineError) -> Self {
         Self {
-            kind,
+            kind: Self::from_engine_ref(&err),
             message: err.to_string(),
         }
     }
@@ -578,6 +584,10 @@ pub async fn confirm_add(
     {
         Ok(id) => {
             state.note(EventKind::TorrentAdded);
+            // Every add settles a pending magnet for the same torrent,
+            // whichever route it came by: from the pending row, or the same
+            // link pasted into the dialog again and answered this time.
+            state.settle_pending_magnet(&info_hash).await;
             Ok(id)
         }
         Err(err) => {
@@ -593,6 +603,84 @@ pub async fn confirm_add(
             Err(err)
         }
     }
+}
+
+/// Keeps a magnet whose file list did not arrive in time, and goes on
+/// looking for it in the background (#148).
+///
+/// "Add anyway" in the add dialog. The magnet is recorded in Flume's own
+/// library -- librqbit cannot hold a torrent without its metadata -- and
+/// shown in the list as waiting. When the file list arrives it is saved and
+/// the user is asked to choose files; nothing downloads before that.
+///
+/// Needs no engine, so it works while the guard holds.
+///
+/// # Errors
+///
+/// `invalidMagnet` for a link with no version 1 info hash or that does not
+/// parse, `alreadyAdded` for a torrent the session already holds, and
+/// `libraryUnavailable` when the library record did not load this session.
+#[tauri::command]
+pub async fn add_pending_magnet(
+    state: State<'_, AppState>,
+    uri: String,
+) -> Result<String, CommandError> {
+    state.add_pending_magnet(&uri).await.map_err(|err| {
+        let kind = match &err {
+            PendingMagnetError::Invalid(inner) => CommandError::from_engine_ref(inner),
+            PendingMagnetError::LibraryUnavailable => "libraryUnavailable",
+            PendingMagnetError::AlreadyAdded => "alreadyAdded",
+        };
+        CommandError {
+            kind,
+            message: err.to_string(),
+        }
+    })
+}
+
+/// Opens a magnet whose file list arrived in the background for file
+/// selection.
+///
+/// Returns an ordinary preview, so the add dialog takes it from here exactly
+/// as it would a `.torrent`: [`confirm_add`] adds it and clears the pending
+/// record, and cancelling leaves the magnet waiting in the list.
+///
+/// # Errors
+///
+/// `engineNotReady` with no engine, `noPendingPreview` if the saved file
+/// list is missing -- the magnet then goes back to searching -- and
+/// `metadata` if it cannot be read as a torrent.
+#[tauri::command]
+pub async fn open_pending_magnet(
+    state: State<'_, AppState>,
+    info_hash: String,
+) -> Result<TorrentPreview, CommandError> {
+    let engine = require_engine(&state).await?;
+    let bytes = state
+        .saved_magnet_metadata(&info_hash)
+        .await
+        .map_err(|_| CommandError {
+            kind: "noPendingPreview",
+            message: "The saved file list for this magnet is missing, so Flume \
+                      will look for it again."
+                .to_owned(),
+        })?;
+    engine
+        .preview_saved(bytes)
+        .await
+        .map_err(CommandError::from)
+}
+
+/// Removes a magnet from the pending list, along with any file list saved
+/// for it.
+///
+/// Returns whether one was pending.
+#[tauri::command]
+pub async fn remove_pending_magnet(
+    state: State<'_, AppState>,
+    info_hash: String,
+) -> Result<bool, CommandError> {
+    Ok(state.remove_pending_magnet(&info_hash).await)
 }
 
 /// What a chosen destination means for a torrent awaiting confirmation.
@@ -932,6 +1020,11 @@ pub async fn get_diagnostics(
         .ok()
         .map(|dir| read_log_tail(&dir, LOG_TAIL_LINES))
         .unwrap_or_default();
+
+    // Pending magnets are in no snapshot -- librqbit does not hold them --
+    // but their names are on disk and can reach the log all the same.
+    let mut names = names;
+    names.extend(state.pending_magnet_names().await);
 
     let redactor = diagnostics::Redactor::new(home.as_deref(), &settings.download_dir, &names);
 

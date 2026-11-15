@@ -24,6 +24,7 @@ const CORE: CoreStatus = {
 const snapshot = (uptimeSeconds: number): TelemetrySnapshot => ({
   core: { ...CORE, uptimeSeconds },
   torrents: [],
+  pendingMagnets: [],
 });
 
 /**
