@@ -79,7 +79,12 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
             );
             state.shutdown().await;
         }
-    } else if state.engine().await.is_none() && state.start_allowed(Instant::now()).await {
+    } else if !state.exiting()
+        && state.engine().await.is_none()
+        && state.start_allowed(Instant::now()).await
+    {
+        // `exiting` is checked here only so an exiting app does not log a
+        // start it will not make; `restart_locked` refuses regardless (#274).
         let settings = state.settings().await;
         log::info!(
             "egress guard: starting the torrent engine (port={} dht={} upnp={})",
