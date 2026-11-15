@@ -8,6 +8,13 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-11-15
+
+**Magnets that will not resolve can now be kept.** Instead of failing, a magnet
+whose file list does not arrive can wait in your list while Flume keeps looking,
+and you choose files once it arrives. This release also fixes quitting, which
+briefly restarted the torrent engine on the way out.
+
 ### Added
 
 - **Keep a magnet that will not resolve, and let Flume keep looking.** When a
@@ -475,6 +482,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.5.2]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.2
 [1.5.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.1
 [1.5.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.0
 [1.4.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.4.1
