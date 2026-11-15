@@ -8,6 +8,15 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `.rpm` package now tells you when a newer version exists.** 1.5.0
+  promised update notices on every package, but its `.rpm` build was missing
+  the marker that lets a build check at all, so it never looked. It now checks
+  once a day like the others and links to the release page; nothing installs
+  without a click. An `.rpm` install of 1.5.0 cannot learn of this fix by
+  itself, so this one update is by hand.
+
 ## [1.5.0] — 2026-10-28
 
 ### Added
