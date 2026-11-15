@@ -306,6 +306,10 @@ jobs:
   rpm:
     name: Linux ${{ matrix.arch }} (.rpm)
     runs-on: ${{ matrix.runner }}
+    env:
+      # Hoisted for the same reason as in `build`: `secrets` cannot be read
+      # from a step-level `if`.
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -376,6 +380,30 @@ jobs:
 
           echo "FLUME_USAGE_ENDPOINT=$ENDPOINT" >> "$GITHUB_ENV"
           echo "Collector endpoint configured."
+
+      # The `build` job's "Enable updater artifacts" step exports this marker
+      # for the other packages; this job used to skip it, so every .rpm was
+      # an unofficial build to `updates::official_build` and never checked for
+      # updates at all -- not even to say one existed, which is what an .rpm
+      # is meant to do (it is notify-and-link, `updates::delivery_for`). No
+      # updater artifacts are built here: Tauri has none for .rpm, and
+      # latest.json comes from the `build` legs. Same conditions as there, so
+      # a fork or a keyless re-run marks nothing. An empty `pubkey` is left to
+      # the `build` job to fail on; here it just means no marker.
+      - name: Mark an official build, if a key is configured
+        if: env.HAS_UPDATER_KEY == 'true' && github.repository == 'adamgreenwell/flume'
+        shell: bash
+        run: |
+          if ! node -e '
+            const c = require("./src-tauri/tauri.conf.json");
+            const key = (c.plugins && c.plugins.updater && c.plugins.updater.pubkey) || "";
+            process.exit(key.trim() ? 0 : 1);
+          '; then
+            echo "plugins.updater.pubkey is empty; this .rpm will not check for updates."
+            exit 0
+          fi
+          echo "FLUME_OFFICIAL_UPDATES=1" >> "$GITHUB_ENV"
+          echo "Official build: this .rpm will check for updates and link to them."
 
       # `cargo install tauri-cli` compiled the CLI from source inside the
       # container on every single release, before any of Flume's own code was
