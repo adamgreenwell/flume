@@ -305,7 +305,11 @@ reusing the `ContextMenu` primitive that already exists.
 
 The state dot and the name are not hideable. Everything else is.
 
-#### Add a magnet that will not resolve
+#### Add a magnet that will not resolve ✅
+
+**Built in [#148](https://github.com/adamgreenwell/flume/issues/148).** What
+follows is the design as written; where the build departed from it, the note
+at the end says so.
 
 **Wave 1. The cost is in the list, not in the retry.**
 
@@ -352,6 +356,19 @@ wrong.
 The real cost is that every list operation has to handle a row with no id
 behind it: pause, remove, open detail, the context menu, keyboard selection.
 The retry loop is the easy half.
+
+**As built.** The row cost was avoided rather than paid: a pending magnet is
+its own row component with exactly two actions — **Choose files…** once the
+list has arrived, and remove — so no torrent operation ever meets a row without
+an id. It sits above the torrents in **All** only, since it is not
+downloading, seeding, paused or complete. While the guard holds, pending rows
+clear with the rest of the list. A resolved magnet's file list is saved under
+`magnets/` beside `library.json`, so a restart does not lose it, and the
+torrent stays out of librqbit until the user confirms a selection in the
+ordinary add dialog — not added paused, which would have created empty files
+for every file and made Resume download all of them. The background attempt
+waits a minute, not ten seconds: nobody is watching it, and the backoff runs
+1, 2, 5, 10 then 15 minutes, never giving up.
 
 #### Per-torrent speed limits
 

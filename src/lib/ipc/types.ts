@@ -212,6 +212,40 @@ export interface TelemetrySnapshot {
   core: CoreStatus;
   /** One entry per torrent, ordered by id. */
   torrents: TorrentSummary[];
+  /**
+   * Magnets added before their file list arrived (#148), newest first.
+   *
+   * Not torrents yet -- the engine holds none of them -- so they are a list
+   * of their own rather than summaries with invented sizes and states.
+   */
+  pendingMagnets: PendingMagnetStatus[];
+}
+
+/**
+ * Whether a pending magnet waits on the swarm or on the user. Mirrors Rust
+ * `PendingMagnetState`.
+ */
+export type PendingMagnetState = "searching" | "ready";
+
+/** One pending magnet, as the list shows it. Mirrors Rust `PendingMagnetStatus`. */
+export interface PendingMagnetStatus {
+  /** Lower-case hex info hash. */
+  infoHash: string;
+  /** The torrent's name once known, else the link's `dn`, else `null`. */
+  name: string | null;
+  /** When the magnet was first added, in seconds since the epoch. */
+  addedAt: number | null;
+  /** Waiting on the swarm, or on the user. */
+  state: PendingMagnetState;
+  /** Whether an attempt to fetch the file list is running right now. */
+  searchingNow: boolean;
+  /** Attempts that went unanswered since Flume started. */
+  failedAttempts: number;
+  /**
+   * Seconds until the next attempt, when one is scheduled. `null` while one
+   * runs, once the list has arrived, and while transfer is held.
+   */
+  nextAttemptInSeconds: number | null;
 }
 
 /**

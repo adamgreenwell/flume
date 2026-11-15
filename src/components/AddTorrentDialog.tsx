@@ -7,9 +7,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { selectedBytes as sumSelected } from "@/lib/filetree";
 import { formatBytes } from "@/lib/format";
 import {
+  addPendingMagnet,
   confirmAdd,
   destinationPreflight,
   discardPreview,
+  openPendingMagnet,
   previewTorrent,
 } from "@/lib/ipc/client";
 import {
@@ -58,6 +60,13 @@ export interface AddTorrentDialogProps {
   /** A `.torrent` path to resolve immediately, from a drag-and-drop. */
   droppedPath?: string;
   /**
+   * The info hash of a pending magnet whose file list has arrived (#148).
+   *
+   * Opens straight into file selection from the list Flume saved. Cancelling
+   * leaves the magnet waiting in the list; confirming adds it and clears it.
+   */
+  pendingMagnet?: string;
+  /**
    * Where this add will write, unless the user changes it.
    *
    * The last folder an add used, or the global download folder when there
@@ -100,6 +109,7 @@ export function AddTorrentDialog({
   onClose,
   initialMagnet = "",
   droppedPath,
+  pendingMagnet,
   rateBps = null,
   defaultFolder,
   onFolderUsed,
@@ -109,7 +119,13 @@ export function AddTorrentDialog({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // A dialog opened by a drop starts already resolving, so the effect below
   // never has to flip this synchronously.
-  const [isResolving, setIsResolving] = useState(Boolean(droppedPath));
+  const [isResolving, setIsResolving] = useState(
+    Boolean(droppedPath ?? pendingMagnet),
+  );
+  // The magnet whose file list did not arrive in time, offered to be kept
+  // and looked for in the background. Cleared by anything that starts over.
+  const [timedOutMagnet, setTimedOutMagnet] = useState<string | null>(null);
+  const [isKeeping, setIsKeeping] = useState(false);
   const [waitedSeconds, setWaitedSeconds] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,11 +256,36 @@ export function AddTorrentDialog({
     [defaultFolder, checkFolder],
   );
 
-  /** Records a failed resolution. */
-  const failPreview = useCallback((caught: unknown) => {
+  /**
+   * Records a failed resolution.
+   *
+   * A magnet that timed out is not a dead end any more (#148): nothing is
+   * wrong with the link, nobody answered in time, so the user is offered to
+   * keep it and let Flume go on looking.
+   */
+  const failPreview = useCallback((caught: unknown, magnetUri?: string) => {
     setError(describe(caught, "Could not read that torrent."));
+    setTimedOutMagnet(
+      magnetUri && isCommandError(caught) && caught.kind === "metadataTimeout"
+        ? magnetUri
+        : null,
+    );
     setIsResolving(false);
   }, []);
+
+  /** Keeps a timed-out magnet in the list, to be resolved in the background. */
+  const keepMagnet = async (uri: string) => {
+    setIsKeeping(true);
+    try {
+      await addPendingMagnet(uri);
+      if (mountedRef.current) onClose();
+    } catch (caught: unknown) {
+      if (!mountedRef.current) return;
+      setError(describe(caught, "Could not keep that magnet."));
+      setTimedOutMagnet(null);
+      setIsKeeping(false);
+    }
+  };
 
   // Counts while a resolve is in flight, and resets when it is not. A magnet's
   // wait is bounded in the engine, but a static sentence gives the user no way
@@ -263,12 +304,13 @@ export function AddTorrentDialog({
   const resolve = useCallback(
     async (source: Parameters<typeof previewTorrent>[0]) => {
       setError(null);
+      setTimedOutMagnet(null);
       setWaitedSeconds(0);
       setIsResolving(true);
       try {
         applyPreview(await previewTorrent(source));
       } catch (caught: unknown) {
-        failPreview(caught);
+        failPreview(caught, source.kind === "magnet" ? source.uri : undefined);
       }
     },
     [applyPreview, failPreview],
@@ -308,6 +350,23 @@ export function AddTorrentDialog({
       active = false;
     };
   }, [droppedPath, applyPreview, failPreview]);
+
+  // A pending magnet whose file list arrived opens from what Flume saved:
+  // local work, no network, the same preview a `.torrent` produces.
+  useEffect(() => {
+    if (!pendingMagnet) return;
+    let active = true;
+    openPendingMagnet(pendingMagnet)
+      .then((resolved) => {
+        if (active) applyPreview(resolved);
+      })
+      .catch((caught: unknown) => {
+        if (active) failPreview(caught);
+      });
+    return () => {
+      active = false;
+    };
+  }, [pendingMagnet, applyPreview, failPreview]);
 
   const pickFile = async () => {
     const path = await open({
@@ -516,7 +575,15 @@ export function AddTorrentDialog({
               <input
                 id="magnet-input"
                 value={magnet}
-                onChange={(e) => setMagnet(e.target.value)}
+                onChange={(e) => {
+                  setMagnet(e.target.value);
+                  // The offer to keep a magnet is about the link that timed
+                  // out, not whatever is being typed now.
+                  if (timedOutMagnet) {
+                    setTimedOutMagnet(null);
+                    setError(null);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && magnet.trim() && !isResolving) {
                     void resolve({ kind: "magnet", uri: magnet.trim() });
@@ -567,7 +634,21 @@ export function AddTorrentDialog({
             </p>
           ) : null}
 
-          {error ? (
+          {error && timedOutMagnet ? (
+            // Not styled as an error: the link is fine and there is a way
+            // forward. A red box would say the opposite of the sentence.
+            <div
+              className="border-line bg-bg-2 flex flex-col gap-2 rounded-md border px-3 py-2.5 text-[12.5px]"
+              role="status"
+            >
+              <p className="text-fg-1">{error}</p>
+              <p className="text-fg-2">
+                Add it anyway and Flume keeps looking in the background. It
+                waits in your list, and once the file list arrives you choose
+                what to download — nothing downloads before that.
+              </p>
+            </div>
+          ) : error ? (
             <p
               className="border-err/30 bg-err/10 text-err rounded-md border px-3 py-2 text-[12.5px]"
               role="alert"
@@ -576,10 +657,29 @@ export function AddTorrentDialog({
             </p>
           ) : null}
 
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>
               Cancel
             </Button>
+            {timedOutMagnet ? (
+              <>
+                <Button
+                  disabled={isKeeping}
+                  onClick={() =>
+                    void resolve({ kind: "magnet", uri: timedOutMagnet })
+                  }
+                >
+                  Try again
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={isKeeping}
+                  onClick={() => void keepMagnet(timedOutMagnet)}
+                >
+                  {isKeeping ? "Adding…" : "Add anyway"}
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

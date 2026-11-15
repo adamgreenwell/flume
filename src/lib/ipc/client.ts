@@ -144,6 +144,44 @@ export async function discardPreview(infoHash: string): Promise<void> {
 }
 
 /**
+ * Keeps a magnet whose file list did not arrive in time, and goes on looking
+ * for it in the background (#148).
+ *
+ * Nothing is added to the engine: the magnet waits in the list until its file
+ * list arrives and the user chooses files.
+ *
+ * @param uri - The magnet link as the user gave it.
+ * @returns Its info hash.
+ */
+export async function addPendingMagnet(uri: string): Promise<string> {
+  return invoke<string>("add_pending_magnet", { uri });
+}
+
+/**
+ * Opens a pending magnet whose file list has arrived, for file selection.
+ *
+ * Returns an ordinary preview; confirm it with {@link confirmAdd}, which also
+ * clears the pending record. Cancelling leaves the magnet waiting.
+ *
+ * @param infoHash - From {@link PendingMagnetStatus}.
+ */
+export async function openPendingMagnet(
+  infoHash: string,
+): Promise<TorrentPreview> {
+  return invoke<TorrentPreview>("open_pending_magnet", { infoHash });
+}
+
+/**
+ * Removes a pending magnet and any file list saved for it.
+ *
+ * @param infoHash - From {@link PendingMagnetStatus}.
+ * @returns Whether one was pending.
+ */
+export async function removePendingMagnet(infoHash: string): Promise<boolean> {
+  return invoke<boolean>("remove_pending_magnet", { infoHash });
+}
+
+/**
  * Pauses a torrent.
  *
  * @param id - Session id from the telemetry stream.

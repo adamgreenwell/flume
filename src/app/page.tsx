@@ -27,6 +27,7 @@ import { SettingsDialog } from "@/components/SettingsDialog";
 import { StatisticsDialog } from "@/components/StatisticsDialog";
 import { TitleBar } from "@/components/TitleBar";
 import { TorrentDetail } from "@/components/TorrentDetail";
+import { PendingMagnetRow } from "@/components/PendingMagnetRow";
 import { TorrentRow } from "@/components/TorrentRow";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { useEgressGuard } from "@/hooks/useEgressGuard";
@@ -54,6 +55,7 @@ import {
   viewCounts,
   type ViewId,
 } from "@/lib/views";
+import { pendingMagnetName } from "@/lib/pendingMagnet";
 import { sortTorrents } from "@/lib/sort";
 import {
   checkForUpdates,
@@ -62,6 +64,7 @@ import {
   isFirstRun,
   openUpdatePage,
   pauseTorrent,
+  removePendingMagnet,
   removeTorrent,
   keepSeeding as keepSeedingCall,
   resumeTorrent,
@@ -117,6 +120,10 @@ export default function Home() {
   const [detailOf, setDetailOf] = useState<TorrentSummary | null>(null);
   const [droppedPath, setDroppedPath] = useState<string | undefined>(undefined);
   const [incomingMagnet, setIncomingMagnet] = useState<string | undefined>(
+    undefined,
+  );
+  // A pending magnet whose file list arrived, being opened for selection.
+  const [openingMagnet, setOpeningMagnet] = useState<string | undefined>(
     undefined,
   );
   const [menu, setMenu] = useState<{
@@ -281,6 +288,18 @@ export default function Home() {
   );
 
   const counts = useMemo(() => viewCounts(torrents), [torrents]);
+
+  // Magnets still waiting for a file list (#148). Cleared while held for the
+  // same reason as `torrents`. Shown in "All" only: they are not
+  // downloading, seeding, paused or complete, and putting them under any of
+  // those would say something about them that is not true.
+  const pendingMagnets = useMemo(() => {
+    if (held || view !== "all") return [];
+    const needle = query.trim().toLowerCase();
+    return (telemetry?.pendingMagnets ?? []).filter(
+      (m) => !needle || pendingMagnetName(m).toLowerCase().includes(needle),
+    );
+  }, [telemetry, held, view, query]);
 
   const visible = useMemo(() => {
     const filtered = torrents.filter(
@@ -566,7 +585,7 @@ export default function Home() {
 
         <ColumnHeader />
 
-        {visible.length === 0 ? (
+        {visible.length === 0 && pendingMagnets.length === 0 ? (
           <div className="flex grow items-center justify-center">
             <EmptyState
               status={status}
@@ -580,9 +599,30 @@ export default function Home() {
           <div
             role="grid"
             aria-label="Torrents"
-            aria-rowcount={visible.length}
+            aria-rowcount={visible.length + pendingMagnets.length}
             className="flex grow flex-col overflow-y-auto"
           >
+            {/*
+              Above the torrents rather than sorted among them: they have no
+              size, progress or rate for a sort key to compare, and a magnet
+              waiting on the user should not sink out of sight.
+            */}
+            {pendingMagnets.map((m) => (
+              <PendingMagnetRow
+                key={`magnet-${m.infoHash}`}
+                magnet={m}
+                onChooseFiles={(x) => {
+                  setOpeningMagnet(x.infoHash);
+                  setIsAdding(true);
+                }}
+                onRemove={(x) =>
+                  void removePendingMagnet(x.infoHash).catch(
+                    (caught: unknown) =>
+                      report(caught, "Could not remove that magnet."),
+                  )
+                }
+              />
+            ))}
             {visible.map((t) => (
               <Fragment key={t.infoHash}>
                 <TorrentRow
@@ -626,9 +666,10 @@ export default function Home() {
           // Keyed on the link, so one arriving while the dialog is already
           // open replaces what it shows: `initialMagnet` seeds state on mount
           // only, and without a remount a second link was silently ignored.
-          key={incomingMagnet ?? ""}
+          key={`${incomingMagnet ?? ""}|${openingMagnet ?? ""}`}
           droppedPath={droppedPath}
           initialMagnet={incomingMagnet}
+          pendingMagnet={openingMagnet}
           rateBps={averageDownBps}
           defaultFolder={addFolder ?? undefined}
           // `null` means the add used the session folder, which clears any
@@ -644,6 +685,7 @@ export default function Home() {
             setIsAdding(false);
             setDroppedPath(undefined);
             setIncomingMagnet(undefined);
+            setOpeningMagnet(undefined);
           }}
         />
       ) : null}

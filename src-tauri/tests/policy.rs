@@ -84,6 +84,7 @@ fn snapshot(torrents: Vec<TorrentSummary>) -> TelemetrySnapshot {
     TelemetrySnapshot {
         core: core(),
         torrents,
+        pending_magnets: Vec::new(),
     }
 }
 

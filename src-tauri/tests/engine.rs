@@ -675,6 +675,12 @@ const UBUNTU_MAGNET: &str = "magnet:?xt=urn:btih:d160b8d8ea35a5b4e52837468fc8f03
 /// This is the highest-risk path in the add flow — a magnet has no metadata,
 /// so the file list has to come from peers found via the DHT. Offline tests
 /// cannot cover it.
+///
+/// It previews straight after `Engine::start`, which used to make it a coin
+/// toss against the DHT bootstrap. `preview` now waits for peer discovery
+/// before its ten seconds start (#148), so this exercises that wait too: on a
+/// cold routing table the deadline has to be counted from readiness, or the
+/// first magnet of every session expires on the bootstrap.
 #[tokio::test]
 #[ignore = "requires network access and DHT peers"]
 async fn magnet_resolves_real_metadata_over_the_dht() {
@@ -899,7 +905,8 @@ async fn rate_limits_apply_to_the_running_session() {
 /// The message reads identically at two seconds and at twenty minutes.
 ///
 /// Uses `preview_within` with a short deadline rather than the real one, so
-/// this costs a second rather than a minute. The DHT is enabled because the
+/// this costs a second rather than ten -- plus the readiness wait `preview`
+/// would add on top. The DHT is enabled because the
 /// point is that even *with* somewhere to look, an unanswerable info hash has
 /// to give up.
 #[tokio::test]

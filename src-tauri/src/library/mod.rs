@@ -42,6 +42,7 @@
 //! which is exactly what a "recently added" sort is for. Record-first inverts
 //! the failure into an orphan record, which the rule above makes harmless.
 
+pub mod magnet;
 mod session_file;
 
 use std::{
@@ -54,6 +55,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::policy::TorrentRules;
 
+pub use magnet::PendingMagnet;
 pub use session_file::{persisted_info_hashes, persisted_without_sidecar};
 
 /// Filename inside the app-data directory.
@@ -136,6 +138,16 @@ pub struct Record {
     /// by the queue on the next launch, which is the same surprise one quit
     /// later.
     pub forced: bool,
+    /// A magnet added before its file list arrived, which librqbit cannot
+    /// hold (#148).
+    ///
+    /// `Some` means this torrent exists only here: Flume retries the magnet,
+    /// and the record becomes an ordinary one -- this cleared -- when the
+    /// user confirms a file selection. See [`magnet`].
+    ///
+    /// The one record that must exist before its torrent does. Record-first
+    /// is merely safer for every other add; here there is nothing else.
+    pub magnet: Option<PendingMagnet>,
 }
 
 /// What [`Library::note_added`] did.
@@ -386,6 +398,92 @@ impl Library {
             }
         }
         changed
+    }
+
+    /// Records a magnet the user added before its file list arrived.
+    ///
+    /// Keeps an arrival time already held, like [`Self::note_added`], so
+    /// adding the same magnet twice does not move it in a "recently added"
+    /// sort. Returns whether anything changed.
+    pub fn note_pending_magnet(
+        &mut self,
+        info_hash: &str,
+        magnet: PendingMagnet,
+        at: Option<u64>,
+    ) -> bool {
+        // Nothing would be written back, so the magnet would be forgotten at
+        // quit. The caller checks `is_healthy` first and says so; this is
+        // the backstop.
+        if !self.healthy {
+            return false;
+        }
+        let record = self
+            .records
+            .entry(info_hash.to_ascii_lowercase())
+            .or_default();
+        if record.added_at.is_none() {
+            record.added_at = at;
+        }
+        // An add that repeats one already waiting keeps the saved progress:
+        // a magnet whose list has arrived must not go back to searching.
+        if record.magnet.is_some() {
+            return false;
+        }
+        record.magnet = Some(magnet);
+        true
+    }
+
+    /// Every magnet waiting for a file list or a file selection.
+    #[must_use]
+    pub fn pending_magnets(&self) -> Vec<(String, PendingMagnet, Option<u64>)> {
+        self.records
+            .iter()
+            .filter_map(|(hash, record)| {
+                record
+                    .magnet
+                    .clone()
+                    .map(|magnet| (hash.clone(), magnet, record.added_at))
+            })
+            .collect()
+    }
+
+    /// Notes that a pending magnet's file list arrived.
+    ///
+    /// Returns whether anything changed: `false` for a magnet nobody is
+    /// waiting on any more, which a removal during the attempt produces.
+    pub fn note_magnet_resolved(&mut self, info_hash: &str, name: String, at: Option<u64>) -> bool {
+        let Some(magnet) = self
+            .records
+            .get_mut(&info_hash.to_ascii_lowercase())
+            .and_then(|record| record.magnet.as_mut())
+        else {
+            return false;
+        };
+        magnet.name = Some(name);
+        // A clock before the epoch still has to read as resolved, or the
+        // saved file list would never be offered.
+        magnet.resolved_at = Some(at.unwrap_or_default());
+        true
+    }
+
+    /// Sends a resolved magnet back to searching, for a file list that went
+    /// missing from disk.
+    pub fn mark_magnet_unresolved(&mut self, info_hash: &str) -> bool {
+        self.records
+            .get_mut(&info_hash.to_ascii_lowercase())
+            .and_then(|record| record.magnet.as_mut())
+            .is_some_and(|magnet| magnet.resolved_at.take().is_some())
+    }
+
+    /// Clears a pending magnet once its torrent has really been added.
+    ///
+    /// The record stays: it is now the ordinary record for that torrent,
+    /// keeping the arrival time the magnet was first added with.
+    pub fn clear_pending_magnet(&mut self, info_hash: &str) -> bool {
+        self.records
+            .get_mut(&info_hash.to_ascii_lowercase())
+            .and_then(|record| record.magnet.take())
+            .is_some()
     }
 
     /// Every known arrival time, keyed by info hash.

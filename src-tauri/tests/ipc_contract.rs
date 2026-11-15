@@ -36,6 +36,7 @@ use flume_lib::{
         TelemetrySnapshot, TorrentDetail, TorrentFile, TorrentFileState, TorrentPreview,
         TorrentSource, TorrentState, TorrentSummary,
     },
+    library::magnet::{PendingMagnetState, PendingMagnetStatus},
     policy::TorrentRules,
     settings::{Settings, SortState, Theme},
     stats::Statistics,
@@ -241,8 +242,51 @@ fn telemetry_snapshot_matches_the_typescript_mirror() {
     let snapshot = TelemetrySnapshot {
         core: sample_core(),
         torrents: vec![sample_summary()],
+        pending_magnets: vec![sample_pending_magnet()],
     };
-    assert_keys(&snapshot, &["core", "torrents"], "TelemetrySnapshot");
+    assert_keys(
+        &snapshot,
+        &["core", "torrents", "pendingMagnets"],
+        "TelemetrySnapshot",
+    );
+}
+
+fn sample_pending_magnet() -> PendingMagnetStatus {
+    PendingMagnetStatus {
+        info_hash: "0123456789abcdef0123456789abcdef01234567".into(),
+        name: Some("example".into()),
+        added_at: Some(1_700_000_000),
+        state: PendingMagnetState::Searching,
+        searching_now: false,
+        failed_attempts: 2,
+        next_attempt_in_seconds: Some(90),
+    }
+}
+
+/// `PendingMagnetStatus` against `src/lib/ipc/types.ts`.
+#[test]
+fn pending_magnet_matches_the_typescript_mirror() {
+    assert_keys(
+        &sample_pending_magnet(),
+        &[
+            "infoHash",
+            "name",
+            "addedAt",
+            "state",
+            "searchingNow",
+            "failedAttempts",
+            "nextAttemptInSeconds",
+        ],
+        "PendingMagnetStatus",
+    );
+    assert_eq!(
+        serde_json::to_value(PendingMagnetState::Searching).unwrap(),
+        "searching"
+    );
+    assert_eq!(
+        serde_json::to_value(PendingMagnetState::Ready).unwrap(),
+        "ready"
+    );
 }
 
 #[test]

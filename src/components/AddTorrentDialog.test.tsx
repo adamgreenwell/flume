@@ -21,6 +21,8 @@ const confirmAdd =
 const destinationPreflight =
   vi.fn<(hash: string, dir: string) => Promise<DestinationPreflight>>();
 const discardPreview = vi.fn<() => Promise<void>>();
+const addPendingMagnet = vi.fn<(uri: string) => Promise<string>>();
+const openPendingMagnet = vi.fn<(hash: string) => Promise<TorrentPreview>>();
 
 vi.mock("@/lib/ipc/client", () => ({
   previewTorrent: () => previewTorrent(),
@@ -29,6 +31,8 @@ vi.mock("@/lib/ipc/client", () => ({
   destinationPreflight: (hash: string, dir: string) =>
     destinationPreflight(hash, dir),
   discardPreview: () => discardPreview(),
+  addPendingMagnet: (uri: string) => addPendingMagnet(uri),
+  openPendingMagnet: (hash: string) => openPendingMagnet(hash),
 }));
 const pickFolder = vi.fn<() => Promise<string | null>>();
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => pickFolder() }));
@@ -57,6 +61,10 @@ beforeEach(() => {
   confirmAdd.mockReset();
   destinationPreflight.mockReset();
   discardPreview.mockReset();
+  addPendingMagnet.mockReset();
+  openPendingMagnet.mockReset();
+  addPendingMagnet.mockResolvedValue("b".repeat(40));
+  openPendingMagnet.mockResolvedValue(PREVIEW);
   previewTorrent.mockResolvedValue(PREVIEW);
   confirmAdd.mockResolvedValue(1);
   discardPreview.mockResolvedValue(undefined);
@@ -583,5 +591,89 @@ describe("a dialog replaced while its add is running", () => {
     const onClose = vi.fn();
     await startAdd(onClose);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("a magnet whose file list does not arrive in time (#148)", () => {
+  const MAGNET = `magnet:?xt=urn:btih:${"c".repeat(40)}`;
+  const TIMEOUT = {
+    kind: "metadataTimeout",
+    message: "no peer sent this torrent's file list within 10 seconds.",
+  };
+
+  async function timeOut() {
+    previewTorrent.mockRejectedValueOnce(TIMEOUT);
+    render(<AddTorrentDialog initialMagnet={MAGNET} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+    await screen.findByRole("button", { name: "Add anyway" });
+  }
+  const onClose = vi.fn();
+  beforeEach(() => onClose.mockReset());
+
+  it("offers to add it anyway, and says nothing downloads yet", async () => {
+    await timeOut();
+    expect(screen.getByText(/nothing downloads before that/i)).toBeTruthy();
+    // An offer, not an error: there is nothing wrong with the link.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the magnet and closes when accepted", async () => {
+    await timeOut();
+    fireEvent.click(screen.getByRole("button", { name: "Add anyway" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(addPendingMagnet).toHaveBeenCalledWith(MAGNET);
+    // Kept, not added: nothing went to the engine.
+    expect(confirmAdd).not.toHaveBeenCalled();
+  });
+
+  it("can try again instead", async () => {
+    await timeOut();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("button", { name: /^Add 1 file/ });
+    expect(previewTorrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("stays open and says why when keeping it fails", async () => {
+    await timeOut();
+    addPendingMagnet.mockRejectedValueOnce({
+      kind: "libraryUnavailable",
+      message: "Flume could not read its library record this session.",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add anyway" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /library record/,
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not offer it for any other failure", async () => {
+    previewTorrent.mockRejectedValueOnce({
+      kind: "invalidMagnet",
+      message: "that is not a magnet link",
+    });
+    render(<AddTorrentDialog initialMagnet={MAGNET} onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: "Add anyway" })).toBeNull();
+  });
+
+  it("withdraws the offer once the link is edited", async () => {
+    await timeOut();
+    fireEvent.change(screen.getByLabelText("Magnet link"), {
+      target: { value: `${MAGNET}&dn=other` },
+    });
+    expect(screen.queryByRole("button", { name: "Add anyway" })).toBeNull();
+  });
+});
+
+describe("a pending magnet whose file list arrived", () => {
+  it("opens straight into file selection from the saved list", async () => {
+    render(
+      <AddTorrentDialog pendingMagnet={"a".repeat(40)} onClose={() => {}} />,
+    );
+    await screen.findByRole("button", { name: /^Add 1 file/ });
+    expect(openPendingMagnet).toHaveBeenCalledWith("a".repeat(40));
+    // From what Flume saved -- no network preview at all.
+    expect(previewTorrent).not.toHaveBeenCalled();
   });
 });

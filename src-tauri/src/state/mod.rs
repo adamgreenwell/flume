@@ -1,6 +1,7 @@
 //! Application-wide state shared across Tauri commands.
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc,
@@ -14,7 +15,11 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     egress::{EgressGuard, EgressWatcher, Gate, GuardStatus, TransferGate},
     engine::{Engine, EngineError, PauseReason},
-    library::{Library, Noted, persisted_info_hashes, write_atomically},
+    library::{
+        Library, Noted, PendingMagnet,
+        magnet::{self, PendingMagnetState, PendingMagnetStatus},
+        persisted_info_hashes, write_atomically,
+    },
     policy::{PolicyState, QueueLimits, Rules, TorrentRules},
     settings::Settings,
     stats::{Statistics, Tally},
@@ -169,6 +174,52 @@ pub struct AppState {
     /// one stop nothing restarts from. So it is a flag of its own, checked in
     /// [`Self::restart_locked`], which every start passes through.
     exiting: AtomicBool,
+    /// The background resolver's bookkeeping for each pending magnet (#148).
+    ///
+    /// In memory on purpose: the schedule restarts on every launch, so a
+    /// magnet is tried soon after Flume opens rather than whenever a
+    /// persisted quarter-hour timer from yesterday happened to say.
+    magnet_attempts: Mutex<HashMap<String, MagnetAttempt>>,
+}
+
+/// Where the resolver stands with one pending magnet.
+#[derive(Debug, Clone, Copy)]
+struct MagnetAttempt {
+    /// Attempts that went unanswered since Flume started.
+    failures: u32,
+    /// When the next attempt may start.
+    next_at: Instant,
+    /// Whether an attempt is running now.
+    in_flight: bool,
+}
+
+/// How an attempt to fetch a pending magnet's file list ended without one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptEnd {
+    /// It ran its course and nobody answered. Counts towards the backoff.
+    Unanswered,
+    /// It was stopped -- the guard began holding, the engine was replaced,
+    /// or the app began exiting. Not the swarm's fault, so not counted.
+    Interrupted,
+}
+
+/// Why a magnet could not be put on the pending list.
+#[derive(Debug, thiserror::Error)]
+pub enum PendingMagnetError {
+    /// The link could not be read, or had no key Flume can store it under.
+    #[error(transparent)]
+    Invalid(#[from] EngineError),
+    /// The library record did not load, so nothing added now would survive
+    /// a quit.
+    #[error(
+        "Flume could not read its library record this session, so a magnet \
+         kept now would be forgotten when Flume quits. Add it again once the \
+         record loads."
+    )]
+    LibraryUnavailable,
+    /// The torrent is already a real torrent in the session.
+    #[error("this torrent is already in your library")]
+    AlreadyAdded,
 }
 
 /// How long the guard waits after its first failed start.
@@ -269,7 +320,260 @@ impl AppState {
             restart: Mutex::new(()),
             start_backoff: Mutex::new(None),
             exiting: AtomicBool::new(false),
+            magnet_attempts: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Puts a magnet on the pending list, to be resolved in the background.
+    ///
+    /// What "add anyway" does when a magnet's file list did not arrive in
+    /// time (#148). The torrent goes into the library record only --
+    /// librqbit cannot hold it yet -- and the resolver tries it straight
+    /// away, then on a lengthening schedule. Returns the info hash.
+    ///
+    /// Works with no engine, so a magnet can be kept while the guard holds;
+    /// it is simply not tried until the guard releases.
+    ///
+    /// # Errors
+    ///
+    /// See [`PendingMagnetError`].
+    pub async fn add_pending_magnet(&self, uri: &str) -> Result<String, PendingMagnetError> {
+        let (info_hash, name) = Engine::magnet_identity(uri)?;
+        if let Some(engine) = self.engine().await
+            && engine.has_torrent(&info_hash)
+        {
+            return Err(PendingMagnetError::AlreadyAdded);
+        }
+
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.is_healthy() {
+                return Err(PendingMagnetError::LibraryUnavailable);
+            }
+            let pending = PendingMagnet {
+                uri: uri.to_owned(),
+                name,
+                resolved_at: None,
+            };
+            library
+                .note_pending_magnet(&info_hash, pending, crate::library::now_seconds())
+                .then(|| library.to_json())
+                .flatten()
+        };
+        self.persist_library(json);
+        Ok(info_hash)
+    }
+
+    /// Every pending magnet, as the list shows it.
+    ///
+    /// Leaves out any whose torrent the session now holds: one added through
+    /// the ordinary dialog while it was pending is a real torrent, and the
+    /// leftover record is cleared on the next confirmed add or removal.
+    pub async fn pending_magnet_statuses(
+        &self,
+        engine: Option<&Engine>,
+        now: Instant,
+    ) -> Vec<PendingMagnetStatus> {
+        let pending = self.library.read().await.pending_magnets();
+        let attempts = self.magnet_attempts.lock().await;
+        let mut statuses: Vec<PendingMagnetStatus> = pending
+            .into_iter()
+            .filter(|(hash, _, _)| !engine.is_some_and(|engine| engine.has_torrent(hash)))
+            .map(|(info_hash, pending, added_at)| {
+                let attempt = attempts.get(&info_hash);
+                let ready = pending.is_resolved();
+                let searching_now = !ready && attempt.is_some_and(|a| a.in_flight);
+                let next_attempt_in_seconds = match (ready, engine, attempt) {
+                    (false, Some(_), Some(a)) if !a.in_flight => {
+                        Some(a.next_at.saturating_duration_since(now).as_secs())
+                    }
+                    _ => None,
+                };
+                PendingMagnetStatus {
+                    info_hash,
+                    name: pending.name,
+                    added_at,
+                    state: if ready {
+                        PendingMagnetState::Ready
+                    } else {
+                        PendingMagnetState::Searching
+                    },
+                    searching_now,
+                    failed_attempts: attempt.map_or(0, |a| a.failures),
+                    next_attempt_in_seconds,
+                }
+            })
+            .collect();
+        // Newest first, then by hash, so the order holds still between ticks.
+        statuses.sort_by(|a, b| {
+            b.added_at
+                .cmp(&a.added_at)
+                .then_with(|| a.info_hash.cmp(&b.info_hash))
+        });
+        statuses
+    }
+
+    /// Claims the next pending magnet that is due an attempt.
+    ///
+    /// Returns its info hash and link, already marked in flight so a second
+    /// caller cannot claim it too. A magnet with no bookkeeping yet -- just
+    /// added, or carried over from the last launch -- is due at once.
+    pub async fn claim_due_magnet(&self, now: Instant) -> Option<(String, String)> {
+        let pending = self.library.read().await.pending_magnets();
+        let mut attempts = self.magnet_attempts.lock().await;
+        let mut due: Vec<(String, String, Option<u64>)> = pending
+            .into_iter()
+            .filter(|(_, pending, _)| !pending.is_resolved())
+            .filter(|(hash, _, _)| {
+                attempts
+                    .get(hash)
+                    .is_none_or(|a| !a.in_flight && a.next_at <= now)
+            })
+            .map(|(hash, pending, added_at)| (hash, pending.uri, added_at))
+            .collect();
+        // Oldest first: a magnet that has waited longest gets the next turn.
+        due.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
+        let (hash, uri, _) = due.into_iter().next()?;
+        let attempt = attempts.entry(hash.clone()).or_insert(MagnetAttempt {
+            failures: 0,
+            next_at: now,
+            in_flight: false,
+        });
+        attempt.in_flight = true;
+        Some((hash, uri))
+    }
+
+    /// Records an attempt that ended without a file list.
+    pub async fn finish_magnet_attempt(&self, info_hash: &str, end: AttemptEnd, now: Instant) {
+        let mut attempts = self.magnet_attempts.lock().await;
+        let Some(attempt) = attempts.get_mut(info_hash) else {
+            return;
+        };
+        attempt.in_flight = false;
+        if end == AttemptEnd::Unanswered {
+            attempt.failures = attempt.failures.saturating_add(1);
+            attempt.next_at = now + magnet::retry_delay(attempt.failures);
+        }
+    }
+
+    /// Saves a pending magnet's file list, which has just arrived.
+    ///
+    /// Returns whether the magnet was still pending. One removed while the
+    /// attempt ran is not brought back, and nothing is written for it.
+    pub async fn resolve_pending_magnet(
+        &self,
+        info_hash: &str,
+        name: String,
+        bytes: &[u8],
+    ) -> bool {
+        self.magnet_attempts.lock().await.remove(info_hash);
+
+        let still_pending = self
+            .library
+            .read()
+            .await
+            .get(info_hash)
+            .is_some_and(|record| record.magnet.is_some());
+        if !still_pending {
+            return false;
+        }
+        // The file list first, the record second: a record saying "ready"
+        // with no list behind it would offer something that cannot open.
+        if let Err(err) = magnet::save_metadata(&self.session_dir, info_hash, bytes) {
+            log::warn!("could not save a resolved magnet's file list: {err}");
+            return false;
+        }
+        let json = {
+            let mut library = self.library.write().await;
+            library
+                .note_magnet_resolved(info_hash, name, crate::library::now_seconds())
+                .then(|| library.to_json())
+                .flatten()
+        };
+        self.persist_library(json);
+        true
+    }
+
+    /// The saved file list of a magnet that resolved in the background.
+    ///
+    /// A list that has gone missing -- deleted by hand, or a failed write --
+    /// sends the magnet back to searching rather than leaving it offered and
+    /// unopenable.
+    ///
+    /// # Errors
+    ///
+    /// The I/O failure reading it.
+    pub async fn saved_magnet_metadata(&self, info_hash: &str) -> std::io::Result<Vec<u8>> {
+        let result = magnet::load_metadata(&self.session_dir, info_hash);
+        if result.is_err() {
+            let json = {
+                let mut library = self.library.write().await;
+                library
+                    .mark_magnet_unresolved(info_hash)
+                    .then(|| library.to_json())
+                    .flatten()
+            };
+            self.persist_library(json);
+        }
+        result
+    }
+
+    /// Clears a pending magnet whose torrent has now really been added.
+    ///
+    /// Called after every confirmed add, pending or not: an add of the same
+    /// torrent through the ordinary dialog settles a pending magnet too.
+    pub async fn settle_pending_magnet(&self, info_hash: &str) {
+        self.magnet_attempts.lock().await.remove(info_hash);
+        let json = {
+            let mut library = self.library.write().await;
+            if !library.clear_pending_magnet(info_hash) {
+                return;
+            }
+            library.to_json()
+        };
+        self.persist_library(json);
+        magnet::delete_metadata(&self.session_dir, info_hash);
+    }
+
+    /// Removes a pending magnet the user no longer wants.
+    ///
+    /// Returns whether one was pending. The whole record goes, as for any
+    /// removed torrent -- unless the session holds the torrent after all, in
+    /// which case only the pending part is cleared and the torrent's own
+    /// record stays.
+    pub async fn remove_pending_magnet(&self, info_hash: &str) -> bool {
+        let pending = self
+            .library
+            .read()
+            .await
+            .get(info_hash)
+            .is_some_and(|record| record.magnet.is_some());
+        if !pending {
+            return false;
+        }
+        let in_session = self
+            .engine()
+            .await
+            .is_some_and(|engine| engine.has_torrent(info_hash));
+        if in_session {
+            self.settle_pending_magnet(info_hash).await;
+        } else {
+            self.magnet_attempts.lock().await.remove(info_hash);
+            self.forget_torrent(info_hash).await;
+            magnet::delete_metadata(&self.session_dir, info_hash);
+        }
+        true
+    }
+
+    /// Names of pending magnets, for redacting a diagnostics bundle.
+    pub async fn pending_magnet_names(&self) -> Vec<String> {
+        self.library
+            .read()
+            .await
+            .pending_magnets()
+            .into_iter()
+            .filter_map(|(_, pending, _)| pending.name)
+            .collect()
     }
 
     /// Marks the app as exiting, so no engine is started from here on.
@@ -929,6 +1233,9 @@ impl AppState {
         for line in &lines {
             crate::policy::stamp_queue_places(&mut snapshot, line);
         }
+        snapshot.pending_magnets = self
+            .pending_magnet_statuses(Some(engine), Instant::now())
+            .await;
         snapshot
     }
 

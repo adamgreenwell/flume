@@ -8,6 +8,25 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Added
+
+- **Keep a magnet that will not resolve, and let Flume keep looking.** When a
+  magnet link's file list does not arrive, the add dialog now offers **Add
+  anyway**. The magnet waits in your list as "Finding files" while Flume asks
+  for it again in the background — after a minute, then less and less often,
+  never giving up. When the file list arrives you get a notification and the
+  row says **Ready**; **Choose files…** opens the usual add dialog. Nothing
+  downloads until you have chosen. The file list is saved, so quitting Flume
+  does not lose it, and nothing is looked for while the tunnel check is
+  holding. (#148)
+
+### Changed
+
+- **The add dialog gives up on a magnet after ten seconds instead of sixty**,
+  now that giving up is no longer the end of the road. The ten seconds start
+  once peer discovery is ready, so a magnet added just after launch is not
+  timed out by the DHT warming up. (#148)
+
 ### Fixed
 
 - **Quitting no longer briefly starts Flume back up.** As Flume closed, the
