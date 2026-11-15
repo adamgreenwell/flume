@@ -5,9 +5,10 @@
 #   npm run preflight            # the standard gate
 #   npm run preflight -- --full  # also builds the macOS bundle
 #
-# Why this exists: this repository is private, so Actions minutes are billed,
-# and a full release run costs several dollars. Every failure caught here is a
-# failure that did not cost anything.
+# Why this exists: a failure caught here costs seconds, and the same failure in
+# CI costs a push and roughly ten minutes of waiting. Standard runners are free
+# now that the repository is public, but the gate predates that, when a release
+# run cost several dollars; see "Cost" in docs/CI-CD-and-Releases.md.
 #
 # Exit codes are checked directly rather than grepped from output -- a filtered
 # gate once reported success while the chain had actually failed earlier.
