@@ -17,9 +17,18 @@ pass. "Everything worked" is not reproducible; "Ubuntu 24.04 arm64, all of
 
 | OS      | Data directory                                                |
 | ------- | ------------------------------------------------------------- |
-| Windows | `%APPDATA%\io.github.adamgreenwell.Flume`                     |
-| Linux   | `~/.local/share/io.github.adamgreenwell.Flume`                |
+| Windows | `%APPDATA%\adamgreenwell\Flume\data`                          |
+| Linux   | `~/.local/share/flume` (or `$XDG_DATA_HOME/flume`)            |
 | macOS   | `~/Library/Application Support/io.github.adamgreenwell.Flume` |
+
+These come from `settings::session_directory`, which uses the `directories`
+crate, and it builds the path differently on each OS — hence three shapes
+rather than one. First run is decided by whether `settings.json` exists there.
+
+Tauri keeps a second folder, named after the bundle ID
+`io.github.adamgreenwell.flume`, for logs and the WebView's cache — on Windows
+`%LOCALAPPDATA%\io.github.adamgreenwell.flume`. It is the one you are likely
+to find first, and it is not the session: deleting it does not reset Flume.
 
 ## 1. Install and launch
 

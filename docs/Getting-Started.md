@@ -58,8 +58,8 @@ The status indicator means:
 Session state lives in your OS application-data directory:
 
 - macOS: `~/Library/Application Support/io.github.adamgreenwell.Flume`
-- Windows: `%APPDATA%\io.github.adamgreenwell.Flume`
-- Linux: `~/.local/share/io.github.adamgreenwell.Flume` (or `$XDG_DATA_HOME`)
+- Windows: `%APPDATA%\adamgreenwell\Flume\data`
+- Linux: `~/.local/share/flume` (or `$XDG_DATA_HOME/flume`)
 
 ## Firewall
 
