@@ -272,6 +272,11 @@ pub fn run() {
             // restart resumes instead of re-hashing.
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<AppState>();
+                // First, before anything below awaits. The guard loop keeps
+                // ticking through exit, and once `shutdown` has taken the
+                // engine it would otherwise start a fresh one in a process
+                // about to die (#274).
+                state.begin_exit();
                 state.note(usage::EventKind::SessionEnded {
                     duration_bucket: usage::DurationBucket::of(state.uptime()),
                 });

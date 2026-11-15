@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -154,6 +154,21 @@ pub struct AppState {
     /// pass, and the guard's whole contract is that it keeps trying. See
     /// [`Self::note_start_failed`].
     start_backoff: Mutex<Option<(Instant, Duration)>>,
+    /// Set once the app has begun exiting, and never cleared.
+    ///
+    /// The exit handler ends with [`Self::shutdown`], which takes the engine
+    /// out -- and the guard loop is still ticking on the runtime the handler
+    /// blocks on. Its next tick saw "not held, no engine" and started a fresh
+    /// session in a process that was about to die (#274): every persisted
+    /// torrent restored and started, trackers and the DHT announced to, list
+    /// URLs fetched, and fast-resume files written while the process was torn
+    /// down around them.
+    ///
+    /// Not the same as a hold. [`Self::shutdown`] is also how the guard
+    /// holds, and a hold must leave the engine free to come back; this is the
+    /// one stop nothing restarts from. So it is a flag of its own, checked in
+    /// [`Self::restart_locked`], which every start passes through.
+    exiting: AtomicBool,
 }
 
 /// How long the guard waits after its first failed start.
@@ -253,7 +268,23 @@ impl AppState {
             reorder: Mutex::new(()),
             restart: Mutex::new(()),
             start_backoff: Mutex::new(None),
+            exiting: AtomicBool::new(false),
         }
+    }
+
+    /// Marks the app as exiting, so no engine is started from here on.
+    ///
+    /// Call it first in the exit handler, before anything that awaits: the
+    /// guard loop keeps ticking through the rest of exit, and the usage flush
+    /// alone can wait seconds on a socket. See the field for why.
+    pub fn begin_exit(&self) {
+        self.exiting.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether [`Self::begin_exit`] has been called.
+    #[must_use]
+    pub fn exiting(&self) -> bool {
+        self.exiting.load(Ordering::SeqCst)
     }
 
     /// The status the guard loop last published.
@@ -539,6 +570,15 @@ impl AppState {
 
     /// The body of [`Self::restart_engine`], with the lock already held.
     async fn restart_locked(&self, settings: &Settings) -> Result<(), EngineError> {
+        // An exiting app starts nothing (#274). Checked before the old engine
+        // is touched, so a restart that arrives during exit neither builds a
+        // session nor reaches the network; exit's own `shutdown` stops
+        // whatever is running. `Ok` rather than an error: nothing failed, and
+        // a failure here would be recorded as the reason there is no engine.
+        if self.exiting() {
+            return Ok(());
+        }
+
         // Take the old engine out before shutting it down, so nothing observes
         // a half-stopped session.
         if let Some(old) = self.engine.write().await.take() {
@@ -609,6 +649,17 @@ impl AppState {
         // after, which it shuts down. There is no third ordering. Brief,
         // too: a status read, one probe, and a pointer write.
         let mut slot = self.engine.write().await;
+        // Exit can begin while a start is in flight, and exit's `shutdown`
+        // then finds no engine to stop -- the same shape as the hold above.
+        // Asked under the same slot, so it is atomic against `shutdown` in
+        // the same way: either exit's take runs after this publish and stops
+        // the engine, or this sees the flag and never publishes.
+        if self.exiting() {
+            drop(slot);
+            log::info!("app began exiting while the engine was starting; discarding it");
+            engine.shutdown().await;
+            return Ok(());
+        }
         if self.egress_refused_now().await {
             drop(slot);
             log::info!("egress guard began holding while the engine was starting; discarding it");

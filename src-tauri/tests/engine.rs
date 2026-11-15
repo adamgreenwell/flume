@@ -1132,6 +1132,116 @@ async fn the_later_of_two_overlapping_restarts_is_the_one_left_running() {
     }
 }
 
+/// Settings for the exit tests: a real session, but nothing on the network.
+fn quiet_settings(dir: &std::path::Path) -> flume_lib::settings::Settings {
+    flume_lib::settings::Settings {
+        download_dir: dir.to_path_buf(),
+        listen_port: 0,
+        enable_dht: false,
+        enable_upnp: false,
+        ..flume_lib::settings::Settings::default()
+    }
+}
+
+/// Once the app is exiting, nothing starts an engine (#274).
+///
+/// The exit handler takes the engine out, and the guard loop -- still ticking
+/// on the runtime exit blocks on -- read "no engine" as "start one". The
+/// session it built restored every torrent, announced, and wrote fast-resume
+/// files while the process died. Both entry points are asserted, because the
+/// guard calls `ensure_engine` and a settings change calls `restart_engine`,
+/// and either can land during exit.
+#[tokio::test]
+async fn an_exiting_app_never_starts_an_engine() {
+    let tmp = TempDir::new().expect("tempdir");
+    let settings = quiet_settings(&tmp.path().join("downloads"));
+    let state =
+        flume_lib::state::AppState::new(settings.clone(), tmp.path().join("session"), false);
+
+    state.begin_exit();
+
+    state
+        .ensure_engine(&settings)
+        .await
+        .expect("refusing is not a failure");
+    assert!(
+        state.engine().await.is_none(),
+        "ensure_engine started an engine during exit"
+    );
+
+    state
+        .restart_engine(&settings)
+        .await
+        .expect("refusing is not a failure");
+    assert!(
+        state.engine().await.is_none(),
+        "restart_engine started an engine during exit"
+    );
+
+    // No engine is not enough on its own: the check before publishing would
+    // discard one that was built, after it had already restored torrents and
+    // reached the network. Refusing has to happen before `Engine::start`,
+    // which creates the download folder -- so the folder not existing is
+    // what shows no session was ever built.
+    assert!(
+        !settings.download_dir.exists(),
+        "a session was built during exit, even though none was published"
+    );
+
+    // Refusing is not a failed start, so it must not be reported as one --
+    // the UI would explain an exit with "the engine failed to start".
+    assert_eq!(state.start_failure().await, None);
+}
+
+/// A start already in flight when exit begins is discarded, not published.
+///
+/// The entry check cannot catch this one: the start passed it before exit
+/// began, and exit's `shutdown` then finds no engine to stop, because
+/// `restart_locked` holds the new one privately until it publishes. So the
+/// check is repeated under the engine slot, beside the guard's own.
+///
+/// This replays the real exit order -- flag, then `shutdown` -- against a
+/// restart that is in flight, and asserts the end state. That end state holds
+/// for every interleaving: a restart that finished first is stopped by
+/// `shutdown`, and one still building must see the flag. Without the second
+/// check the in-flight one publishes after `shutdown` has run.
+///
+/// The window is a *restart*, not a first start, and that is measured rather
+/// than chosen. With nothing on the network a first `Engine::start` takes
+/// about 4 ms -- over before any sleep a test could pick -- while a restart
+/// spends about a second shutting the old session down before it builds the
+/// new one. Exit landing in that second is the case the second check exists
+/// for: `shutdown` finds the slot already empty, because the restart took the
+/// old engine out first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_start_in_flight_when_exit_begins_is_discarded() {
+    let tmp = TempDir::new().expect("tempdir");
+    let settings = quiet_settings(&tmp.path().join("downloads"));
+    let state = std::sync::Arc::new(flume_lib::state::AppState::new(
+        settings.clone(),
+        tmp.path().join("session"),
+        false,
+    ));
+    state.restart_engine(&settings).await.expect("first start");
+    assert!(state.engine().await.is_some(), "no engine to restart");
+
+    let restart = {
+        let state = state.clone();
+        tokio::spawn(async move { state.restart_engine(&settings).await })
+    };
+    // Well inside the ~1 s the restart spends stopping the old session.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    state.begin_exit();
+    state.shutdown().await;
+
+    restart.await.expect("join").expect("restart");
+    assert!(
+        state.engine().await.is_none(),
+        "an engine was published after exit had shut the old one down"
+    );
+}
+
 /// A per-torrent folder overrides the session's, and the preflight follows it.
 ///
 /// Also the test for the mutual exclusion `AddTorrentOptions` documents:

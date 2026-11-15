@@ -8,6 +8,16 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Fixed
+
+- **Quitting no longer briefly starts Flume back up.** As Flume closed, the
+  part that watches your network connection saw the torrent engine stop and
+  started a new one in the closing app — restoring every torrent and
+  contacting trackers and the DHT for the second before the process ended,
+  and rewriting the files that let a download resume. Quitting now stops
+  everything once. This applied to **Install and restart** too, which closes
+  Flume the same way. (#274)
+
 ## [1.5.1] — 2026-11-15
 
 **The first version Flume can update to by itself.** On macOS and the Linux
