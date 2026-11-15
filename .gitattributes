@@ -1,0 +1,13 @@
+# Check out every text file with LF, on every platform.
+#
+# The repo has always stored LF, and Prettier's `endOfLine: "lf"` checks for
+# it. Git for Windows ships `core.autocrlf=true` in its system gitconfig, so
+# without this file a Windows checkout gets CRLF and `npm run format:check`
+# flags every file. This overrides autocrlf per repo.
+* text=auto eol=lf
+
+# Binary assets: never normalise, never diff as text.
+*.png   binary
+*.ico   binary
+*.icns  binary
+*.woff2 binary
