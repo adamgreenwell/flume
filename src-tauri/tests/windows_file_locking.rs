@@ -125,11 +125,11 @@ async fn seed_while_held(share_mode: u32) -> Result<flume_lib::engine::TorrentSu
 
     let mut summary = None;
     for _ in 0..50 {
-        if let Some(s) = engine.torrent_summaries().into_iter().find(|s| s.id == id) {
-            if s.finished || s.error.is_some() {
-                summary = Some(s);
-                break;
-            }
+        if let Some(s) = engine.torrent_summaries().into_iter().find(|s| s.id == id)
+            && (s.finished || s.error.is_some())
+        {
+            summary = Some(s);
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
