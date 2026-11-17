@@ -565,11 +565,31 @@ impl Engine {
             return None;
         }
 
-        let (_, total_pieces) = Api::new(Arc::clone(&self.session), None)
+        let (have, total_pieces) = Api::new(Arc::clone(&self.session), None)
             .api_dump_haves(TorrentIdOrHash::Id(id))
             .ok()?;
+        let have: Vec<bool> = have.iter().by_vals().take(total_pieces as usize).collect();
 
-        availability::analyse(&bitfields, total_pieces)
+        // The verdict is about the remainder, so it needs to know which pieces
+        // are still wanted. librqbit's own selected-pieces bitfield is
+        // crate-private; it is rebuilt here from the same public inputs.
+        // Without metadata every piece counts as selected, which can only
+        // make the verdict stricter, never kinder.
+        let selection = handle.only_files();
+        let selected: Vec<std::ops::Range<u32>> = handle
+            .with_metadata(|meta| {
+                meta.file_infos
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, info)| !info.attrs.padding)
+                    .filter(|(index, _)| selection.as_ref().is_none_or(|only| only.contains(index)))
+                    .map(|(_, info)| info.piece_range.clone())
+                    .collect()
+            })
+            .unwrap_or_else(|_| std::iter::once(0..total_pieces).collect());
+        let needed = availability::still_needed(total_pieces, selected, &have);
+
+        availability::analyse(&bitfields, total_pieces, &needed)
     }
 
     /// session's internal ordering is not guaranteed.
