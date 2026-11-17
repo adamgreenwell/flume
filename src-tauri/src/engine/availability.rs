@@ -12,11 +12,23 @@
 /// What the swarm holds, derived from the connected peers' bitfields.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Availability {
-    /// Copies of the least-held piece.
+    /// Copies of the least-held piece **this download still needs**.
     ///
-    /// Zero means no connected peer holds some piece, so the torrent cannot
-    /// finish from this swarm however fast the rest arrives. This is the
-    /// figure that decides whether a download is viable.
+    /// Zero means no connected peer holds some piece that is still missing,
+    /// so the torrent cannot finish from this swarm however fast the rest
+    /// arrives. This is the figure that decides whether a download is viable.
+    ///
+    /// Taken over the remainder only — selected and not yet verified — never
+    /// the whole torrent. A piece already on disk, or one belonging only to a
+    /// file the user left out, cannot stop the download finishing, and
+    /// counting it read a peer holding everything still wanted as "No seeds"
+    /// whenever it lacked one piece the user already had or never asked for:
+    /// exactly what a partial seed of the main file looks like.
+    ///
+    /// When nothing is still needed the minimum is over an empty set, and it
+    /// is reported as the peer count — every needed piece is held by every
+    /// peer, vacuously — rather than as zero, which would be a false "cannot
+    /// finish" in the tick before a download flips to seeding.
     pub rarest: u32,
     /// Mean copies per piece, across the whole torrent.
     ///
@@ -48,10 +60,16 @@ pub struct Analysis {
 /// bits past `total_pieces` are spare and ignored. A peer is not obliged to
 /// have zeroed them, and librqbit does not enforce that it did.
 ///
+/// `needed` marks the pieces still wanted (see [`still_needed`]) and scopes
+/// only [`Availability::rarest`]; the copies, the average and the seed count
+/// describe the swarm and stay whole-torrent. A piece past the end of
+/// `needed` counts as needed, so a short or empty mask errs towards the
+/// stricter verdict rather than inventing availability.
+///
 /// Returns `None` when there is nothing to judge from: no peers, or a torrent
 /// whose piece count is not known yet. A caller must not read that as a
 /// healthy swarm, nor as a broken one.
-pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Analysis> {
+pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32, needed: &[bool]) -> Option<Analysis> {
     if bitfields.is_empty() || total_pieces == 0 {
         return None;
     }
@@ -92,9 +110,16 @@ pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Analysis> {
     }
 
     let sum: u64 = copies.iter().map(|c| u64::from(*c)).sum();
+    let rarest = copies
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| needed.get(*index).copied().unwrap_or(true))
+        .map(|(_, c)| *c)
+        .min()
+        .unwrap_or_else(|| u32::try_from(bitfields.len()).unwrap_or(u32::MAX));
     Some(Analysis {
         summary: Availability {
-            rarest: copies.iter().copied().min().unwrap_or(0),
+            rarest,
             average: sum as f64 / total as f64,
             seeds,
         },
@@ -102,10 +127,38 @@ pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32) -> Option<Analysis> {
     })
 }
 
+/// Marks the pieces a download still needs: in a selected file, and not
+/// already verified on disk.
+///
+/// `selected` is the piece range of each selected file, padding files
+/// excluded. A piece shared between a selected file and an unselected one is
+/// needed, because the selected file cannot be finished without it — the same
+/// rule librqbit's own piece picker applies. `have` is our own bitfield as
+/// one bool per piece; a piece past its end is treated as not had.
+pub fn still_needed(
+    total_pieces: u32,
+    selected: impl IntoIterator<Item = std::ops::Range<u32>>,
+    have: &[bool],
+) -> Vec<bool> {
+    let total = total_pieces as usize;
+    let mut needed = vec![false; total];
+    for range in selected {
+        let start = (range.start as usize).min(total);
+        let end = (range.end as usize).min(total);
+        needed[start..end].fill(true);
+    }
+    for (slot, had) in needed.iter_mut().zip(have) {
+        if *had {
+            *slot = false;
+        }
+    }
+    needed
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use super::{Availability, analyse};
+    use super::{Availability, analyse, still_needed};
 
     /// Two peers with the same piece count can be very different swarms.
     ///
@@ -118,12 +171,12 @@ mod tests {
         let split = vec![vec![0b1100_0000], vec![0b0011_0000]];
 
         // Identical piece counts either way.
-        assert_eq!(analyse(&same, 4).unwrap().summary.average, 1.0);
-        assert_eq!(analyse(&split, 4).unwrap().summary.average, 1.0);
+        assert_eq!(analyse(&same, 4, &[]).unwrap().summary.average, 1.0);
+        assert_eq!(analyse(&split, 4, &[]).unwrap().summary.average, 1.0);
 
         // But only one of them can finish.
-        assert_eq!(analyse(&same, 4).unwrap().summary.rarest, 0);
-        assert_eq!(analyse(&split, 4).unwrap().summary.rarest, 1);
+        assert_eq!(analyse(&same, 4, &[]).unwrap().summary.rarest, 0);
+        assert_eq!(analyse(&split, 4, &[]).unwrap().summary.rarest, 1);
     }
 
     #[test]
@@ -134,7 +187,7 @@ mod tests {
             vec![0b1000_0000], // just piece 0
         ];
         assert_eq!(
-            analyse(&peers, 4).unwrap().summary,
+            analyse(&peers, 4, &[]).unwrap().summary,
             Availability {
                 rarest: 2,
                 average: 2.25,
@@ -148,7 +201,7 @@ mod tests {
     fn ignores_padding_past_the_last_piece() {
         // 4 real pieces in a byte that has every bit set.
         let peers = vec![vec![0b1111_1111]];
-        let a = analyse(&peers, 4).unwrap().summary;
+        let a = analyse(&peers, 4, &[]).unwrap().summary;
         assert_eq!(a.rarest, 1);
         assert_eq!(a.average, 1.0);
         assert_eq!(a.seeds, 1);
@@ -158,15 +211,60 @@ mod tests {
     fn spans_multiple_bytes() {
         // 10 pieces: peer holds 0 and 9.
         let peers = vec![vec![0b1000_0000, 0b0100_0000]];
-        let a = analyse(&peers, 10).unwrap().summary;
+        let a = analyse(&peers, 10, &[]).unwrap().summary;
         assert_eq!(a.rarest, 0);
         assert_eq!(a.average, 0.2);
     }
 
+    /// The case that read "No seeds" with a seed connected: the one peer
+    /// lacks a piece, but it is a piece this download already has or never
+    /// wanted, so nothing it still needs is missing from the swarm.
+    #[test]
+    fn rarest_counts_only_the_pieces_still_needed() {
+        // 4 pieces; the only peer lacks piece 3.
+        let peers = vec![vec![0b1110_0000]];
+
+        // Whole torrent wanted: piece 3 is unobtainable.
+        assert_eq!(analyse(&peers, 4, &[]).unwrap().summary.rarest, 0);
+
+        // Piece 3 already verified, or in a file left out: nothing missing.
+        let needed = [true, true, true, false];
+        let a = analyse(&peers, 4, &needed).unwrap().summary;
+        assert_eq!(a.rarest, 1);
+        // The swarm-wide figures are unchanged by the selection.
+        assert_eq!(a.average, 0.75);
+        assert_eq!(a.seeds, 0);
+
+        // And a needed piece nobody holds still says so.
+        let needed = [false, false, true, true];
+        assert_eq!(analyse(&peers, 4, &needed).unwrap().summary.rarest, 0);
+    }
+
+    /// Nothing left to fetch is not "cannot finish".
+    #[test]
+    fn nothing_still_needed_is_not_a_missing_piece() {
+        let peers = vec![vec![0b0000_0000], vec![0b1000_0000]];
+        let a = analyse(&peers, 4, &[false; 4]).unwrap().summary;
+        assert_eq!(a.rarest, 2);
+    }
+
+    #[test]
+    fn still_needed_is_selected_and_not_had() {
+        // 8 pieces. Files cover 0..3 (selected), 3..6 (left out), 5..8
+        // (selected) — piece 5 is shared, so it is needed.
+        let have = [true, false, false, false, false, false, true, false];
+        assert_eq!(
+            still_needed(8, [0..3, 5..8], &have),
+            [false, true, true, false, false, true, false, true]
+        );
+        // A range running past the end is clipped, not a panic.
+        assert_eq!(still_needed(2, std::iter::once(1..9), &[]), [false, true]);
+    }
+
     #[test]
     fn nothing_to_judge_from_is_not_a_verdict() {
-        assert!(analyse(&[], 4).is_none());
-        assert!(analyse(&[vec![0xff]], 0).is_none());
+        assert!(analyse(&[], 4, &[]).is_none());
+        assert!(analyse(&[vec![0xff]], 0, &[]).is_none());
     }
 
     /// What `analyse` costs per torrent, at realistic swarm sizes.
@@ -221,7 +319,7 @@ mod tests {
             let runs = 20;
             let started = Instant::now();
             for _ in 0..runs {
-                assert!(analyse(&bitfields, pieces as u32).is_some());
+                assert!(analyse(&bitfields, pieces as u32, &[]).is_some());
             }
             let each = started.elapsed() / runs;
             #[allow(clippy::cast_precision_loss)]

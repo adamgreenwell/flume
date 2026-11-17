@@ -233,12 +233,16 @@ The health column carries a word, never a colour alone.
 
 | Reads          | Means                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------- |
-| **Healthy**    | Every piece is held by several connected peers                                          |
-| **Thin swarm** | Every piece is held, but only just — losing a peer could strand it                      |
-| **No seeds**   | No connected peer holds some piece, so this cannot finish as it stands                  |
+| **Healthy**    | Every piece you still need is held by several connected peers                           |
+| **Thin swarm** | Every piece you still need is held, but only just — losing a peer could strand it       |
+| **No seeds**   | No connected peer holds some piece you still need, so this cannot finish as it stands   |
 | **Connected**  | Peers are connected but none has sent a bitfield yet, so there is nothing to judge from |
 | **Seeding**    | Complete, and serving peers                                                             |
 | **Idle**       | Paused, checking, or stopped on an error                                                |
+
+**The verdict is about what is left.** Pieces already on disk, and pieces
+belonging only to files you did not select, are left out, so a peer that holds
+everything you still need counts even if it lacks parts you have or skipped.
 
 **Connected is not a synonym for healthy.** It means Flume does not know yet.
 Guessing between thin and healthy from the peer count alone would be a

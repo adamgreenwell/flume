@@ -323,8 +323,10 @@ pub(super) fn classify_health(
             // No bitfields to judge from. Not a verdict, and must not be
             // rendered as one.
             None => SwarmHealth::Unknown,
-            // No connected peer holds some piece, so this cannot finish from
-            // the swarm as it stands however fast the rest arrives.
+            // No connected peer holds some piece this download still needs,
+            // so it cannot finish from the swarm as it stands however fast
+            // the rest arrives. `rarest` is already scoped to the remainder;
+            // see `Availability::rarest`.
             Some(a) if a.rarest == 0 => SwarmHealth::None,
             // The design asks for "every piece on >= 3 peers", but taken
             // literally that is unreachable below three peers: two peers that

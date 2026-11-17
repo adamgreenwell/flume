@@ -240,6 +240,15 @@ taken literally that is unreachable below three peers — two peers that are bot
 seeds hold every piece twice over and would read Thin forever. Below three
 peers the swarm is judged on coverage rather than punished for its size.
 
+**`rarest` is over the remainder, not the torrent.** Only pieces that are
+selected and not yet verified count; the histogram, average and seed count stay
+whole-torrent. Taken over every piece, one peer holding everything still wanted
+read "No seeds" whenever it lacked a piece already on disk or in a skipped file
+— a partial seed of the main file, typically. librqbit's selected-pieces
+bitfield is crate-private, so `availability::still_needed` rebuilds it from
+`only_files()` and each file's `piece_range`, skipping padding files as
+librqbit does. Unknown selection counts as needed: stricter, never kinder.
+
 Rule 9 still holds where the data runs out: `rarest == 0` resolves to `None`
 and no bitfields at all resolves to `Unknown`, which the UI renders as
 "Connected" rather than as a verdict. Issue #79 tracks the history;

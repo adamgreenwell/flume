@@ -8,6 +8,15 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Fixed
+
+- **"No seeds" no longer appears while a peer holds everything you still
+  need.** The swarm-health verdict judged every piece in the torrent, including
+  pieces already downloaded and pieces in files you did not select, so a peer
+  missing only one of those made the download read "No seeds" even though it
+  could finish. It now judges only the pieces still to come. The availability
+  histogram and seed count still describe the whole torrent.
+
 ## [1.5.2] — 2026-11-15
 
 **Magnets that will not resolve can now be kept.** Instead of failing, a magnet
