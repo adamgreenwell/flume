@@ -58,6 +58,7 @@ flume.dev (a React node editor). Both verified unrelated.
 | Tunnel guard        | Stops the engine; never pauses torrents                | `Session::pause` writes `is_paused` to `session.json` synchronously and librqbit stores one paused bit with no reason, so a guard pause is indistinguishable from the user's and quitting while held would strand the library                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Usage under guard   | Never sent while held; batch stays queued              | A held guard means egress would leave from the protected address, and the collector is not an exception to rule 12 — the same rule the update checker follows. The check runs before `take_batch`, so a skipped tick never takes the batch; `Recorder::discard_expired` still ages events out at `MAX_EVENT_AGE`, because `take_batch` was the only other prune and a long hold would otherwise keep them indefinitely. It reads the published status _and_ a fresh probe (`AppState::egress_refused_now`), so a drop since the last tick is caught. `usage/` cannot ask the guard without importing Tauri, so `lib.rs` passes `spawn` a closure                                            |
 | Guard hysteresis    | Hold on the first failing probe, release after 10 s    | Asymmetric on purpose: protection is never delayed, only recovery. A laptop waking or a VPN reconnecting resolves in seconds, and releasing into one costs a re-announce to every tracker plus a DHT announce, per torrent                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Peer transport      | TCP and uTP by default; a switch turns uTP off         | TCP only was the first engine commit's default and was never argued for — it cut Flume off from peers that accept only uTP. librqbit tries TCP first and uTP after a second, keeping whichever connects, and binds UDP on the TCP port's number. A configured proxy carries every outgoing connection either way (librqbit skips uTP when one is set), and the guard stops uTP with the rest of the engine. The switch exists because librqbit's uTP is the younger of the two. UPnP still maps TCP only, so inbound uTP needs a manual UDP forward                                                                                                                                         |
 | Unresolved magnets  | Flume's own pending list; held until files are chosen  | librqbit v9 resolves a magnet inside `add_torrent` before any managed torrent exists, so it cannot hold one without metadata. A pending magnet is a `magnet` field on the library record, retried by `src-tauri/src/resolver.rs` behind the guard. A resolved one saves its file list to `magnets/` and is **not** added paused: that would create empty files for every file and make Resume download all of them. It becomes a torrent only through the ordinary confirm, which clears the record (#148)                                                                                                                                                                                  |
 | Magnet deadline     | 10 s, counted from DHT readiness                       | Was 60 s while expiry was the end of the road; with "add anyway" the deadline's job is to reach the choice quickly. Counted from readiness (capped at 30 s) so the first magnet of a session expires on the swarm, not the bootstrap. The background retry gets 60 s per attempt, since nobody is watching it                                                                                                                                                                                                                                                                                                                                                                               |
 | Audit ignores       | Only with a written reachability argument              | `cargo audit` is configured by `src-tauri/.cargo/audit.toml`, not by a flag in ci.yml, so a local run and the gate always agree. One entry so far: RUSTSEC-2026-0293 (ringbuf 0.4.8). It is unreachable rather than tolerated — the bug needs an element's `Drop` to panic, and librqbit-utp's only ring buffer is `SharedRb<Heap<u8>>`, whose element drop is a no-op. The fix is a semver-major ringbuf bump that librqbit-utp 0.7.0 cannot reach, so it waits on an upstream release. "cargo cannot fix it" is never the reason on its own                                                                                                                                               |
@@ -249,6 +250,15 @@ bitfield is crate-private, so `availability::still_needed` rebuilds it from
 `only_files()` and each file's `piece_range`, skipping padding files as
 librqbit does. Unknown selection counts as needed: stricter, never kinder.
 
+**A zero `rarest` must last 10 s before it is believed** (`GapClock`,
+`availability::GAP_SETTLE`). BitTorrent and µTorrent send a seed's bitfield
+with a few pieces missing and fill them with `Have` messages seconds later —
+seen live: 8865 of 8877, then 8877 five seconds on. Until the gap has lasted,
+`Analysis::settled` returns `None`, which renders as "Connected", not as a
+verdict. Timed per torrent, not per peer: holding while any new peer might
+fill the gap would never release in a busy swarm. The histogram keeps the raw
+copies; only the verdict waits.
+
 Rule 9 still holds where the data runs out: `rarest == 0` resolves to `None`
 and no bitfields at all resolves to `Unknown`, which the UI renders as
 "Connected" rather than as a verdict. Issue #79 tracks the history;
@@ -310,6 +320,12 @@ compile.
   unbounded. Flume now passes the number explicitly and defaults it to 128, so
   the setting moves an existing ceiling rather than imposing a new one.
 - UPnP is `ListenerOptions.enable_upnp_port_forwarding`, a runtime flag.
+  It maps the TCP port only; there is no UDP mapping for uTP.
+- `ListenerOptions.mode` picks the transports. A uTP bind failure is logged
+  and swallowed while TCP is up, so an engine that starts proves nothing
+  about uTP — `utp_listens_on_the_tcp_port_number_only_when_enabled` checks
+  the socket itself, and on Windows has to ask `netstat`, because a plain
+  second bind succeeds there.
 - **There are no cargo features for DHT, UPnP, or torrent v2** — all are
   always compiled in. Only TLS backend, `http-api*`, `postgres`, `prometheus`,
   and a few others are feature-gated.

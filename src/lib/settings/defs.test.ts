@@ -10,6 +10,7 @@ const SETTINGS: Settings = {
   peerLimit: 128,
   enableDht: true,
   enableUpnp: true,
+  enableUtp: true,
   downloadLimitBps: null,
   uploadLimitBps: 2_000_000,
   blocklistUrl: null,

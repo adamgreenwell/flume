@@ -8,7 +8,27 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Added
+
+- **A uTP switch in Settings → Network.** On by default. Turning it off makes
+  Flume connect over TCP only, for networks where uTP misbehaves.
+
+### Changed
+
+- **Flume now connects to peers over uTP as well as TCP.** It used to use TCP
+  only, which cut it off from peers that accept only uTP. It now tries TCP
+  first and uTP a second later, keeping whichever connects, and accepts
+  incoming uTP on the same port number. A configured proxy still carries every
+  outgoing connection. UPnP opens only the TCP port, so for peers to reach you
+  over uTP from outside, forward the UDP port on your router yourself.
+
 ### Fixed
+
+- **A seed no longer flashes "No seeds" as it connects.** BitTorrent and
+  µTorrent announce a seed as nearly complete and send the last pieces moments
+  later, so for a few seconds it looked like a peer missing pieces. A missing
+  piece now has to stay missing for 10 seconds before the swarm reads "No
+  seeds"; until then it reads "Connected".
 
 - **"No seeds" no longer appears while a peer holds everything you still
   need.** The swarm-health verdict judged every piece in the torrent, including

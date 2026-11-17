@@ -301,6 +301,7 @@ fn settings_match_the_typescript_mirror() {
             "allowlistUrl",
             "enableDht",
             "enableUpnp",
+            "enableUtp",
             "downloadLimitBps",
             "uploadLimitBps",
             "proxyUrl",

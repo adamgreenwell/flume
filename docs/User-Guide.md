@@ -92,6 +92,7 @@ rejoins the queue and waits its turn like everything else.
 | Seed limits           | Stop seeding at a ratio or after a time             |
 | Listen port           | Default 42221                                       |
 | UPnP                  | Automatic router port forwarding                    |
+| uTP                   | On by default; off means TCP only                   |
 | DHT                   | Required for magnet links                           |
 | Theme                 | Light, dark, or follow system                       |
 | Tunnel check          | Off, warn, or hold transfer — see below             |
@@ -231,18 +232,24 @@ this finish".
 
 The health column carries a word, never a colour alone.
 
-| Reads          | Means                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------- |
-| **Healthy**    | Every piece you still need is held by several connected peers                           |
-| **Thin swarm** | Every piece you still need is held, but only just — losing a peer could strand it       |
-| **No seeds**   | No connected peer holds some piece you still need, so this cannot finish as it stands   |
-| **Connected**  | Peers are connected but none has sent a bitfield yet, so there is nothing to judge from |
-| **Seeding**    | Complete, and serving peers                                                             |
-| **Idle**       | Paused, checking, or stopped on an error                                                |
+| Reads          | Means                                                                             |
+| -------------- | --------------------------------------------------------------------------------- |
+| **Healthy**    | Every piece you still need is held by several connected peers                     |
+| **Thin swarm** | Every piece you still need is held, but only just — losing a peer could strand it |
+| **No seeds**   | For 10 seconds, no connected peer has held some piece you still need              |
+| **Connected**  | Peers are connected, but there is not enough yet to judge from                    |
+| **Seeding**    | Complete, and serving peers                                                       |
+| **Idle**       | Paused, checking, or stopped on an error                                          |
 
 **The verdict is about what is left.** Pieces already on disk, and pieces
 belonging only to files you did not select, are left out, so a peer that holds
 everything you still need counts even if it lacks parts you have or skipped.
+
+**A gap has to last before it counts.** Some clients announce a seed as
+_nearly_ complete and send the last few pieces a moment later, so a seed can
+look like it is missing pieces for its first few seconds. Flume shows
+**Connected** until a missing piece has stayed missing for 10 seconds, rather
+than flashing **No seeds** beside a seed.
 
 **Connected is not a synonym for healthy.** It means Flume does not know yet.
 Guessing between thin and healthy from the peer count alone would be a

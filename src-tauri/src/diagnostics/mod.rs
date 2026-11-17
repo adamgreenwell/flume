@@ -333,6 +333,7 @@ impl Report<'_> {
         );
         line(&mut out, "DHT", &on_off(self.settings.enable_dht));
         line(&mut out, "UPnP", &on_off(self.settings.enable_upnp));
+        line(&mut out, "uTP", &on_off(self.settings.enable_utp));
         line(&mut out, "Proxy", &describe_proxy(&self.settings.proxy_url));
         line(&mut out, "Theme", &format!("{:?}", self.settings.theme));
         line(&mut out, "Density", &format!("{:?}", self.settings.density));
