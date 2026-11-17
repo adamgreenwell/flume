@@ -8,6 +8,12 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.5.3] — 2026-11-17
+
+**Flume now reaches more peers, and "No seeds" means what it says.** Peers
+that accept only uTP were out of reach before; and a torrent no longer reads
+"No seeds" while a connected peer holds everything you still need.
+
 ### Added
 
 - **A uTP switch in Settings → Network.** On by default. Turning it off makes
@@ -511,6 +517,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.5.3]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.3
 [1.5.2]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.2
 [1.5.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.1
 [1.5.0]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.0
