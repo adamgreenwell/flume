@@ -138,33 +138,76 @@ See [[Privacy]] and [[User-Guide]].
 
 ## Phase 4 — Client feature parity 🚧
 
-Seventeen issues on the
-[Phase 4 milestone](https://github.com/adamgreenwell/flume/milestone/5),
-sequenced in four waves. The waves are dependency order, not priority:
+Thirty issues on the
+[Phase 4 milestone](https://github.com/adamgreenwell/flume/milestone/5): the
+original seventeen, the four field notes from 1.0 below plus one bug fix
+([#154](https://github.com/adamgreenwell/flume/issues/154)), and eight gaps found comparing
+Flume against Transmission (see below). They are sequenced in four waves. The
+waves are dependency order, not priority:
 
 - **Wave 1** — the policy engine
   ([#54](https://github.com/adamgreenwell/flume/issues/54)) and what sits
   directly on it: seed ratio and time limits
   ([#55](https://github.com/adamgreenwell/flume/issues/55)) and queue management
   ([#56](https://github.com/adamgreenwell/flume/issues/56)); plus sort and
-  filter ([#57](https://github.com/adamgreenwell/flume/issues/57)), which
-  depends on nothing.
+  filter ([#57](https://github.com/adamgreenwell/flume/issues/57)) and copy
+  magnet link ([#285](https://github.com/adamgreenwell/flume/issues/285)),
+  which depend on nothing.
 - **Wave 2** — labels ([#58](https://github.com/adamgreenwell/flume/issues/58)),
   scheduled alternative limits
   ([#59](https://github.com/adamgreenwell/flume/issues/59)), incomplete
-  directory ([#60](https://github.com/adamgreenwell/flume/issues/60)).
+  directory ([#60](https://github.com/adamgreenwell/flume/issues/60)), and the
+  idle seeding limit with stalled-download queueing
+  ([#283](https://github.com/adamgreenwell/flume/issues/283)), which are two
+  more rules for the policy engine.
 - **Wave 3** — independent plumbing: per-torrent download folder
   ([#61](https://github.com/adamgreenwell/flume/issues/61)), blocklists
   ([#62](https://github.com/adamgreenwell/flume/issues/62)), peer limits
   ([#63](https://github.com/adamgreenwell/flume/issues/63)), watch folder
   ([#64](https://github.com/adamgreenwell/flume/issues/64)), all-time statistics
-  ([#65](https://github.com/adamgreenwell/flume/issues/65)).
+  ([#65](https://github.com/adamgreenwell/flume/issues/65)); and from the
+  Transmission comparison, torrent creation
+  ([#280](https://github.com/adamgreenwell/flume/issues/280)), a local peer
+  discovery setting ([#281](https://github.com/adamgreenwell/flume/issues/281)),
+  interface binding ([#282](https://github.com/adamgreenwell/flume/issues/282)),
+  default trackers ([#284](https://github.com/adamgreenwell/flume/issues/284)),
+  a completion command
+  ([#286](https://github.com/adamgreenwell/flume/issues/286)) and keeping the
+  computer awake ([#287](https://github.com/adamgreenwell/flume/issues/287)).
 - **Wave 4** — the re-add primitive
   ([#66](https://github.com/adamgreenwell/flume/issues/66)) and the three
   features it unlocks: force recheck
   ([#67](https://github.com/adamgreenwell/flume/issues/67)), relocate
   ([#68](https://github.com/adamgreenwell/flume/issues/68)), edit trackers
   ([#69](https://github.com/adamgreenwell/flume/issues/69)).
+
+### From the Transmission comparison
+
+A feature-by-feature pass against Transmission 4, with the librqbit side
+checked against the fork Flume builds. Most of what Transmission has and Flume
+lacks was already in the waves above or written down in [[Deliberate-Omissions]].
+What was left split three ways:
+
+- **Reachable now** — librqbit already exposes it, or it needs no engine work
+  at all. Those are the eight issues placed in the waves above.
+- **Blocked upstream** — web seeds, NAT-PMP, re-announce, renaming files
+  inside a torrent, `.part` files, preallocation modes, interface binding on
+  Windows, and the private flag when creating a torrent. Recorded with a size
+  and a decision in [#196](https://github.com/adamgreenwell/flume/issues/196),
+  which is the one place upstream asks are tracked. Only the private flag is
+  queued as an ask; the rest are written down so their absence reads as known.
+- **Held back by Flume's own rules** — a port test (Transmission calls out to
+  a third-party checker, which would be a third egress path under rule 10) and
+  automatic blocklist refresh (refreshing means rebuilding the engine, which
+  re-announces every torrent). Neither has an issue.
+
+Three of the eight carry a decision that comes before any code:
+
+| Issue                                                                          | Decision to take first                                                                                                                    |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| LPD setting ([#281](https://github.com/adamgreenwell/flume/issues/281))        | The default. LPD is on today and multicasts every public torrent's info hash to the LAN, which the tunnel guard cannot see                |
+| Interface binding ([#282](https://github.com/adamgreenwell/flume/issues/282))  | Whether the existing interface pin implies binding or binding is its own switch. Either way it must hold, not unbind, when the bind fails |
+| Completion command ([#286](https://github.com/adamgreenwell/flume/issues/286)) | Whether it belongs at all, given RSS was declined as automation. If declined, it goes on [[Deliberate-Omissions]] instead                 |
 
 ### Field notes from 1.0
 
