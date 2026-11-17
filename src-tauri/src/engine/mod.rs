@@ -296,6 +296,10 @@ pub struct Engine {
     /// from the DHT, and why those bytes never need to travel to the webview
     /// and back.
     pending: Arc<tokio::sync::RwLock<HashMap<String, PendingAdd>>>,
+    /// Since when each downloading torrent's swarm has lacked a needed piece.
+    ///
+    /// A std mutex: it is held for a map lookup and never across an await.
+    gaps: Arc<std::sync::Mutex<availability::GapClock>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -436,6 +440,7 @@ impl Engine {
             session,
             config,
             pending: Arc::default(),
+            gaps: Arc::default(),
         })
     }
 
@@ -547,6 +552,29 @@ impl Engine {
         id: usize,
         handle: &ManagedTorrent,
     ) -> Option<availability::Analysis> {
+        let key = handle.info_hash().as_string();
+        let analysis = self.analyse_swarm(id, handle);
+        // A poisoned lock means a panic mid-lookup; the map is still a valid
+        // map, and a lost start time only means one more wait.
+        let mut gaps = self
+            .gaps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match analysis {
+            Some(mut analysis) => {
+                analysis.gap_settled =
+                    gaps.observe(&key, analysis.summary.rarest, std::time::Instant::now());
+                Some(analysis)
+            }
+            None => {
+                gaps.forget(&key);
+                None
+            }
+        }
+    }
+
+    /// One pass over the connected peers' bitfields, without the gap clock.
+    fn analyse_swarm(&self, id: usize, handle: &ManagedTorrent) -> Option<availability::Analysis> {
         // Peers first. `api_dump_haves` clones our own bitfield, which is
         // wasted work on a torrent with nobody connected — and that is the
         // common case in a library that is mostly seeding or idle.
@@ -631,7 +659,7 @@ impl Engine {
                 // a skip rather than a staleness trade.
                 let availability = (torrent::classify_state(&stats.state, stats.finished)
                     == torrent::TorrentState::Downloading)
-                    .then(|| self.availability_of(id, &handle).map(|a| a.summary))
+                    .then(|| self.availability_of(id, &handle).and_then(|a| a.settled()))
                     .flatten();
 
                 // `as_string` is hex encoding. `Id20`'s Debug impl happens
@@ -667,6 +695,18 @@ impl Engine {
             })
             .collect::<Vec<_>>();
         summaries.sort_by_key(|s| s.id);
+
+        // Only a downloading torrent is judged, so only its gap clock means
+        // anything. Dropping the rest makes a paused or removed torrent wait
+        // afresh rather than inherit a start time from before.
+        self.gaps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|key| {
+                summaries
+                    .iter()
+                    .any(|s| s.state == torrent::TorrentState::Downloading && s.info_hash == key)
+            });
         summaries
     }
 
@@ -1339,7 +1379,7 @@ impl Engine {
             handle.name(),
             handle.output_folder().display().to_string(),
             &handle.stats(),
-            avail.as_ref().map(|a| a.summary),
+            avail.as_ref().and_then(availability::Analysis::settled),
             torrent::Supplied {
                 added_at: None,
                 pause_reason: pause_reasons.get(&handle.info_hash().as_string()).copied(),
@@ -1358,7 +1398,7 @@ impl Engine {
             summary.state,
             summary.download_bps,
             self.current_limits().0,
-            avail.as_ref().map(|a| a.summary),
+            avail.as_ref().and_then(availability::Analysis::settled),
             summary.live_peers,
         );
 

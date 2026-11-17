@@ -51,6 +51,74 @@ pub struct Analysis {
     pub summary: Availability,
     /// Connected peers holding each piece, indexed by piece.
     pub copies: Vec<u32>,
+    /// Whether a zero [`Availability::rarest`] has lasted long enough to be
+    /// believed. Always `true` from [`analyse`]; the engine lowers it through
+    /// a [`GapClock`]. See [`Self::settled`].
+    pub gap_settled: bool,
+}
+
+impl Analysis {
+    /// The summary to judge the swarm by, or `None` while it cannot be judged.
+    ///
+    /// `None` when a needed piece is missing from every bitfield but has not
+    /// been missing for [`GAP_SETTLE`] yet. Some clients — BitTorrent and
+    /// µTorrent among them — announce a seed as *nearly* complete and send the
+    /// last pieces as `Have` messages moments later, so for its first few
+    /// seconds a real seed is indistinguishable from a peer that lacks those
+    /// pieces. Reading that as "cannot finish" flashed **No seeds** beside a
+    /// connected seed. The copies stay as reported, so the histogram still
+    /// shows exactly what peers have claimed; only the verdict waits.
+    pub fn settled(&self) -> Option<Availability> {
+        (self.summary.rarest > 0 || self.gap_settled).then_some(self.summary)
+    }
+}
+
+/// How long a needed piece must be missing from every connected peer before
+/// the swarm is judged unable to finish.
+///
+/// A lazy bitfield fills its gap within a few seconds of connecting; ten
+/// leaves room for a slow link without making a real dead end wait long.
+pub const GAP_SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Remembers, per torrent, since when its swarm has lacked a needed piece.
+///
+/// Timed per torrent rather than per peer on purpose. Holding the verdict
+/// while *any* recently connected peer might still fill the gap would never
+/// release in a busy swarm, where some peer is always new — so a genuinely
+/// stranded download would never say so. A gap that persists for
+/// [`GAP_SETTLE`] is believed regardless of who joined meanwhile.
+#[derive(Debug, Default)]
+pub struct GapClock {
+    since: std::collections::HashMap<String, std::time::Instant>,
+}
+
+impl GapClock {
+    /// Records one reading for `key` and says whether a gap is settled.
+    ///
+    /// Any reading with no gap resets the clock, so a gap that closes and
+    /// reopens starts its wait again.
+    pub fn observe(&mut self, key: &str, rarest: u32, now: std::time::Instant) -> bool {
+        if rarest > 0 {
+            self.since.remove(key);
+            return true;
+        }
+        let since = *self.since.entry(key.to_owned()).or_insert(now);
+        now.saturating_duration_since(since) >= GAP_SETTLE
+    }
+
+    /// Drops `key`'s clock, for a reading with nothing to judge from.
+    pub fn forget(&mut self, key: &str) {
+        self.since.remove(key);
+    }
+
+    /// Keeps only the clocks `keep` accepts.
+    ///
+    /// Called with the torrents still downloading, so a torrent that pauses
+    /// mid-gap and resumes an hour later waits afresh instead of inheriting a
+    /// stale start time — and a removed torrent's entry does not linger.
+    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
+        self.since.retain(|key, _| keep(key));
+    }
 }
 
 /// Counts how many connected peers hold each piece.
@@ -124,6 +192,7 @@ pub fn analyse(bitfields: &[Vec<u8>], total_pieces: u32, needed: &[bool]) -> Opt
             seeds,
         },
         copies,
+        gap_settled: true,
     })
 }
 
@@ -158,7 +227,9 @@ pub fn still_needed(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::unwrap_used)]
 mod tests {
-    use super::{Availability, analyse, still_needed};
+    use std::time::{Duration, Instant};
+
+    use super::{Availability, GAP_SETTLE, GapClock, analyse, still_needed};
 
     /// Two peers with the same piece count can be very different swarms.
     ///
@@ -259,6 +330,60 @@ mod tests {
         );
         // A range running past the end is clipped, not a panic.
         assert_eq!(still_needed(2, std::iter::once(1..9), &[]), [false, true]);
+    }
+
+    /// A lazy bitfield: the seed claims all but a few pieces, then fills them
+    /// in. The gap must not be believed until it has lasted.
+    #[test]
+    fn a_gap_is_believed_only_once_it_has_lasted() {
+        let mut clock = GapClock::default();
+        let t0 = Instant::now();
+
+        assert!(!clock.observe("a", 0, t0));
+        assert!(!clock.observe("a", 0, t0 + GAP_SETTLE - Duration::from_millis(1)));
+        assert!(clock.observe("a", 0, t0 + GAP_SETTLE));
+
+        // Closing resets it; reopening waits again from the new start.
+        assert!(clock.observe("a", 1, t0 + GAP_SETTLE * 2));
+        let t1 = t0 + GAP_SETTLE * 3;
+        assert!(!clock.observe("a", 0, t1));
+        assert!(clock.observe("a", 0, t1 + GAP_SETTLE));
+
+        // Torrents are timed independently.
+        assert!(!clock.observe("b", 0, t1 + GAP_SETTLE));
+    }
+
+    #[test]
+    fn forgetting_or_dropping_a_torrent_restarts_its_wait() {
+        let mut clock = GapClock::default();
+        let t0 = Instant::now();
+        clock.observe("a", 0, t0);
+        clock.observe("b", 0, t0);
+        let later = t0 + GAP_SETTLE;
+
+        clock.forget("a");
+        assert!(!clock.observe("a", 0, later));
+
+        clock.retain(|key| key != "b");
+        assert!(!clock.observe("b", 0, later));
+    }
+
+    #[test]
+    fn an_unsettled_gap_is_not_a_verdict() {
+        let peers = vec![vec![0b1110_0000]];
+        let mut a = analyse(&peers, 4, &[]).unwrap();
+        assert_eq!(a.settled().map(|s| s.rarest), Some(0));
+
+        a.gap_settled = false;
+        assert_eq!(a.settled(), None);
+        // The histogram still sees exactly what was claimed.
+        assert_eq!(a.copies, [1, 1, 1, 0]);
+
+        // No gap: the flag is irrelevant.
+        let full = vec![vec![0b1111_0000]];
+        let mut b = analyse(&full, 4, &[]).unwrap();
+        b.gap_settled = false;
+        assert_eq!(b.settled().map(|s| s.rarest), Some(1));
     }
 
     #[test]

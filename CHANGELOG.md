@@ -10,6 +10,12 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ### Fixed
 
+- **A seed no longer flashes "No seeds" as it connects.** BitTorrent and
+  µTorrent announce a seed as nearly complete and send the last pieces moments
+  later, so for a few seconds it looked like a peer missing pieces. A missing
+  piece now has to stay missing for 10 seconds before the swarm reads "No
+  seeds"; until then it reads "Connected".
+
 - **"No seeds" no longer appears while a peer holds everything you still
   need.** The swarm-health verdict judged every piece in the torrent, including
   pieces already downloaded and pieces in files you did not select, so a peer

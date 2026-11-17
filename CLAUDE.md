@@ -249,6 +249,15 @@ bitfield is crate-private, so `availability::still_needed` rebuilds it from
 `only_files()` and each file's `piece_range`, skipping padding files as
 librqbit does. Unknown selection counts as needed: stricter, never kinder.
 
+**A zero `rarest` must last 10 s before it is believed** (`GapClock`,
+`availability::GAP_SETTLE`). BitTorrent and µTorrent send a seed's bitfield
+with a few pieces missing and fill them with `Have` messages seconds later —
+seen live: 8865 of 8877, then 8877 five seconds on. Until the gap has lasted,
+`Analysis::settled` returns `None`, which renders as "Connected", not as a
+verdict. Timed per torrent, not per peer: holding while any new peer might
+fill the gap would never release in a busy swarm. The histogram keeps the raw
+copies; only the verdict waits.
+
 Rule 9 still holds where the data runs out: `rarest == 0` resolves to `None`
 and no bitfields at all resolves to `Unknown`, which the UI renders as
 "Connected" rather than as a verdict. Issue #79 tracks the history;
