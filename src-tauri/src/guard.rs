@@ -87,10 +87,11 @@ pub async fn tick(app: &AppHandle) -> GuardStatus {
         // start it will not make; `restart_locked` refuses regardless (#274).
         let settings = state.settings().await;
         log::info!(
-            "egress guard: starting the torrent engine (port={} dht={} upnp={})",
+            "egress guard: starting the torrent engine (port={} dht={} upnp={} utp={})",
             settings.listen_port,
             settings.enable_dht,
-            settings.enable_upnp
+            settings.enable_upnp,
+            settings.enable_utp
         );
         // Logged and swallowed on purpose. A failed start must not stop the
         // loop: the guard keeps probing, keeps publishing, and tries again --

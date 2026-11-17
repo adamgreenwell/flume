@@ -34,6 +34,7 @@ fn test_config(tmp: &TempDir, enable_dht: bool) -> EngineConfig {
         listen_port: 0,
         enable_dht,
         enable_upnp: false,
+        enable_utp: false,
         peer_limit: flume_lib::engine::DEFAULT_PEER_LIMIT,
         blocklist_url: None,
         allowlist_url: None,
@@ -183,6 +184,71 @@ async fn two_engines_can_coexist_on_ephemeral_ports() {
 
     a.shutdown().await;
     b.shutdown().await;
+}
+
+/// uTP listens on UDP at the same port number as TCP, and only when enabled.
+///
+/// librqbit treats a failed UDP bind as non-fatal when TCP is up, so an
+/// engine that starts proves nothing on its own about uTP. Whether this
+/// process holds the UDP port does. DHT is off so its own UDP socket cannot
+/// be the one holding it.
+#[tokio::test]
+async fn utp_listens_on_the_tcp_port_number_only_when_enabled() {
+    async fn udp_port_held(enable_utp: bool) -> bool {
+        let tmp = TempDir::new().expect("temp dir");
+        let engine = Engine::start(EngineConfig {
+            enable_utp,
+            ..test_config(&tmp, false)
+        })
+        .await
+        .expect("engine should start");
+        let port = engine.core_status().listen_port.expect("listen port");
+        let held = udp_port_held_by_this_process(port);
+        engine.shutdown().await;
+        held
+    }
+
+    assert!(
+        udp_port_held(true).await,
+        "with uTP on, the listen port must also be bound over UDP"
+    );
+    assert!(
+        !udp_port_held(false).await,
+        "TCP only must leave the UDP port alone"
+    );
+}
+
+/// Whether this process has a UDP socket bound to `port`.
+///
+/// Asked of the OS on Windows, because a bind conflict cannot answer it
+/// there: Windows let a second plain socket bind a port librqbit's uTP socket
+/// already held, so "can I bind it" read free while it was in use.
+#[cfg(windows)]
+fn udp_port_held_by_this_process(port: u16) -> bool {
+    let pid = std::process::id().to_string();
+    let suffix = format!(":{port}");
+    ["UDP", "UDPv6"].iter().any(|protocol| {
+        let out = std::process::Command::new("netstat")
+            .args(["-ano", "-p", protocol])
+            .output()
+            .expect("netstat runs on every Windows install");
+        String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            fields.len() >= 4
+                && fields[1].ends_with(&suffix)
+                && fields.last() == Some(&pid.as_str())
+        })
+    })
+}
+
+/// Whether this process has a UDP socket bound to `port`.
+///
+/// Elsewhere a plain bind conflicts with a socket already holding the port,
+/// and nothing else in a test process binds the listen port's number.
+#[cfg(not(windows))]
+fn udp_port_held_by_this_process(port: u16) -> bool {
+    std::net::UdpSocket::bind((std::net::Ipv6Addr::UNSPECIFIED, port)).is_err()
+        || std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).is_err()
 }
 
 /// Requires internet access: the DHT must reach its bootstrap nodes.
@@ -997,6 +1063,7 @@ async fn a_failed_start_is_remembered_until_one_succeeds() {
         download_dir: blocked,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         listen_port: 0,
         ..Settings::default()
     };
@@ -1052,6 +1119,7 @@ async fn shutting_down_clears_the_last_start_failure() {
         download_dir: blocked,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         listen_port: 0,
         ..Settings::default()
     };
@@ -1093,6 +1161,7 @@ async fn the_later_of_two_overlapping_restarts_is_the_one_left_running() {
         listen_port: 0,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         ..flume_lib::settings::Settings::default()
     };
 
@@ -1146,6 +1215,7 @@ fn quiet_settings(dir: &std::path::Path) -> flume_lib::settings::Settings {
         listen_port: 0,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         ..flume_lib::settings::Settings::default()
     }
 }

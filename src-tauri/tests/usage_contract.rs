@@ -72,6 +72,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::NetListenPort,
         SettingKey::NetPeerLimit,
         SettingKey::NetUpnp,
+        SettingKey::NetUtp,
         SettingKey::NetProxy,
         SettingKey::NetBlocklist,
         SettingKey::NetAllowlist,

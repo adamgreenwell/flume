@@ -34,6 +34,7 @@
         "net.listenPort",
         "net.peerLimit",
         "net.upnp",
+        "net.utp",
         "net.proxy",
         "net.blocklist",
         "net.allowlist",

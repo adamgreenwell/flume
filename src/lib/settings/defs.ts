@@ -344,6 +344,19 @@ export const SETTING_DEFS: readonly AnySettingDef[] = [
         : "You will need to forward the port yourself, or accept that fewer peers can start a connection with you.",
   },
   {
+    id: "enableUtp",
+    section: "network",
+    label: "Connect to peers over uTP as well as TCP",
+    key: "net.utp",
+    control: { kind: "toggle" },
+    keywords: ["utp", "udp", "tcp", "transport", "micro transport", "tcp only"],
+    restartsSession: true,
+    consequence: (on) =>
+      on
+        ? "Flume tries TCP first and uTP a second later, keeping whichever connects. Some peers can only be reached over uTP, and most clients use both."
+        : "TCP only. Peers that only accept uTP cannot connect in either direction, so some torrents will find fewer peers. Useful if uTP misbehaves on your network.",
+  },
+  {
     id: "proxyUrl",
     section: "network",
     label: "Route peer connections through a proxy",

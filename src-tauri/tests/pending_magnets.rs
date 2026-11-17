@@ -29,6 +29,7 @@ fn quiet_settings(dir: &Path) -> Settings {
         listen_port: 0,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         ..Settings::default()
     }
 }

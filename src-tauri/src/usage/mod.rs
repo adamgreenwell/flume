@@ -196,6 +196,9 @@ pub enum SettingKey {
     /// UPnP on or off.
     #[serde(rename = "net.upnp")]
     NetUpnp,
+    /// uTP on or off.
+    #[serde(rename = "net.utp")]
+    NetUtp,
     /// Proxy configured or cleared.
     #[serde(rename = "net.proxy")]
     NetProxy,
@@ -284,6 +287,7 @@ impl SettingKey {
         );
         note(previous.peer_limit != next.peer_limit, Self::NetPeerLimit);
         note(previous.enable_upnp != next.enable_upnp, Self::NetUpnp);
+        note(previous.enable_utp != next.enable_utp, Self::NetUtp);
         note(previous.proxy_url != next.proxy_url, Self::NetProxy);
         // The key only, as everywhere here. Which list someone uses would say
         // a great deal about what they are doing with the client, and is

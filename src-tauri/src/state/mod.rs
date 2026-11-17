@@ -1643,6 +1643,7 @@ mod tests {
             listen_port: 0,
             enable_dht: false,
             enable_upnp: false,
+            enable_utp: false,
             ..Settings::default()
         };
         let state = AppState::new(settings.clone(), tmp.path().join("session"), false);
@@ -1695,6 +1696,7 @@ mod tests {
             listen_port: 0,
             enable_dht: false,
             enable_upnp: false,
+            enable_utp: false,
             egress_guard: EgressGuard::Hold,
             egress_interface: Some("flume-test-no-such-interface".to_owned()),
             ..Settings::default()

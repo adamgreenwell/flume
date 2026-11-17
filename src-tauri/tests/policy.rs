@@ -2272,6 +2272,7 @@ async fn a_torrent_that_failed_to_restore_survives_an_engine_restart() {
         listen_port: 0,
         enable_dht: false,
         enable_upnp: false,
+        enable_utp: false,
         ..Settings::default()
     };
     let state = AppState::new(settings.clone(), tmp.path().to_path_buf(), false);

@@ -861,6 +861,11 @@ export interface Settings {
   enableDht: boolean;
   /** Whether to request a UPnP port mapping. Restarts the session. */
   enableUpnp: boolean;
+  /**
+   * Whether peers are reached and accepted over uTP as well as TCP; `false`
+   * is TCP only. Restarts the session.
+   */
+  enableUtp: boolean;
   /** Global download limit in bytes/sec; `null` is unlimited. Applies live. */
   downloadLimitBps: number | null;
   /** Global upload limit in bytes/sec; `null` is unlimited. Applies live. */

@@ -162,6 +162,15 @@ pub struct Settings {
     /// Whether to request a UPnP port mapping. Requires a restart.
     pub enable_upnp: bool,
 
+    /// Whether to reach and accept peers over uTP as well as TCP. Requires a
+    /// restart.
+    ///
+    /// On by default, as in most clients: some peers are reachable only over
+    /// uTP. Off means TCP only, kept as an escape hatch because librqbit's
+    /// uTP is younger than its TCP. A configured proxy carries every outgoing
+    /// connection whatever this says -- librqbit skips uTP when one is set.
+    pub enable_utp: bool,
+
     /// Most peers to connect to at once, per torrent. Requires a restart.
     ///
     /// Not an `Option`, unlike every other limit here, and the difference is
@@ -333,6 +342,7 @@ impl Default for Settings {
             listen_port: DEFAULT_LISTEN_PORT,
             enable_dht: true,
             enable_upnp: true,
+            enable_utp: true,
             peer_limit: DEFAULT_PEER_LIMIT,
             blocklist_url: None,
             allowlist_url: None,
@@ -654,6 +664,7 @@ impl Settings {
             listen_port: self.listen_port,
             enable_dht: self.enable_dht,
             enable_upnp: self.enable_upnp,
+            enable_utp: self.enable_utp,
             peer_limit: self.peer_limit,
             blocklist_url: self.blocklist_url.clone(),
             allowlist_url: self.allowlist_url.clone(),
@@ -681,6 +692,7 @@ impl Settings {
             listen_port: previous.listen_port,
             enable_dht: previous.enable_dht,
             enable_upnp: previous.enable_upnp,
+            enable_utp: previous.enable_utp,
             peer_limit: previous.peer_limit,
             blocklist_url: previous.blocklist_url.clone(),
             allowlist_url: previous.allowlist_url.clone(),
@@ -698,6 +710,8 @@ impl Settings {
             || self.listen_port != next.listen_port
             || self.enable_dht != next.enable_dht
             || self.enable_upnp != next.enable_upnp
+            // The listener's transports are fixed when the session is built.
+            || self.enable_utp != next.enable_utp
             // The peer semaphore is sized when a torrent goes live, so a
             // changed limit reaches existing torrents only on a restart.
             || self.peer_limit != next.peer_limit
@@ -919,6 +933,7 @@ mod tests {
             listen_port: previous.listen_port + 1,
             enable_dht: !previous.enable_dht,
             enable_upnp: !previous.enable_upnp,
+            enable_utp: !previous.enable_utp,
             peer_limit: previous.peer_limit + 1,
             blocklist_url: Some("https://lists.example/list.p2p".to_owned()),
             allowlist_url: Some("https://lists.example/allow.p2p".to_owned()),
@@ -1209,6 +1224,10 @@ mod tests {
             },
             Settings {
                 enable_upnp: false,
+                ..valid()
+            },
+            Settings {
+                enable_utp: false,
                 ..valid()
             },
             Settings {

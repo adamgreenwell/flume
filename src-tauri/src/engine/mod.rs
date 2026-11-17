@@ -377,7 +377,14 @@ impl Engine {
             // librqbit defaults `listen` to `None`, which means Flume would
             // never accept incoming peers and could not seed. Always listen.
             listen: Some(ListenerOptions {
-                mode: ListenerMode::TcpOnly,
+                // Most clients default to TCP and uTP, and some peers are
+                // reachable only over uTP; TCP only was an unexamined
+                // default that cut Flume off from them.
+                mode: if config.enable_utp {
+                    ListenerMode::TcpAndUtp
+                } else {
+                    ListenerMode::TcpOnly
+                },
                 listen_addr: (std::net::Ipv6Addr::UNSPECIFIED, config.listen_port).into(),
                 enable_upnp_port_forwarding: config.enable_upnp,
                 ..Default::default()

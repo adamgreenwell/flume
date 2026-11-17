@@ -92,6 +92,7 @@ rejoins the queue and waits its turn like everything else.
 | Seed limits           | Stop seeding at a ratio or after a time             |
 | Listen port           | Default 42221                                       |
 | UPnP                  | Automatic router port forwarding                    |
+| uTP                   | On by default; off means TCP only                   |
 | DHT                   | Required for magnet links                           |
 | Theme                 | Light, dark, or follow system                       |
 | Tunnel check          | Off, warn, or hold transfer — see below             |

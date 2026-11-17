@@ -54,6 +54,13 @@ pub struct EngineConfig {
     /// Whether to ask the router to forward [`Self::listen_port`] via UPnP.
     pub enable_upnp: bool,
 
+    /// Whether peers are reached and accepted over uTP as well as TCP.
+    ///
+    /// `false` is TCP only. With uTP on, librqbit tries TCP first and starts
+    /// uTP after a second, keeping whichever connects first, and listens for
+    /// incoming uTP on the same port number over UDP.
+    pub enable_utp: bool,
+
     /// Most peers to hold a connection to, per torrent.
     ///
     /// Per torrent rather than per session, because that is the only shape
@@ -114,6 +121,7 @@ impl EngineConfig {
             listen_port: DEFAULT_LISTEN_PORT,
             enable_dht: true,
             enable_upnp: true,
+            enable_utp: true,
             peer_limit: DEFAULT_PEER_LIMIT,
             blocklist_url: None,
             allowlist_url: None,
