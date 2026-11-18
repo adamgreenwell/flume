@@ -8,6 +8,12 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-11-17
+
+**Sort the list by clicking a column header, and resize the columns.** The
+list no longer has to reshuffle itself by speed: sort by name or progress and
+it holds still.
+
 ### Added
 
 - **Sort by clicking a column header.** Click again to reverse; the sorted
@@ -527,6 +533,7 @@ First public release.
   _swarm_ can finish your download, a question already answered once you have
   every piece.
 
+[1.5.4]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.4
 [1.5.3]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.3
 [1.5.2]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.2
 [1.5.1]: https://github.com/adamgreenwell/flume/releases/tag/v1.5.1
