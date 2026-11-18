@@ -61,6 +61,10 @@ pub enum SortBy {
     DownloadBps,
     /// Upload rate.
     UploadBps,
+    /// Live peers connected.
+    Peers,
+    /// The swarm-health verdict.
+    Health,
     /// Uploaded over downloaded.
     Ratio,
     /// Estimated time to completion.
@@ -129,6 +133,72 @@ pub enum RailState {
     Expanded,
     /// 56px: view icons and one status dot.
     Collapsed,
+}
+
+/// The narrowest a stored column width can be, in CSS pixels.
+///
+/// A floor on what the file can hold, not the usable minimum: each column's
+/// own minimum lives with its default in `src/lib/columns.ts`, which is the
+/// one place that knows what a column draws. This only stops a hand-edited
+/// file from asking for a zero-width or negative column.
+pub const MIN_COLUMN_WIDTH: u16 = 24;
+
+/// The widest a stored column width can be, in CSS pixels.
+pub const MAX_COLUMN_WIDTH: u16 = 800;
+
+/// The torrent list's resizable columns and the width the user dragged each
+/// to. Mirrored in `src/lib/ipc/types.ts`.
+///
+/// Frontend-only, like [`Theme`], and persisted here for the same reason.
+///
+/// **`None` means the default width, not a stored copy of it.** A column the
+/// user never touched follows whatever default a later release chooses; one
+/// written out at first launch would freeze today's.
+///
+/// **A field per column is the registry.** The state dot and the name are not
+/// here: the dot is fixed and the name takes whatever is left, which is what
+/// keeps the other columns anchored to the right edge while one is dragged.
+///
+/// **Reading never fails.** A width is kept only if it is a number, clamped
+/// to [`MIN_COLUMN_WIDTH`]`..=`[`MAX_COLUMN_WIDTH`], and dropped to `None`
+/// otherwise; an unknown key -- a column some later release added -- is
+/// ignored. Both matter more than they look: a settings file that does not
+/// parse forces the egress guard to hold, so a strict reader would turn one
+/// odd width, or a downgrade, into a held engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ColumnWidths {
+    /// The progress bar and its percentage.
+    #[serde(deserialize_with = "lenient_width")]
+    pub progress: Option<u16>,
+    /// Download rate.
+    #[serde(deserialize_with = "lenient_width")]
+    pub down: Option<u16>,
+    /// Upload rate.
+    #[serde(deserialize_with = "lenient_width")]
+    pub up: Option<u16>,
+    /// Live over known peers.
+    #[serde(deserialize_with = "lenient_width")]
+    pub peers: Option<u16>,
+    /// The swarm-health chip.
+    #[serde(deserialize_with = "lenient_width")]
+    pub health: Option<u16>,
+}
+
+/// Reads one stored column width without ever failing. See [`ColumnWidths`].
+fn lenient_width<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_f64().filter(|w| w.is_finite()).map(|w| {
+        // Truncation is the point: the value is clamped into u16 range first.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let clamped =
+            w.round()
+                .clamp(f64::from(MIN_COLUMN_WIDTH), f64::from(MAX_COLUMN_WIDTH)) as u16;
+        clamped
+    }))
 }
 
 /// The largest peer limit [`Settings::validate`] will accept, per torrent.
@@ -286,6 +356,10 @@ pub struct Settings {
     /// Sidebar width. Frontend-only, persisted for the same reason.
     pub rail: RailState,
 
+    /// Torrent-list column widths, set by dragging the header. Frontend-only,
+    /// persisted for the same reason.
+    pub columns: ColumnWidths,
+
     /// Whether to require that traffic leaves through a tunnel, and what to
     /// do when it does not.
     ///
@@ -359,6 +433,7 @@ impl Default for Settings {
             sort: SortState::default(),
             last_add_folder: None,
             rail: RailState::Expanded,
+            columns: ColumnWidths::default(),
             egress_guard: EgressGuard::Off,
             egress_interface: None,
             // Not asked yet. Never defaults to `Some(true)`: consent that the
@@ -795,6 +870,52 @@ mod tests {
 
         assert_eq!(loaded.download_dir, PathBuf::from("/tmp/x"));
         assert_eq!(loaded.listen_port, DEFAULT_LISTEN_PORT);
+        assert!(problem.is_none());
+    }
+
+    #[test]
+    fn an_odd_column_width_never_costs_the_settings_file() {
+        // A file that fails to parse forces the egress guard to hold, so a
+        // column width -- a cosmetic value -- must never be able to do that.
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        std::fs::write(
+            tmp.path().join(SETTINGS_FILE),
+            r#"{"downloadDir":"/tmp/x","columns":{
+                "progress":240.4,"down":-5,"up":"wide","peers":1e9,
+                "health":null,"aColumnFromLater":120}}"#,
+        )
+        .expect("write");
+
+        let (loaded, problem) = Settings::load(tmp.path());
+
+        assert!(problem.is_none());
+        assert_eq!(
+            loaded.columns,
+            ColumnWidths {
+                progress: Some(240),
+                down: Some(MIN_COLUMN_WIDTH),
+                up: None,
+                peers: Some(MAX_COLUMN_WIDTH),
+                health: None,
+            }
+        );
+    }
+
+    #[test]
+    fn untouched_columns_are_stored_as_none_not_as_todays_default() {
+        let json = serde_json::to_value(Settings::default()).expect("json");
+        assert_eq!(
+            json["columns"],
+            serde_json::json!({
+                "progress": null, "down": null, "up": null,
+                "peers": null, "health": null
+            })
+        );
+        let (_, problem) = {
+            let tmp = tempfile::TempDir::new().expect("tmp");
+            valid().save(tmp.path()).expect("save");
+            Settings::load(tmp.path())
+        };
         assert!(problem.is_none());
     }
 

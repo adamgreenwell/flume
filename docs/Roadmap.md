@@ -325,11 +325,11 @@ settings module was built to keep.
 
 Three more things follow from the structure of the list:
 
-- **Widths are currently duplicated on purpose.** `ColumnHeader` and
-  `TorrentRow` each hard-code the same figures, and `ColumnHeader`'s doc comment
-  defends the duplication as two layout facts that happen to agree. Configurable
-  widths end that: one source, read by both. The comment and the note in
-  `CLAUDE.md` change in the same commit as the code.
+- **Widths come from one source.** They used to be hard-coded in both
+  `ColumnHeader` and `TorrentRow`. Resizing ended that: `src/lib/columns.ts`
+  holds each column's default and minimum, and the header and every row kind
+  read the width from a custom property on the list container. _(Done: the
+  resize-and-sort half of #147.)_
 - **Overflow restructures the list.** Header and rows scroll as one container —
   a header that does not track its rows is worse than no overflow — and
   `ExpandedRow`, a full-width sibling of the rows, has to span the scrolled

@@ -26,6 +26,13 @@ const SETTINGS: Settings = {
   sort: { by: "activity", direction: "desc" },
   lastAddFolder: null,
   rail: "expanded",
+  columns: {
+    progress: null,
+    down: null,
+    up: null,
+    peers: null,
+    health: null,
+  },
   egressGuard: "off",
   egressInterface: null,
   usageReporting: null,
@@ -49,6 +56,9 @@ describe("the definition table", () => {
       // The add dialog, which writes it as a side effect of an add rather
       // than offering it as a preference.
       "lastAddFolder",
+      // The list's column header: drag an edge to resize, double-click it
+      // to reset.
+      "columns",
     ]);
 
     const defined = new Set(SETTING_DEFS.map((d) => d.id));

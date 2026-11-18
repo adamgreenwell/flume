@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SortState, TorrentSummary } from "@/lib/ipc/types";
-import { SORTS, defaultDirectionFor, sortTorrents } from "./sort";
+import { SORTS, defaultDirectionFor, nextSort, sortTorrents } from "./sort";
 
 function torrent(over: Partial<TorrentSummary> = {}): TorrentSummary {
   return {
@@ -221,5 +221,54 @@ describe("the input", () => {
     sortTorrents(rows, { by: "name", direction: "asc" });
 
     expect(rows.map((t) => t.id)).toEqual(before);
+  });
+
+  it("sorts peers by who is connected, not who is known", () => {
+    const few = torrent({ id: 1, name: "few", livePeers: 2, knownPeers: 900 });
+    const many = torrent({ id: 2, name: "many", livePeers: 9, knownPeers: 10 });
+    const order = sortTorrents([few, many], { by: "peers", direction: "desc" });
+    expect(order.map((t) => t.name)).toEqual(["many", "few"]);
+  });
+
+  it("ranks swarm health worst-first ascending and keeps seeding last", () => {
+    const rows = (
+      ["healthy", "seeding", "none", "unknown", "thin"] as const
+    ).map((health, i) => torrent({ id: i + 1, name: health, health }));
+    const asc = sortTorrents(rows, { by: "health", direction: "asc" });
+    expect(asc.map((t) => t.name)).toEqual([
+      "none",
+      "thin",
+      "unknown",
+      "healthy",
+      "seeding",
+    ]);
+    const desc = sortTorrents(rows, { by: "health", direction: "desc" });
+    expect(desc.map((t) => t.name)).toEqual([
+      "healthy",
+      "unknown",
+      "thin",
+      "none",
+      "seeding",
+    ]);
+  });
+});
+
+describe("nextSort", () => {
+  it("flips the direction when the sorted header is clicked again", () => {
+    expect(nextSort({ by: "name", direction: "asc" }, "name")).toEqual({
+      by: "name",
+      direction: "desc",
+    });
+  });
+
+  it("starts a newly clicked header in its useful direction", () => {
+    expect(nextSort({ by: "name", direction: "desc" }, "downloadBps")).toEqual({
+      by: "downloadBps",
+      direction: "desc",
+    });
+    expect(nextSort({ by: "progress", direction: "asc" }, "name")).toEqual({
+      by: "name",
+      direction: "asc",
+    });
   });
 });

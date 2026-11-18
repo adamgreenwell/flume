@@ -822,10 +822,29 @@ export type SortBy =
   | "progress"
   | "downloadBps"
   | "uploadBps"
+  | "peers"
+  | "health"
   | "ratio"
   | "eta"
   | "added"
   | "state";
+
+/**
+ * The width each resizable torrent-list column was dragged to, in CSS pixels.
+ * Mirrors Rust `ColumnWidths`.
+ *
+ * `null` means the column's default (see `src/lib/columns.ts`), not a stored
+ * copy of it, so an untouched column follows whatever default a later release
+ * picks. The state dot and the name are not here: the dot is fixed and the
+ * name takes what is left.
+ */
+export interface ColumnWidths {
+  progress: number | null;
+  down: number | null;
+  up: number | null;
+  peers: number | null;
+  health: number | null;
+}
 
 /** Which way a {@link SortBy} runs. Mirrors Rust `SortDirection`. */
 export type SortDirection = "asc" | "desc";
@@ -953,6 +972,11 @@ export interface Settings {
   lastAddFolder: string | null;
   /** Sidebar width. Frontend-only, persisted for the same reason as theme. */
   rail: RailState;
+  /**
+   * Torrent-list column widths, set by dragging the header. Frontend-only,
+   * persisted for the same reason as theme.
+   */
+  columns: ColumnWidths;
   /**
    * Whether to require that traffic leaves through a tunnel, and what to do
    * when it does not.

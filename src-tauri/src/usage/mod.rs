@@ -226,6 +226,10 @@ pub enum SettingKey {
     /// Sidebar expanded or collapsed.
     #[serde(rename = "ui.rail")]
     UiRail,
+    /// A torrent-list column resized or reset. Which column, and to what
+    /// width, stay on the machine.
+    #[serde(rename = "ui.columns")]
+    UiColumns,
     /// Seed ratio limit set or cleared.
     #[serde(rename = "seeding.ratioLimit")]
     SeedingRatioLimit,
@@ -338,6 +342,7 @@ impl SettingKey {
         note(previous.density != next.density, Self::UiDensity);
         note(previous.sort != next.sort, Self::UiSort);
         note(previous.rail != next.rail, Self::UiRail);
+        note(previous.columns != next.columns, Self::UiColumns);
         note(
             previous.usage_reporting != next.usage_reporting,
             Self::PrivacyUsage,

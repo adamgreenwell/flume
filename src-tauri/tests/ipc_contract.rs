@@ -315,6 +315,7 @@ fn settings_match_the_typescript_mirror() {
             "sort",
             "lastAddFolder",
             "rail",
+            "columns",
             "egressGuard",
             "egressInterface",
             "usageReporting",

@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import type { TorrentSummary } from "@/lib/ipc/types";
 
+import { columnStyle, resolveWidths } from "@/lib/columns";
+
 import { ColumnHeader } from "./ColumnHeader";
 import { TorrentRow } from "./TorrentRow";
 
@@ -52,6 +54,15 @@ const meta = {
       },
     },
   },
+  // A row reads its column widths from the list container's custom
+  // properties, so a row on its own needs a container that sets them.
+  decorators: [
+    (Story) => (
+      <div style={columnStyle(resolveWidths(null))}>
+        <Story />
+      </div>
+    ),
+  ],
   args: {
     torrent: make({}),
     selected: false,
@@ -138,7 +149,13 @@ export const StoppedAtALimit: Story = {
 export const TheWholeList: Story = {
   render: (args) => (
     <div className="bg-bg-0 flex flex-col">
-      <ColumnHeader />
+      <ColumnHeader
+        sort={{ by: "name", direction: "asc" }}
+        onSort={() => {}}
+        widths={resolveWidths(null)}
+        onResizing={() => {}}
+        onResized={() => {}}
+      />
       {(
         [
           {},

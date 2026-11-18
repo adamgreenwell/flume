@@ -57,6 +57,30 @@ downloaded.
 This matters for distro torrents, which often bundle several ISO variants plus
 checksum files when you want one image.
 
+## Arranging the list
+
+**Click a column header to sort by it,** and click it again to reverse. The
+sorted column shows an arrow. Names start A to Z; numbers start largest
+first. The **Sort by** menu above the list offers the same orders plus a few
+that have no column — size, ratio, time left, date added, state, and
+**Activity**, the default.
+
+Activity orders by download and upload speed together, so rows move as speeds
+change. If you want the list to hold still, sort by name or progress instead.
+Sorting by a speed moves rows for the same reason Activity does.
+
+Swarm health sorts worst first ascending — no seeds, thin, not yet judged,
+healthy — with seeding and idle torrents last either way, since they have no
+verdict on the swarm.
+
+**Drag the divider on a column's left edge to resize it.** The name column
+takes whatever room is left. Double-click a divider to put that column back to
+its default width. From the keyboard, Tab to a divider and use the arrow keys
+(Shift for bigger steps), Home and End for narrowest and widest, and Enter to
+reset. When the columns no longer fit the window, the list scrolls sideways
+rather than squeezing the names away. Sort order and widths are both
+remembered across restarts.
+
 ## Controlling torrents
 
 | Action        | Effect                                                  |
