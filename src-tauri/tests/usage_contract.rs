@@ -82,6 +82,7 @@ fn every_event() -> Vec<EventKind> {
         SettingKey::UiDensity,
         SettingKey::UiSort,
         SettingKey::UiRail,
+        SettingKey::UiColumns,
         SettingKey::SeedingRatioLimit,
         SettingKey::SeedingTimeLimit,
         SettingKey::QueueMaxDownloads,

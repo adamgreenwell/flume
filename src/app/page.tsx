@@ -41,6 +41,7 @@ import {
 } from "@/hooks/useKeyboardShortcuts";
 import { useMagnetLinks } from "@/hooks/useMagnetLinks";
 import { useMenuEvents } from "@/hooks/useMenuEvents";
+import { useColumnWidths } from "@/hooks/useColumnWidths";
 import { useTorrentFileDrop } from "@/hooks/useTorrentFileDrop";
 import {
   detectWindowControls,
@@ -56,7 +57,7 @@ import {
   type ViewId,
 } from "@/lib/views";
 import { pendingMagnetName } from "@/lib/pendingMagnet";
-import { sortTorrents } from "@/lib/sort";
+import { nextSort, sortTorrents } from "@/lib/sort";
 import {
   checkForUpdates,
   getSettings,
@@ -197,6 +198,34 @@ export default function Home() {
     return settingsWrite.current;
   }, []);
 
+  // Widths live as custom properties on the list container, so a drag
+  // repaints without re-rendering every row; see the hook.
+  const {
+    widths: columnWidths,
+    style: columnVars,
+    containerRef: listRef,
+    onResizing: onColumnResizing,
+    onResized: onColumnResized,
+    load: loadColumns,
+  } = useColumnWidths(
+    useCallback(
+      (next: Settings["columns"]) => void patchSettings({ columns: next }),
+      [patchSettings],
+    ),
+  );
+
+  // One path for both sort controls -- the toolbar picker and the column
+  // headers -- so they cannot disagree. Applied now, persisted behind the
+  // queue, the same shape as density and the rail. A sort that waited for a
+  // round trip before the list moved would feel broken.
+  const changeSort = useCallback(
+    (next: SortState) => {
+      setSort(next);
+      void patchSettings({ sort: next });
+    },
+    [patchSettings],
+  );
+
   const toggleRail = useCallback(() => {
     const next = !railCollapsed;
     // Applied to the layout on this render; persisted behind the queue.
@@ -260,6 +289,7 @@ export default function Home() {
         setSort(s.sort);
         setAddFolder(s.lastAddFolder);
         setRailCollapsed(s.rail === "collapsed");
+        loadColumns(s.columns);
         // Kept so the chart can draw the ceiling at the configured limit
         // rather than rescaling its axis as traffic varies.
         setDownloadLimitBps(s.downloadLimitBps);
@@ -267,7 +297,7 @@ export default function Home() {
       .catch(() => {
         // Engine still starting; the system default remains in force.
       });
-  }, []);
+  }, [loadColumns]);
 
   // Cleared while held, for the same reason the torrent list is: there is no
   // session, so the DHT count, the listening port and the uptime are the last
@@ -461,6 +491,7 @@ export default function Home() {
               setSort(s.sort);
               setAddFolder(s.lastAddFolder);
               setRailCollapsed(s.rail === "collapsed");
+              loadColumns(s.columns);
               setDownloadLimitBps(s.downloadLimitBps);
             })
             .catch(() => {
@@ -498,13 +529,7 @@ export default function Home() {
           title={VIEWS.find((v) => v.id === view)?.name ?? "All torrents"}
           count={visible.length}
           sort={sort}
-          onSortChange={(next) => {
-            // Applied now, persisted behind the queue -- the same shape as
-            // density and the rail beside it. A sort that waited for a round
-            // trip before the list moved would feel broken.
-            setSort(next);
-            void patchSettings({ sort: next });
-          }}
+          onSortChange={changeSort}
           compact={compact}
           onDensityToggle={() => {
             const next = !compact;
@@ -583,74 +608,102 @@ export default function Home() {
           </div>
         ) : null}
 
-        <ColumnHeader />
-
-        {visible.length === 0 && pendingMagnets.length === 0 ? (
-          <div className="flex grow items-center justify-center">
-            <EmptyState
-              status={status}
-              onAdd={() => setIsAdding(true)}
-              filtered={torrents.length > 0}
-              guardNote={held ? guardNote : null}
-              onOpenSettings={() => setIsConfiguring(true)}
-            />
-          </div>
-        ) : (
-          <div
-            role="grid"
-            aria-label="Torrents"
-            aria-rowcount={visible.length + pendingMagnets.length}
-            className="flex grow flex-col overflow-y-auto"
-          >
-            {/*
+        {/*
+          One scroll container for the header and the rows, both ways. Below
+          the row's minimum width the list scrolls sideways rather than
+          squeezing the name to nothing, and the header scrolls with it; it
+          is sticky, so it stays put vertically. The column widths are
+          custom properties here, read by the header and every row.
+        */}
+        <div
+          ref={listRef}
+          style={columnVars}
+          className="flex min-h-0 grow flex-col overflow-auto"
+        >
+          {visible.length === 0 && pendingMagnets.length === 0 ? (
+            <>
+              <ColumnHeader
+                sort={sort}
+                onSort={(by) => changeSort(nextSort(sort, by))}
+                widths={columnWidths}
+                onResizing={onColumnResizing}
+                onResized={onColumnResized}
+              />
+              <div className="sticky left-0 flex grow items-center justify-center">
+                <EmptyState
+                  status={status}
+                  onAdd={() => setIsAdding(true)}
+                  filtered={torrents.length > 0}
+                  guardNote={held ? guardNote : null}
+                  onOpenSettings={() => setIsConfiguring(true)}
+                />
+              </div>
+            </>
+          ) : (
+            <div
+              role="grid"
+              aria-label="Torrents"
+              // The header is a row of the grid too.
+              aria-rowcount={visible.length + pendingMagnets.length + 1}
+              className="flex min-w-[var(--flume-list-min-w)] grow flex-col"
+            >
+              <ColumnHeader
+                sort={sort}
+                onSort={(by) => changeSort(nextSort(sort, by))}
+                widths={columnWidths}
+                onResizing={onColumnResizing}
+                onResized={onColumnResized}
+              />
+              {/*
               Above the torrents rather than sorted among them: they have no
               size, progress or rate for a sort key to compare, and a magnet
               waiting on the user should not sink out of sight.
             */}
-            {pendingMagnets.map((m) => (
-              <PendingMagnetRow
-                key={`magnet-${m.infoHash}`}
-                magnet={m}
-                onChooseFiles={(x) => {
-                  setOpeningMagnet(x.infoHash);
-                  setIsAdding(true);
-                }}
-                onRemove={(x) =>
-                  void removePendingMagnet(x.infoHash).catch(
-                    (caught: unknown) =>
-                      report(caught, "Could not remove that magnet."),
-                  )
-                }
-              />
-            ))}
-            {visible.map((t) => (
-              <Fragment key={t.infoHash}>
-                <TorrentRow
-                  torrent={t}
-                  selected={t.infoHash === selectedHash}
-                  onSelect={(x) =>
-                    setSelectedHash((current) =>
-                      current === x.infoHash ? null : x.infoHash,
+              {pendingMagnets.map((m) => (
+                <PendingMagnetRow
+                  key={`magnet-${m.infoHash}`}
+                  magnet={m}
+                  onChooseFiles={(x) => {
+                    setOpeningMagnet(x.infoHash);
+                    setIsAdding(true);
+                  }}
+                  onRemove={(x) =>
+                    void removePendingMagnet(x.infoHash).catch(
+                      (caught: unknown) =>
+                        report(caught, "Could not remove that magnet."),
                     )
                   }
-                  onOpen={setDetailOf}
-                  onContextMenu={(x, at) => setMenu({ torrent: x, at })}
                 />
-                {t.infoHash === selectedHash ? (
-                  <ExpandedRow
+              ))}
+              {visible.map((t) => (
+                <Fragment key={t.infoHash}>
+                  <TorrentRow
                     torrent={t}
-                    detail={expanded.detail}
-                    error={expanded.error}
-                    onToggle={(x) => void toggle(x)}
-                    onKeepSeeding={(x) => void keepSeeding(x)}
-                    onReveal={(x) => void reveal(x)}
+                    selected={t.infoHash === selectedHash}
+                    onSelect={(x) =>
+                      setSelectedHash((current) =>
+                        current === x.infoHash ? null : x.infoHash,
+                      )
+                    }
                     onOpen={setDetailOf}
+                    onContextMenu={(x, at) => setMenu({ torrent: x, at })}
                   />
-                ) : null}
-              </Fragment>
-            ))}
-          </div>
-        )}
+                  {t.infoHash === selectedHash ? (
+                    <ExpandedRow
+                      torrent={t}
+                      detail={expanded.detail}
+                      error={expanded.error}
+                      onToggle={(x) => void toggle(x)}
+                      onKeepSeeding={(x) => void keepSeeding(x)}
+                      onReveal={(x) => void reveal(x)}
+                      onOpen={setDetailOf}
+                    />
+                  ) : null}
+                </Fragment>
+              ))}
+            </div>
+          )}
+        </div>
 
         <Dock
           status={status}

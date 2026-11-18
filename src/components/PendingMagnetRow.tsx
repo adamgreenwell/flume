@@ -76,7 +76,7 @@ export function PendingMagnetRow({
 
       <span
         role="gridcell"
-        className="text-fg-2 flex w-[180px] shrink-0 items-center gap-2 text-[11.5px]"
+        className="text-fg-2 flex w-[var(--flume-col-progress)] shrink-0 items-center gap-2 overflow-hidden text-[11.5px]"
       >
         {ready ? (
           <Button onClick={() => onChooseFiles(magnet)}>Choose files…</Button>
@@ -88,21 +88,21 @@ export function PendingMagnetRow({
       {/* Download, upload and peers: nothing to measure without a torrent. */}
       <span
         role="gridcell"
-        className="text-fg-3 w-[86px] shrink-0 text-right text-[11.5px]"
+        className="text-fg-3 w-[var(--flume-col-down)] shrink-0 text-right text-[11.5px]"
         aria-hidden="true"
       >
         —
       </span>
       <span
         role="gridcell"
-        className="text-fg-3 w-[86px] shrink-0 text-right text-[11.5px]"
+        className="text-fg-3 w-[var(--flume-col-up)] shrink-0 text-right text-[11.5px]"
         aria-hidden="true"
       >
         —
       </span>
       <span
         role="gridcell"
-        className="text-fg-3 w-[78px] shrink-0 text-right text-[11.5px]"
+        className="text-fg-3 w-[var(--flume-col-peers)] shrink-0 text-right text-[11.5px]"
         aria-hidden="true"
       >
         —
@@ -110,7 +110,7 @@ export function PendingMagnetRow({
 
       <span
         role="gridcell"
-        className="flex w-[124px] shrink-0 items-center justify-between gap-1 pl-[14px]"
+        className="flex w-[var(--flume-col-health)] shrink-0 items-center justify-between gap-1 pl-[14px]"
       >
         <span
           className={`truncate text-[11.5px] ${ready ? "text-acc" : "text-fg-2"}`}

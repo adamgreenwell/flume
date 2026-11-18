@@ -44,6 +44,7 @@
         "ui.density",
         "ui.sort",
         "ui.rail",
+        "ui.columns",
         "seeding.ratioLimit",
         "seeding.timeLimit",
         "queue.maxDownloads",

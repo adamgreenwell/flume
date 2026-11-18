@@ -6,9 +6,9 @@
  * every second, so an order that is not *total* reshuffles equal rows on
  * every tick and makes clicking a moving target.
  *
- * The key names are column names on purpose. #147 moves sorting out of the
- * toolbar and into the column headers, and a persisted sort keyed to three
- * chip labels would have to be migrated when it does. The one exception is
+ * The key names are column names on purpose: clicking a column header sorts
+ * by that column (#147), and the toolbar picker offers the same keys plus the
+ * ones that have no column yet. The one exception is
  * `activity`, which is a composite of two columns rather than a column —
  * noted rather than removed, because it is the default and it is the order
  * someone glancing at a running client actually wants.
@@ -36,6 +36,8 @@ export const SORTS: ReadonlyArray<{ by: SortBy; name: string }> = [
   { by: "progress", name: "Progress" },
   { by: "downloadBps", name: "Download speed" },
   { by: "uploadBps", name: "Upload speed" },
+  { by: "peers", name: "Peers" },
+  { by: "health", name: "Swarm health" },
   { by: "ratio", name: "Ratio" },
   { by: "eta", name: "Time left" },
   { by: "added", name: "Date added" },
@@ -61,6 +63,22 @@ const STATE_ORDER: Record<TorrentSummary["state"], number> = {
   seeding: 3,
   paused: 4,
   error: 5,
+};
+
+/**
+ * Swarm verdicts in the order `asc` puts them: worst first.
+ *
+ * Only a downloading torrent has a verdict on the swarm. `seeding` and
+ * `idle` say what this torrent is doing rather than how well it can finish,
+ * so they have no rank and sort last either way, like any other missing
+ * value. `unknown` -- "Connected", not judged yet -- sits between the two
+ * verdicts it might become.
+ */
+const HEALTH_ORDER: Partial<Record<TorrentSummary["health"], number>> = {
+  none: 0,
+  thin: 1,
+  unknown: 2,
+  healthy: 3,
 };
 
 /**
@@ -97,6 +115,12 @@ function valueOf(t: TorrentSummary, by: SortBy): number | null {
       return t.downloadBps;
     case "uploadBps":
       return t.uploadBps;
+    case "peers":
+      // Live peers, the figure before the slash. Known peers are the DHT's
+      // and trackers' guesses; the live count is who is actually connected.
+      return t.livePeers;
+    case "health":
+      return HEALTH_ORDER[t.health] ?? null;
     case "ratio":
       return ratio(t);
     case "eta":
@@ -163,4 +187,22 @@ export function sortTorrents(
     }
     return a.id - b.id;
   });
+}
+
+/**
+ * The sort after clicking a column header.
+ *
+ * The sorted column's header flips its direction; any other header takes over
+ * in the direction its key is useful in, for the same reason the toolbar
+ * picker resets it -- see {@link defaultDirectionFor}.
+ *
+ * @param current - The sort in force.
+ * @param by - The key of the header that was clicked.
+ * @returns The sort to apply.
+ */
+export function nextSort(current: SortState, by: SortBy): SortState {
+  if (current.by === by) {
+    return { by, direction: current.direction === "asc" ? "desc" : "asc" };
+  }
+  return { by, direction: defaultDirectionFor(by) };
 }

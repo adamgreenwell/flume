@@ -80,11 +80,21 @@ const STOPPED_LABEL: Record<PauseReason, string> = {
  * as "no data"; a dimmed zero reads as "measured, and it is zero", which is a
  * different and more useful fact when a torrent has stalled.
  */
-function Rate({ bps, tone }: { bps: number; tone: string }) {
+function Rate({
+  bps,
+  tone,
+  width,
+}: {
+  bps: number;
+  tone: string;
+  /** The column's width, as a CSS length. */
+  width: string;
+}) {
   return (
     <span
       role="gridcell"
-      className={`flume-num w-[86px] shrink-0 text-right text-xs ${
+      style={{ width }}
+      className={`flume-num shrink-0 truncate text-right text-xs ${
         bps === 0 ? "text-fg-3" : tone
       }`}
     >
@@ -120,6 +130,8 @@ export interface TorrentRowProps {
  *
  * Seven columns at fixed widths so the numbers line up down the list rather
  * than wandering with content — the reason every figure here is tabular mono.
+ * The widths are the user's, read from the custom properties the list
+ * container sets (`src/lib/columns.ts`); the name takes what is left.
  *
  * Rendered as a `row` in a real grid rather than a list item: the columns carry
  * meaning, and a screen reader user should be able to move across them and hear
@@ -209,7 +221,7 @@ export function TorrentRow({
 
       <span
         role="gridcell"
-        className="flex w-[180px] shrink-0 items-center gap-[9px]"
+        className="flex w-[var(--flume-col-progress)] shrink-0 items-center gap-[9px]"
       >
         <span
           className="bg-bg-3 flex h-[5px] grow overflow-hidden rounded-[3px]"
@@ -232,19 +244,30 @@ export function TorrentRow({
         </span>
       </span>
 
-      <Rate bps={torrent.downloadBps} tone="text-fg-0" />
-      <Rate bps={torrent.uploadBps} tone="text-fg-1" />
+      <Rate
+        bps={torrent.downloadBps}
+        tone="text-fg-0"
+        width="var(--flume-col-down)"
+      />
+      <Rate
+        bps={torrent.uploadBps}
+        tone="text-fg-1"
+        width="var(--flume-col-up)"
+      />
 
       <span
         role="gridcell"
-        className="flume-num text-fg-2 w-[78px] shrink-0 text-right text-[11.5px]"
+        className="flume-num text-fg-2 w-[var(--flume-col-peers)] shrink-0 truncate text-right text-[11.5px]"
       >
         {torrent.knownPeers === 0
           ? "—"
           : `${torrent.livePeers} / ${torrent.knownPeers}`}
       </span>
 
-      <span role="gridcell" className="w-[124px] shrink-0 pl-[14px]">
+      <span
+        role="gridcell"
+        className="w-[var(--flume-col-health)] shrink-0 overflow-hidden pl-[14px]"
+      >
         <HealthChip health={torrent.health} detail={torrent.detail} />
       </span>
     </div>

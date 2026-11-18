@@ -8,6 +8,16 @@ Notable changes to Flume. Format follows [Keep a Changelog][kac]; versioning is
 
 ## [Unreleased]
 
+### Added
+
+- **Sort by clicking a column header.** Click again to reverse; the sorted
+  column shows an arrow. Peers and swarm health are new sort orders, and the
+  **Sort by** menu keeps the orders that have no column. (#147)
+- **Resizable columns.** Drag the divider on a column's left edge;
+  double-click it to reset. Dividers work from the keyboard too, and the
+  widths are remembered. When the columns no longer fit, the list scrolls
+  sideways instead of squeezing the names to nothing. (#147)
+
 ## [1.5.3] — 2026-11-17
 
 **Flume now reaches more peers, and "No seeds" means what it says.** Peers

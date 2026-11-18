@@ -422,6 +422,13 @@ const SETTINGS: Settings = {
   sort: { by: "activity", direction: "desc" },
   lastAddFolder: null,
   rail: "expanded",
+  columns: {
+    progress: null,
+    down: null,
+    up: null,
+    peers: null,
+    health: null,
+  },
   egressGuard: "off",
   egressInterface: null,
   // Not asked, so the mock exercises the state a real first run starts in.
