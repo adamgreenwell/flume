@@ -120,7 +120,10 @@ run deploy`. A client that sends events the deployed Worker does not know
 5. Per-platform smoke checklist in [[Platform-Notes]] completed.
 6. Version bumped in `package.json`, `src-tauri/Cargo.toml`, and
    `src-tauri/tauri.conf.json` — all three must match.
-7. Changelog updated.
+7. Changelog updated, with a `## [x.y.z]` section for this version. Its text
+   becomes the GitHub release notes, which the website's changelog and the
+   in-app update banner both show. `scripts/release-notes.mjs` puts it there,
+   and the release run fails on a stable tag that has no section.
 8. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`.
 9. Verify artifacts install cleanly on each platform before announcing.
 
