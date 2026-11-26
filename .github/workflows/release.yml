@@ -18,8 +18,10 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Shared by both build steps below, so they cannot drift apart.
-  RELEASE_BODY: |
+  # The end of every release body. The "Write the release notes" step puts
+  # the tag's CHANGELOG.md section above it and exports the result as
+  # RELEASE_BODY, which both build steps below read, so they cannot drift.
+  DOWNLOAD_NOTES: |
     Download the file for your platform below.
 
     macOS builds are signed and notarized by Apple, so they open normally.
@@ -139,6 +141,27 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+
+      # The changelog used to be pasted into the draft by hand before
+      # publishing, and v1.5.0 to v1.5.4 went out without it -- so the
+      # website and the in-app update banner showed only the download notes.
+      # This puts the tag's CHANGELOG.md section in the body from the start,
+      # and fails a stable tag that has none rather than shipping it empty.
+      # Every leg runs it, because whichever leg finishes first creates the
+      # draft. Logic and tests: scripts/release-notes.mjs.
+      - name: Write the release notes
+        shell: bash
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          body=$(printf '%s' "$DOWNLOAD_NOTES" | node scripts/release-notes.mjs "$TAG")
+          delimiter="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          {
+            echo "RELEASE_BODY<<$delimiter"
+            printf '%s\n' "$body"
+            echo "$delimiter"
+          } >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
